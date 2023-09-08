@@ -1,0 +1,101 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xnat-siemens-export-upload"
+description = "Uploads exported data from Siemens Quadra Total Body Scanner to XNAT sessions"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "click >=8.1",
+    "pydicom >=2.3.1",
+    "tqdm >=4.64.1",
+    "xnat",
+]
+license = {file = "LICENSE"}
+authors = [
+    {name = "Thomas G. Close", email = "thomas.close@sydney.edu.au"},
+]
+maintainers = [
+    {name = "Thomas G. Close", email = "thomas.close@sydney.edu.au"},
+]
+keywords = [
+    "xnat",
+    "imaging",
+    "data",
+    "repository",
+    "siemens",
+    "pet",
+    "upload"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pre-commit",
+    "codespell",
+    "flake8",
+    "flake8-pyproject",
+]
+test = [
+    "pytest >=6.2.5",
+    "pytest-env>=0.6.2",
+    "xnat4tests >=0.3",
+    "medimages4tests >=0.3.1",
+]
+# Aliases
+tests = ["xnat-siemens-export-upload[test]"]
+all = ["xnat-siemens-export-upload[dev,test]"]
+
+[project.urls]
+repository = "https://github.com/Australian-Imaging-Service/xnat-siemens-export-upload"
+
+[project.scripts]
+xnat-checks = "xnat_siemens_export_upload.cli:cli"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "xnat_siemens_export_upload/_version.py"
+
+[tool.hatch.build]
+packages = [
+    "xnat_siemens_export_upload",
+]
+exclude = [
+    "/tests",
+]
+
+[tool.black]
+target-version = ['py37', 'py38']
+exclude = "xnat_checks/_version.py"
+
+[tool.codespell]
+ignore-words = ".codespell-ignorewords"
+
+[tool.flake8]
+doctests = true
+per-file-ignores = [
+    "__init__.py:F401"
+]
+max-line-length = 88
+select = "C,E,F,W,B,B950"
+extend-ignore = ['E203', 'E501', 'E129', "W503"]
