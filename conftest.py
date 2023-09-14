@@ -49,7 +49,6 @@ def catch_cli_exceptions():
 @pytest.fixture(scope="session")
 def xnat_repository():
     xnat4tests.start_xnat()
-    xnat4tests.add_data("dummydicom")
 
 
 @pytest.fixture(scope="session")

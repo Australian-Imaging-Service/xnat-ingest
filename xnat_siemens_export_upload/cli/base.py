@@ -1,7 +1,7 @@
 import click
 import click_log
-from xnat_checks import __version__
-from xnat_checks.utils import logger
+from xnat_siemens_export_upload import __version__
+from xnat_siemens_export_upload.utils import logger
 
 click_log.basic_config(logger)
 
