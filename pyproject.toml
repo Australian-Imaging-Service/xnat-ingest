@@ -3,32 +3,17 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "xnat-siemens-export-upload"
-description = "Uploads exported data from Siemens Quadra Total Body Scanner to XNAT sessions"
+name = "xnat-exported-scans"
+description = "Uploads exported DICOM and raw data to XNAT, parsing metadata from DICOMs"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = [
-    "click >=8.1",
-    "pydicom >=2.3.1",
-    "tqdm >=4.64.1",
-    "xnat",
-]
-license = {file = "LICENSE"}
-authors = [
-    {name = "Thomas G. Close", email = "thomas.close@sydney.edu.au"},
-]
+dependencies = ["click >=8.1", "pydicom >=2.3.1", "tqdm >=4.64.1", "xnat"]
+license = { file = "LICENSE" }
+authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]
 maintainers = [
-    {name = "Thomas G. Close", email = "thomas.close@sydney.edu.au"},
+    { name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" },
 ]
-keywords = [
-    "xnat",
-    "imaging",
-    "data",
-    "repository",
-    "siemens",
-    "pet",
-    "upload"
-]
+keywords = ["xnat", "imaging", "data", "repository", "siemens", "pet", "upload"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -47,55 +32,44 @@ classifiers = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = [
-    "black",
-    "pre-commit",
-    "codespell",
-    "flake8",
-    "flake8-pyproject",
-]
+dev = ["black", "pre-commit", "codespell", "flake8", "flake8-pyproject"]
 test = [
     "pytest >=6.2.5",
     "pytest-env>=0.6.2",
     "xnat4tests >=0.3",
     "medimages4tests >=0.3.1",
+    "PyYAML",
 ]
 # Aliases
-tests = ["xnat-siemens-export-upload[test]"]
-all = ["xnat-siemens-export-upload[dev,test]"]
+tests = ["xnat-exported-scans[test]"]
+all = ["xnat-exported-scans[dev,test]"]
 
 [project.urls]
-repository = "https://github.com/Australian-Imaging-Service/xnat-siemens-export-upload"
+repository = "https://github.com/Australian-Imaging-Service/xnat_exported_scans"
 
 [project.scripts]
-xnat-checks = "xnat_siemens_export_upload.cli:cli"
+xnat-upload-exported-scans = "xnat_exported_scans.cli:cli"
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "xnat_siemens_export_upload/_version.py"
+version-file = "xnat_exported_scans/_version.py"
 
 [tool.hatch.build]
-packages = [
-    "xnat_siemens_export_upload",
-]
-exclude = [
-    "/tests",
-]
+packages = ["xnat_exported_scans"]
+exclude = ["/tests"]
 
 [tool.black]
 target-version = ['py37', 'py38']
-exclude = "xnat_checks/_version.py"
+exclude = "xnat_exported_scans/_version.py"
 
 [tool.codespell]
 ignore-words = ".codespell-ignorewords"
 
 [tool.flake8]
 doctests = true
-per-file-ignores = [
-    "__init__.py:F401"
-]
+per-file-ignores = ["__init__.py:F401"]
 max-line-length = 88
 select = "C,E,F,W,B,B950"
 extend-ignore = ['E203', 'E501', 'E129', "W503"]

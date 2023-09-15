@@ -1,28 +1,26 @@
 import os
 import logging
 from pathlib import Path
-import tempfile
-from datetime import datetime
+import shutil
+from logging.handlers import SMTPHandler
 import pytest
-import xnat4tests
 from click.testing import CliRunner
+import xnat4tests
+from medimages4tests.dummy.dicom.pet.tbp.siemens.quadra.s7vb10b import (
+    get_image,
+    get_raw_data_files,
+)
+from xnat_exported_scans.utils import logger
 
 # Set DEBUG logging for unittests
 
-log_level = logging.INFO
-
-logger = logging.getLogger("xnat-checks")
-logger.setLevel(log_level)
-
 sch = logging.StreamHandler()
-sch.setLevel(log_level)
+sch.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sch.setFormatter(formatter)
 logger.addHandler(sch)
 
-
-TEST_AWS_BUCKET = os.getenv("TEST_AWS_BUCKET", None)
-
+PROJECT_ID = "PROJECT_ID"
 
 # For debugging in IDE's don't catch raised exceptions and let the IDE
 # break at it
@@ -58,6 +56,13 @@ def xnat_archive_dir(xnat_repository):
 
 @pytest.fixture(scope="session")
 def xnat_login(xnat_repository):
+    # Ensure that project ID is present in test XNAT before we connect, as new projects
+    # often don't show up until you log-off/log-in again
+    with xnat4tests.connect() as xlogin:
+        try:
+            xlogin.projects[PROJECT_ID]
+        except KeyError:
+            xlogin.put(f"/data/archive/projects/{PROJECT_ID}")
     return xnat4tests.connect()
 
 
@@ -77,12 +82,30 @@ def cli_runner(catch_cli_exceptions):
 
 
 @pytest.fixture
-def work_dir():
-    work_dir = tempfile.mkdtemp()
-    return Path(work_dir)
+def export_dir(tmp_path: Path) -> Path:
+    dicom_dir = get_image()
+    export_dir = tmp_path / "export-dir"
+    export_dir.mkdir()
+    session_dir = export_dir / "test-session"
+    shutil.copytree(dicom_dir, session_dir)
+    get_raw_data_files(session_dir)
+    return export_dir
 
 
-@pytest.fixture(scope="session")
-def run_prefix():
-    "A datetime string used to avoid stale data left over from previous tests"
-    return datetime.strftime(datetime.now(), "%Y%m%d%H%M%S")
+@pytest.fixture
+def test_project(xnat_login, scope="session"):
+    return xnat_login.projects[PROJECT_ID]
+
+
+# Create a custom handler that captures email messages for testing
+class TestSMTPHandler(SMTPHandler):
+    def __init__(
+        self, mailhost, fromaddr, toaddrs, subject, credentials=None, secure=None
+    ):
+        super().__init__(mailhost, fromaddr, toaddrs, subject, credentials, secure)
+        self.emails = []  # A list to store captured email messages
+
+    def emit(self, record):
+        # Capture the email message and append it to the list
+        msg = self.format(record)
+        self.emails.append(msg)

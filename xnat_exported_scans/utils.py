@@ -1,15 +1,8 @@
-from logging import getLogger
+import logging
 import traceback
 
-logger = getLogger("xnat-siemens-export-upload")
-
-
-def log(msg):
-    logger.info(msg)
-
-
-def log_error(level, msg):
-    logger.error(msg)
+logger = logging.getLogger("xnat-upload-exported-scans")
+logger.setLevel(logging.INFO)
 
 
 def show_cli_trace(result):
