@@ -93,7 +93,7 @@ def export_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def test_project(xnat_login, scope="session"):
+def xnat_project(xnat_login, scope="session"):
     return xnat_login.projects[PROJECT_ID]
 
 

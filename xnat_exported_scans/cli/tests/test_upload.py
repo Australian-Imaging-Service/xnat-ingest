@@ -1,8 +1,8 @@
-from xnat_siemens_export_upload.cli.upload import upload
-from xnat_siemens_export_upload.utils import show_cli_trace
+from xnat_exported_scans.cli.upload import upload
+from xnat_exported_scans.utils import show_cli_trace
 
 
-def test_upload(xnat_project, xnat_server, cli_runner, run_prefix, export_dir):
+def test_upload(xnat_project, xnat_server, cli_runner, export_dir):
     # Get test image data
 
     SESSION_ID = "987654321"
@@ -18,11 +18,13 @@ def test_upload(xnat_project, xnat_server, cli_runner, run_prefix, export_dir):
         upload,
         [
             str(export_dir),
+            "--non-dicom",
+            r".*PET_?(\w+).*PET_?(\w+).*\.IMA"
         ],
         env={
-            "XNAT_HOST": xnat_server,
-            "XNAT_USER": "admin",
-            "XNAT_PASS": "admin",
+            "XNAT_EXPORTED_SCANS_HOST": xnat_server,
+            "XNAT_EXPORTED_SCANS_USER": "admin",
+            "XNAT_EXPORTED_SCANS_PASS": "admin",
         }
     )
 

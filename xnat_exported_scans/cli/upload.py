@@ -106,21 +106,21 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
 @click.option(
     "--project-field",
     type=DicomField,
-    default=DicomField("StudyID"),
+    default="StudyID",
     envvar="XNAT_EXPORTED_SCANS_PROJECT",
     help=("The keyword or tag of the DICOM field to extract the XNAT project ID from "),
 )
 @click.option(
     "--subject-field",
     type=DicomField,
-    default=DicomField("PatientID"),
+    default="PatientID",
     envvar="XNAT_EXPORTED_SCANS_SUBJECT",
     help=("The keyword or tag of the DICOM field to extract the XNAT subject ID from "),
 )
 @click.option(
     "--session-field",
     type=DicomField,
-    default=DicomField("AccessionNumber"),
+    default="AccessionNumber",
     envvar="XNAT_EXPORTED_SCANS_SESSION",
     help=(
         "The keyword or tag of the DICOM field to extract the XNAT imaging session ID from "
@@ -128,7 +128,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
 )
 @click.option(
     "--non-dicom",
-    name="non_dicoms",
+    "non_dicoms",
     multiple=True,
     type=NonDicom,
     envvar="XNAT_EXPORTED_SCANS_NONDICOM",
@@ -163,7 +163,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
 )
 @click.option(
     "--log-email",
-    name="log_emails",
+    "log_emails",
     type=LoggerEmail,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
@@ -211,7 +211,6 @@ def upload(
     session_field,
     non_dicoms,
     dicom_ext,
-    overwrite,
     delete,
     log_file,
     log_emails,
@@ -246,7 +245,7 @@ def upload(
             / "upload-logs"
             / (time.strftime("%Y%m%d", time.localtime()) + ".log")
         )
-    log_file.parent.mkdir(exists_ok=True)
+    log_file.parent.mkdir(exist_ok=True)
     log_file_hdle = logging.FileHandler(log_file)
     log_file_hdle.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -282,7 +281,7 @@ def upload(
                 )
                 continue
             upload_staging_dir = session_dir / staging_dir_name
-            upload_staging_dir.mkdir(exists_ok=True)
+            upload_staging_dir.mkdir(exist_ok=True)
             spec_file = upload_staging_dir / "UPLOAD-SPECIFICATION.yaml"
             if spec_file.exists():
                 try:
@@ -397,18 +396,10 @@ def upload(
             # Extract scan and resource labels from raw data files to link to upload
             # directory
             for non_dicom_re in non_dicom_res:
-                    
-                non_dicom_files = 
-                for raw_file in sorted(session_dir.glob("*.ptd")):
-                    label_comps = re.findall(r".*PET(\w+)", raw_file.name)
-                    if not label_comps:
-                        logger.error(
-                            "Could not extract scan label from raw file name '%s'"
-                            "in '%s', and therefore cannot upload",
-                            raw_file.name,
-                            str(session_dir),
-                        )
-                        parsing_errors = True
+                non_dicom_files = [p for p in session_dir.iterdir() if non_dicom_re.match(p.name)]
+                for non_dicom_file in non_dicom_files:
+                    match = non_dicom_re.match(non_dicom_file.name)
+                    label_comps = list(match.groups())
                     scan_id = "_".join(label_comps).strip("_").lower()
                     resource_label = label_comps[-1].strip("_").lower()
                     resource_dir = upload_staging_dir / scan_id / resource_label
@@ -419,8 +410,8 @@ def upload(
                             upload_staging_dir / f"{scan_id}{index}" / resource_label
                         )
                     resource_dir.mkdir(parents=True)
-                    target_path = resource_dir / raw_file.name
-                    target_path.hardlink_to(raw_file)
+                    target_path = resource_dir / non_dicom_file.name
+                    target_path.hardlink_to(non_dicom_file)
             if parsing_errors:
                 logger.info(
                     f"Aborting upload of '{session_dir}' because was not able to labels "
@@ -439,7 +430,7 @@ def upload(
                 )
                 for resource_dir in scan_dir.iterdir():
                     resource_name = resource_dir.name
-                    xresource = xscan.create_resource()
+                    xresource = xscan.create_resource(resource_name)
                     xresource.upload_dir(resource_dir)
                     remote_checksums = get_checksums(xresource)
                     calc_checksums = calculate_checksums(resource_dir)
@@ -464,7 +455,7 @@ def upload(
                         )
                         break
                 else:
-                    logger.info(f"Uploaded '{raw_file}' in '{session_dir}'")
+                    logger.info(f"Uploaded '{scan_id}' in '{session_dir}'")
             if upload_errors:
                 if partial_upload:
                     logger.error(
