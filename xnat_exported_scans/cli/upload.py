@@ -127,6 +127,12 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
     ),
 )
 @click.option(
+    "--dicom-export-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=("Location of exported DICOMs if different from the export_dir"),
+)
+@click.option(
     "--non-dicom",
     "non_dicoms",
     multiple=True,
@@ -201,6 +207,15 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
     envvar="XNAT_EXPORTED_SCANS_EXCLUDEDICOM",
     help=("Whether to exclude DICOM scans from upload or not"),
 )
+@click.option(
+    "--ignore",
+    type=str,
+    multiple=True,
+    help=(
+        "File patterns (regular expressions) to ignore, all files must either be "
+        "explicitly included or ignored"
+    ),
+)
 def upload(
     export_dir,
     server,
@@ -209,6 +224,7 @@ def upload(
     project_field,
     subject_field,
     session_field,
+    dicom_export_dir,
     non_dicoms,
     dicom_ext,
     delete,
@@ -217,6 +233,7 @@ def upload(
     mail_server,
     staging_dir_name,
     exclude_dicoms,
+    ignore,
 ):
     # Configure the email logger
     if log_emails:
@@ -267,10 +284,13 @@ def upload(
             "\n\n".join("\n---\n".join(err) for err in re_errors)
         )
 
+    session_dirs = [
+        d
+        for d in (dicom_export_dir if dicom_export_dir else export_dir).iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    ]
+
     with connect(server=server, user=user, password=password) as xlogin:
-        session_dirs = [
-            d for d in export_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
-        ]
         for session_dir in tqdm(
             session_dirs, f"Parsing scan export directories in '{export_dir}'"
         ):
@@ -367,6 +387,10 @@ def upload(
                 }
                 yaml.dump(spec, spec_file)
                 continue  # Skip this session, will require manual editing of specs
+            if dicom_export_dir:
+                non_dicom_dir = None
+            else:
+                non_dicom_dir = None
             xproject = xlogin.projects[project_id]
             xsubject = xlogin.classes.SubjectData(label=subject_id, parent=xproject)
             try:
@@ -396,7 +420,9 @@ def upload(
             # Extract scan and resource labels from raw data files to link to upload
             # directory
             for non_dicom_re in non_dicom_res:
-                non_dicom_files = [p for p in session_dir.iterdir() if non_dicom_re.match(p.name)]
+                non_dicom_files = [
+                    p for p in session_dir.iterdir() if non_dicom_re.match(p.name)
+                ]
                 for non_dicom_file in non_dicom_files:
                     match = non_dicom_re.match(non_dicom_file.name)
                     label_comps = list(match.groups())
@@ -471,6 +497,8 @@ def upload(
                 logger.info(msg)
                 if delete:
                     shutil.rmtree(session_dir)
+                    if non_dicom_dir:
+                        shutil.rmtree(non_dicom_dir)
                     logger.info(f"Successfully deleted '{session_dir}' after upload")
 
 
