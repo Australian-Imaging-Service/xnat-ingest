@@ -17,15 +17,27 @@ import hashlib
 import logging.config
 import logging.handlers
 import yaml
+import attrs
 import click
 from tqdm import tqdm
 import pydicom
 from xnat import connect
 from .base import cli
 from ..utils import logger
+from 
 
 
 HASH_CHUNK_SIZE = 2**20
+
+
+class DicomParseError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+
+class UnsupportedModalityError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
 
 
 class LoggerEmail:
@@ -79,6 +91,14 @@ class DicomField:
 
     def __str__(self):
         return f"'{self.keyword}' field ({','.join(self.tag)})"
+
+
+@attrs.define
+class SessionMetadata:
+    project_id: str
+    subject_id: str
+    session_id: str
+    non_dicom_dir_name: str
 
 
 @cli.command(
@@ -143,6 +163,12 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
         "provided in a environment variable, multiple patterns are delimited by the '%' "
         "symbol"
     ),
+)
+@click.option(
+    "--session-dir-pattern",
+    type=str,
+    default="{FirstName}_{LastName}_{StudyDate}.*",
+    help="Pattern by which to recognise the corresponding non-dicom dir in the export dir"
 )
 @click.option(
     "--dicom-ext",
@@ -314,111 +340,76 @@ def upload(
                         + traceback.format_exc()
                     )
                     continue
-                loaded_ids = [
-                    i
-                    for i in ("project", "subject", "session")
-                    if spec.get(i) is not None
-                ]
-                logger.info(f"Loaded IDs for {loaded_ids} from '{spec_file}'")
+                logger.info(f"Loaded IDs {session_dir} from '{spec_file}':\n{spec}")
             else:
                 logger.info(f"Did not find manual specification file at '{spec_file}'")
-                project_id = subject_id = session_id = None
-            by_scan_id = defaultdict(list)
-            session_id_dct = defaultdict(list)
-            subject_id_dct = defaultdict(list)
-            project_id_dct = defaultdict(list)
-            for dcm_file in dicom_files:
-                dcm = pydicom.dcmread(dcm_file)
-                by_scan_id[dcm.SeriesNumber].append(dcm_file)
-                project_id_dct[dcm.get(project_field.keyword)].append(dcm_file)
-                subject_id_dct[dcm.get(subject_field.keyword)].append(dcm_file)
-                session_id_dct[dcm.get(session_field.keyword)].append(dcm_file)
-            id_errors = False
-            if project_id is None:
-                project_ids = list(project_id_dct)
-                if len(list(project_ids)) > 1:
-                    logger.error(
-                        f"Incosistent project IDs found in {project_field}:\n"
-                        + json.dumps(project_id_dct, indent=4)
-                    )
-                    id_errors = True
-                else:
-                    project_id = project_ids[0]
-                    if not project_id:
-                        logger.error(f"Project ID ({project_field}) not provided")
-                        id_errors = True
-            if subject_id is None:
-                subject_ids = list(subject_id_dct)
-                if len(subject_ids) > 1:
-                    logger.error(
-                        f"Incosistent subject IDs found in {subject_field}:\n"
-                        + json.dumps(subject_id_dct, indent=4)
-                    )
-                    id_errors = True
-                else:
-                    # FIXME: space is present in test data, but shouldn't be in prod
-                    subject_id = subject_ids[0].replace(" ", "_")
-                    if not subject_id:
-                        logger.error(f"Subject ID ({subject_field}) not provided")
-                        id_errors = True
-            if session_id is None:
-                session_ids = list(session_id_dct)
-                if len(session_ids) > 1:
-                    logger.error(
-                        f"Incosistent session IDs found in {session_field}:\n"
-                        + json.dumps(session_id_dct, indent=4)
-                    )
-                    id_errors = True
-                else:
-                    session_id = session_ids[0]
-                    if not session_id:
-                        logger.error(f"Session ID ({session_field}) not provided")
-                        id_errors = True
-            if id_errors:
-                logger.error(
-                    f"Aborting upload of '{session_dir}' directory due to errors "
-                    "extracting the IDs (see above)"
+                spec = {}
+            try:
+                dicom_scans, metadata = parse_dicom_headers(
+                    dicom_files, project_field, subject_field, session_field, spec
                 )
-                spec = {
-                    "project": project_id,
-                    "subject": subject_id,
-                    "session": session_id,
-                    "overwrite": False,
-                }
-                yaml.dump(spec, spec_file)
+            except DicomParseError as e:
+                logger.error(
+                    f"Aborting upload of '{session_dir}' directory due to errors:\n"
+                    + e.msg
+                )
+                yaml.dump(
+                    {
+                        "project": metadata.project_id,
+                        "subject": metadata.subject_id,
+                        "session": metadata.session_id,
+                        "overwrite": False,
+                    },
+                    spec_file,
+                )
                 continue  # Skip this session, will require manual editing of specs
             if dicom_export_dir:
                 non_dicom_dir = None
             else:
                 non_dicom_dir = None
-            xproject = xlogin.projects[project_id]
-            xsubject = xlogin.classes.SubjectData(label=subject_id, parent=xproject)
+            xproject = xlogin.projects[metadata.project_id]
+            xsubject = xlogin.classes.SubjectData(label=metadata.subject_id, parent=xproject)
             try:
-                xsession = xproject.experiments[session_id]
+                xsession = xproject.experiments[metadata.session_id]
             except KeyError:
-                xsession = xlogin.classes.MrSessionData(
-                    label=session_id, parent=xsubject
-                )
-            session_path = f"{project_id}:{subject_id}:{session_id}"
+                modalities = set(s.modality for s in dicom_scans.values())
+                if "MR" in modalities:
+                    SessionClass = xlogin.classes.MrSessionData
+                elif "PT" in modalities:
+                    SessionClass = xlogin.classes.PetSessionData
+                elif "CT" in modalities:
+                    SessionClass = xlogin.classes.CtSessionData
+                else:
+                    logger.error(
+                        f"Found the following unsupported modalities in {session_dir}: {modalities}"
+                    )
+                    continue
+                xsession = SessionClass(label=metadata.session_id, parent=xsubject)
+            session_path = f"{metadata.project_id}:{metadata.subject_id}:{metadata.session_id}"
             # Anonymise DICOMs and save to directory prior to upload
-            if not exclude_dicoms:
+            if exclude_dicoms:
+                logger.info("Omitting DICOMS as `--exclude-dicoms` is set")
+            else:
                 logger.info(f"Uploading DICOMS from '{session_dir}' to {session_path}")
-                for scan_id, dicom_files in by_scan_id.items():
-                    resource_dir = upload_staging_dir / str(scan_id) / "DICOM"
-                    resource_dir.mkdir(parents=True)
-                    for dicom_file in dicom_files:
+                for scan_id, dicom_scan in dicom_scans.items():
+                    scan_dir = upload_staging_dir / str(scan_id)
+                    scan_dir.mkdir()
+                    modality_path = scan_dir / "MODALITY"
+                    modality_path.write_text(dicom_scan.modality)
+                    resource_dir = scan_dir / "DICOM"
+                    resource_dir.mkdir()
+                    for dicom_file in dicom_scan.files:
                         dcm = pydicom.dcmread(dicom_file)
+                        dcm.PatientBirthDate = dcm.PatientBirthDate[:4] + "0101"
                         for field in FIELDS_TO_DELETE:
                             try:
                                 del dcm[field]
                             except KeyError:
                                 pass
                         dcm.save_as(resource_dir / dicom_file.name)
-            else:
-                logger.info("Omitting DICOMS as `--exclude-dicoms` is set")
-            parsing_errors = False
             # Extract scan and resource labels from raw data files to link to upload
             # directory
+            parsing_errors = False
             for non_dicom_re in non_dicom_res:
                 non_dicom_files = [
                     p for p in session_dir.iterdir() if non_dicom_re.match(p.name)
@@ -451,10 +442,28 @@ def upload(
                 f"Uploading scans found in {session_dir}",
             ):
                 scan_id = scan_dir.name
-                xscan = xlogin.classes.MrScanData(
+                modality_path = scan_dir / "MODALITY"
+                if modality_path.exists():
+                    modality = modality_path.read_text()
+                    if modality == "SC":
+                        ScanClass = xlogin.classes.ScScanData
+                    elif modality == "MR":
+                        ScanClass = xlogin.classes.MrScanData
+                    elif modality == "PT":
+                        ScanClass = xlogin.classes.PetScanData
+                    elif modality == "CT":
+                        ScanClass = xlogin.classes.CtScanData
+                    else:
+                        upload_errors = True
+                        logger.error(
+                            f"Unsupported modality for {scan_id} in {session_dir}: {modality}"
+                        )
+                xscan = ScanClass(
                     id=scan_id, type=scan_id, parent=xsession
                 )
                 for resource_dir in scan_dir.iterdir():
+                    if not resource_dir.is_dir():
+                        continue
                     resource_name = resource_dir.name
                     xresource = xscan.create_resource(resource_name)
                     xresource.upload_dir(resource_dir)
@@ -491,6 +500,11 @@ def upload(
                 else:
                     logger.error(f"Could not upload any files from '{session_dir}'")
             else:
+                # Extract DICOM metadata
+                xlogin.put(f"/data/experiments/{xsession.id}?pullDataFromHeaders=true")
+                xlogin.put(f"/data/experiments/{xsession.id}?fixScanTypes=true")
+                xlogin.put(f"/data/experiments/{xsession.id}?triggerPipelines=true")
+
                 msg = f"Succesfully uploaded all files in '{session_dir}'"
                 if delete:
                     msg += ", deleting"
@@ -531,81 +545,3 @@ def calculate_checksums(resource_dir: Path) -> ty.Dict[str, str]:
         checksums[fpath.name] = checksum
     return checksums
 
-
-FIELDS_TO_MODIFY = [
-    ("0010", "0030"),  # Patient's Birth Date
-    ("0010", "1010"),  # Patient's Age
-]
-
-
-FIELDS_TO_DELETE = [
-    ("0008", "0014"),  # Instance Creator UID
-    ("0008", "1111"),  # Referenced Performed Procedure Step SQ
-    ("0008", "1120"),  # Referenced Patient SQ
-    ("0008", "1140"),  # Referenced Image SQ
-    ("0008", "0096"),  # Referring Physician Identification SQ
-    ("0008", "1032"),  # Procedure Code SQ
-    ("0008", "1048"),  # Physician(s) of Record
-    ("0008", "1049"),  # Physician(s) of Record Identification SQ
-    ("0008", "1050"),  # Performing Physicians' Name
-    ("0008", "1052"),  # Performing Physician Identification SQ
-    ("0008", "1060"),  # Name of Physician(s) Reading Study
-    ("0008", "1062"),  # Physician(s) Reading Study Identification SQ
-    ("0008", "1110"),  # Referenced Study SQ
-    ("0008", "1111"),  # Referenced Performed Procedure Step SQ
-    ("0008", "1250"),  # Related Series SQ
-    ("0008", "9092"),  # Referenced Image Evidence SQ
-    ("0008", "0080"),  # Institution Name
-    ("0008", "0081"),  # Institution Address
-    ("0008", "0082"),  # Institution Code Sequence
-    ("0008", "0092"),  # Referring Physician's Address
-    ("0008", "0094"),  # Referring Physician's Telephone Numbers
-    ("0008", "009C"),  # Consulting Physician's Name
-    ("0008", "1070"),  # Operators' Name
-    ("0010", "4000"),  # Patient Comments
-    ("0010", "0010"),  # Patient's Name
-    ("0010", "0021"),  # Issuer of Patient ID
-    ("0010", "0032"),  # Patient's Birth Time
-    ("0010", "0050"),  # Patient's Insurance Plan Code SQ
-    ("0010", "0101"),  # Patient's Primary Language Code SQ
-    ("0010", "1000"),  # Other Patient IDs
-    ("0010", "1001"),  # Other Patient Names
-    ("0010", "1002"),  # Other Patient IDs SQ
-    ("0010", "1005"),  # Patient's Birth Name
-    ("0010", "1010"),  # Patient's Age
-    ("0010", "1040"),  # Patient's Address
-    ("0010", "1060"),  # Patient's Mother's Birth Name
-    ("0010", "1080"),  # Military Rank
-    ("0010", "1081"),  # Branch of Service
-    ("0010", "1090"),  # Medical Record Locator
-    ("0010", "2000"),  # Medical Alerts
-    ("0010", "2110"),  # Allergies
-    ("0010", "2150"),  # Country of Residence
-    ("0010", "2152"),  # Region of Residence
-    ("0010", "2154"),  # Patient's Telephone Numbers
-    ("0010", "2160"),  # Ethnic Group
-    ("0010", "2180"),  # Occupation
-    ("0010", "21A0"),  # Smoking Status
-    ("0010", "21B0"),  # Additional Patient History
-    ("0010", "21C0"),  # Pregnancy Status
-    ("0010", "21D0"),  # Last Menstrual Date
-    ("0010", "21F0"),  # Patient's Religious Preference
-    ("0010", "2203"),  # Patient's Sex Neutered
-    ("0010", "2297"),  # Responsible Person
-    ("0010", "2298"),  # Responsible Person Role
-    ("0010", "2299"),  # Responsible Organization
-    ("0020", "9221"),  # Dimension Organization SQ
-    ("0020", "9222"),  # Dimension Index SQ
-    ("0038", "0010"),  # Admission ID
-    ("0038", "0011"),  # Issuer of Admission ID
-    ("0038", "0060"),  # Service Episode ID
-    ("0038", "0061"),  # Issuer of Service Episode ID
-    ("0038", "0062"),  # Service Episode Description
-    ("0038", "0500"),  # Patient State
-    ("0038", "0100"),  # Pertinent Documents SQ
-    ("0040", "0260"),  # Performed Protocol Code SQ
-    ("0088", "0130"),  # Storage Media File-Set ID
-    ("0088", "0140"),  # Storage Media File-Set UID
-    ("0400", "0561"),  # Original Attributes Sequence
-    ("5200", "9229"),  # Shared Functional Groups SQ
-]
