@@ -7,7 +7,13 @@ name = "xnat-exported-scans"
 description = "Uploads exported DICOM and raw data to XNAT, parsing metadata from DICOMs"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["click >=8.1", "pydicom >=2.3.1", "tqdm >=4.64.1", "xnat"]
+dependencies = [
+    "click >=8.1",
+    "fileformats-medimage-extras",
+    "pydicom >=2.3.1",
+    "tqdm >=4.64.1",
+    "xnat",
+]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]
 maintainers = [
@@ -48,7 +54,7 @@ all = ["xnat-exported-scans[dev,test]"]
 repository = "https://github.com/Australian-Imaging-Service/xnat_exported_scans"
 
 [project.scripts]
-xnat-upload-exported-scans = "xnat_exported_scans.cli:cli"
+xnat-ingest = "xnat_ingest.cli:cli"
 
 [tool.hatch.version]
 source = "vcs"

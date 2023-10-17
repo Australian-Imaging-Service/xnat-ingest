@@ -7,37 +7,27 @@
 # - [ ] Pull info from DICOM headers/OHIF viewer
 from pathlib import Path
 import re
-import json
 import shutil
 import traceback
 import time
 import typing as ty
-from collections import defaultdict
 import hashlib
 import logging.config
 import logging.handlers
-import yaml
-import attrs
 import click
 from tqdm import tqdm
 import pydicom
 from xnat import connect
 from .base import cli
 from ..utils import logger
-from 
+from fileformats.core import from_paths
+from fileformats.medimage import DicomSeries
+from ..exceptions import DicomParseError
+from ..session import ImagingSession
+from ..spec import UploadSpec
 
 
 HASH_CHUNK_SIZE = 2**20
-
-
-class DicomParseError(Exception):
-    def __init__(self, msg):
-        self.msg = msg
-
-
-class UnsupportedModalityError(Exception):
-    def __init__(self, msg):
-        self.msg = msg
 
 
 class LoggerEmail:
@@ -91,14 +81,6 @@ class DicomField:
 
     def __str__(self):
         return f"'{self.keyword}' field ({','.join(self.tag)})"
-
-
-@attrs.define
-class SessionMetadata:
-    project_id: str
-    subject_id: str
-    session_id: str
-    non_dicom_dir_name: str
 
 
 @cli.command(
@@ -168,7 +150,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_EXPORTED_SCANS_P
     "--session-dir-pattern",
     type=str,
     default="{FirstName}_{LastName}_{StudyDate}.*",
-    help="Pattern by which to recognise the corresponding non-dicom dir in the export dir"
+    help="Pattern by which to recognise the corresponding non-dicom dir in the export dir",
 )
 @click.option(
     "--dicom-ext",
@@ -267,7 +249,7 @@ def upload(
             raise ValueError(
                 "Mail server needs to be provided, either by `--mail-server` option or "
                 "XNAT_EXPORTED_SCANS_MAILSERVER environment variable if logger emails "
-                "are provided:" + ", ".join(log_emails)
+                "are provided: " + ", ".join(log_emails)
             )
         for log_email in log_emails:
             smtp_handler = logging.handlers.SMTPHandler(
@@ -320,10 +302,12 @@ def upload(
         for session_dir in tqdm(
             session_dirs, f"Parsing scan export directories in '{export_dir}'"
         ):
-            dicom_files = list(session_dir.glob("*" + dicom_ext))
-            if not dicom_files:
+            dicom_scans = from_paths(
+                list(session_dir.glob("*" + dicom_ext)), DicomSeries
+            )
+            if not dicom_scans:
                 logger.error(
-                    f"Did not find any dicom files (*{dicom_ext}) in directory '{session_dir}",
+                    f"Did not find any dicom series (*{dicom_ext}) in directory '{session_dir}",
                 )
                 continue
             upload_staging_dir = session_dir / staging_dir_name
@@ -331,8 +315,7 @@ def upload(
             spec_file = upload_staging_dir / "UPLOAD-SPECIFICATION.yaml"
             if spec_file.exists():
                 try:
-                    with open(spec_file) as f:
-                        spec = yaml.load(f, Loader=yaml.SafeLoader)
+                    metadata = ImagingSession.load(spec_file)
                 except Exception:
                     logger.error(
                         f"Could not load specification file from '{spec_file}', please "
@@ -340,35 +323,28 @@ def upload(
                         + traceback.format_exc()
                     )
                     continue
-                logger.info(f"Loaded IDs {session_dir} from '{spec_file}':\n{spec}")
             else:
                 logger.info(f"Did not find manual specification file at '{spec_file}'")
-                spec = {}
+                metadata = ImagingSession()
             try:
-                dicom_scans, metadata = parse_dicom_headers(
-                    dicom_files, project_field, subject_field, session_field, spec
+                metadata.extract_ids(
+                    dicom_scans, project_field, subject_field, session_field
                 )
             except DicomParseError as e:
                 logger.error(
                     f"Aborting upload of '{session_dir}' directory due to errors:\n"
                     + e.msg
                 )
-                yaml.dump(
-                    {
-                        "project": metadata.project_id,
-                        "subject": metadata.subject_id,
-                        "session": metadata.session_id,
-                        "overwrite": False,
-                    },
-                    spec_file,
-                )
+                metadata.save(spec_file)
                 continue  # Skip this session, will require manual editing of specs
             if dicom_export_dir:
                 non_dicom_dir = None
             else:
                 non_dicom_dir = None
             xproject = xlogin.projects[metadata.project_id]
-            xsubject = xlogin.classes.SubjectData(label=metadata.subject_id, parent=xproject)
+            xsubject = xlogin.classes.SubjectData(
+                label=metadata.subject_id, parent=xproject
+            )
             try:
                 xsession = xproject.experiments[metadata.session_id]
             except KeyError:
@@ -385,7 +361,9 @@ def upload(
                     )
                     continue
                 xsession = SessionClass(label=metadata.session_id, parent=xsubject)
-            session_path = f"{metadata.project_id}:{metadata.subject_id}:{metadata.session_id}"
+            session_path = (
+                f"{metadata.project_id}:{metadata.subject_id}:{metadata.session_id}"
+            )
             # Anonymise DICOMs and save to directory prior to upload
             if exclude_dicoms:
                 logger.info("Omitting DICOMS as `--exclude-dicoms` is set")
@@ -398,10 +376,10 @@ def upload(
                     modality_path.write_text(dicom_scan.modality)
                     resource_dir = scan_dir / "DICOM"
                     resource_dir.mkdir()
-                    for dicom_file in dicom_scan.files:
+                    for dicom_file in dicom_scan.fspaths:
                         dcm = pydicom.dcmread(dicom_file)
                         dcm.PatientBirthDate = dcm.PatientBirthDate[:4] + "0101"
-                        for field in FIELDS_TO_DELETE:
+                        for field in DEFAULT_FIELDS_TO_ANONYMISE:
                             try:
                                 del dcm[field]
                             except KeyError:
@@ -458,9 +436,7 @@ def upload(
                         logger.error(
                             f"Unsupported modality for {scan_id} in {session_dir}: {modality}"
                         )
-                xscan = ScanClass(
-                    id=scan_id, type=scan_id, parent=xsession
-                )
+                xscan = ScanClass(id=scan_id, type=scan_id, parent=xsession)
                 for resource_dir in scan_dir.iterdir():
                     if not resource_dir.is_dir():
                         continue
@@ -544,4 +520,3 @@ def calculate_checksums(resource_dir: Path) -> ty.Dict[str, str]:
             raise RuntimeError("Could not create digest of '{}' ".format(fpath))
         checksums[fpath.name] = checksum
     return checksums
-
