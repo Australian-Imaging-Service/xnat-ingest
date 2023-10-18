@@ -51,7 +51,7 @@ tests = ["xnat-exported-scans[test]"]
 all = ["xnat-exported-scans[dev,test]"]
 
 [project.urls]
-repository = "https://github.com/Australian-Imaging-Service/xnat_exported_scans"
+repository = "https://github.com/Australian-Imaging-Service/xnat_ingest"
 
 [project.scripts]
 xnat-ingest = "xnat_ingest.cli:cli"
@@ -60,15 +60,15 @@ xnat-ingest = "xnat_ingest.cli:cli"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "xnat_exported_scans/_version.py"
+version-file = "xnat_ingest/_version.py"
 
 [tool.hatch.build]
-packages = ["xnat_exported_scans"]
+packages = ["xnat_ingest"]
 exclude = ["/tests"]
 
 [tool.black]
 target-version = ['py37', 'py38']
-exclude = "xnat_exported_scans/_version.py"
+exclude = "xnat_ingest/_version.py"
 
 [tool.codespell]
 ignore-words = ".codespell-ignorewords"

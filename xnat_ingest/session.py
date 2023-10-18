@@ -2,7 +2,9 @@ import typing as ty
 import yaml
 import logging
 import attrs
+from pathlib import Path
 from fileformats.medimage import DicomSeries
+from fileformats.generic import File
 from .exceptions import DicomParseError
 
 logger = logging.getLogger("xnat-ingest")
@@ -10,21 +12,32 @@ logger = logging.getLogger("xnat-ingest")
 
 @attrs.define
 class ImagingSession:
+
+    dicoms: ty.List[DicomSeries]
+    non_dicoms: ty.List[File]
+
     project_id: str | None = None
     subject_id: str | None = None
     session_id: str | None = None
     non_dicom_dir_name: str | None = None
 
-    def extract(
+    @classmethod
+    def load(
         self,
-        scans: ty.List[DicomSeries],
+        dicom_files: Path,
+        non_dicoms_dir: Path,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
-        non_dicom_pattern: str = "{FirstName}_{LastName}"
-    ):
+        non_dicom_pattern: str = "{PatientName.given_name}_{PatientName.last_name}"
+    ) -> ty.List["ImagingSession"]:
+
+
+        dicoms = DicomSeries.from_paths()
+        
+
         def get_id(field):
-            ids = set(s[field] for s in scans)
+            ids = set(s[field] for s in dicoms)
             if len(ids) > 1:
                 raise DicomParseError(
                     f"Multiple values for '{field}' tag found in dicom session"
@@ -39,7 +52,7 @@ class ImagingSession:
             self.session_id = get_id(session_field)
 
         if self.non_dicom_dir_name:
-            names = set(non_dicom_pattern.format(**s.metadata) for s in scans)
+            names = set(non_dicom_pattern.format(**s.metadata) for s in dicoms)
             if len(names) > 1:
                 raise DicomParseError(
                     "Multiple values for non-DICOM directory name found in dicom session"
@@ -63,6 +76,35 @@ class ImagingSession:
             },
             file_name,
         )
+
+    @attrs.define
+    class Spec:
+
+        @attrs.define
+        class DicomSpec:
+
+            type: str
+
+        @attrs.define
+        class NonDicomSpec:
+
+            name: str
+
+        dicoms: ty.List[DicomSpec]
+        non_dicoms: ty.List[NonDicomSpec]
+
+        @classmethod
+        def load(cls, file_name) -> "ImagingSession.Spec":
+            with open(file_name) as f:
+                spec = yaml.load(f, Loader=yaml.SafeLoader)
+            logger.info(f"Loaded upload spec from '{file_name}':\n{spec}")
+            return ImagingSession.Spec(**spec)
+
+        def save(self, file_name):
+            yaml.dump(
+                attrs.asdict(self, recurse=True),
+                file_name,
+            )
 
 
 DICOM_FIELDS_TO_ANONYMISE = [
