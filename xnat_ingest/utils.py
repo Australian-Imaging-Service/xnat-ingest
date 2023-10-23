@@ -34,3 +34,25 @@ class RegexExtractor:
                 )
             extracted = list(match.groups())[0]
         return extracted
+
+
+def add_exc_note(e, note):
+    """Adds a note to an exception in a Python <3.11 compatible way
+
+    Parameters
+    ----------
+    e : Exception
+        the exception to add the note to
+    note : str
+        the note to add
+
+    Returns
+    -------
+    Exception
+        returns the exception again
+    """
+    if hasattr(e, "add_note"):
+        e.add_note(note)
+    else:
+        e.args = (e.args[0] + "\n" + note,)
+    return e

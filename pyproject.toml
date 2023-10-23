@@ -13,6 +13,8 @@ dependencies = [
     "pydicom >=2.3.1",
     "tqdm >=4.64.1",
     "xnat",
+    "arcana",
+    "arcana-xnat",
 ]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]

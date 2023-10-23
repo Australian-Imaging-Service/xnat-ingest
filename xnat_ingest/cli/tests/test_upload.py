@@ -2,6 +2,9 @@ from xnat_exported_scans.cli.upload import upload
 from xnat_exported_scans.utils import show_cli_trace
 
 
+PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
+
+
 def test_upload(xnat_project, xnat_server, cli_runner, export_dir):
     # Get test image data
 
