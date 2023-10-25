@@ -1,28 +1,34 @@
 import typing as ty
-import yaml
+from glob import glob
 import logging
-import itertools
+import os.path
 from functools import cached_property
 from copy import copy
+import yaml
 import attrs
 from collections import defaultdict
 from pathlib import Path
 import pydicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet
+from arcana.core.data.set import Dataset
 from .exceptions import DicomParseError
-from .utils import add_exc_note
+from .utils import add_exc_note, pattern_transform
 
 logger = logging.getLogger("xnat-ingest")
 
 
 @attrs.define
-class DicomSession:
+class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    scans: ty.List[DicomSeries] = attrs.field(factory=list)
-    non_dicoms: ty.Dict[str, FileSet] = attrs.field(factory=dict)
+    dicoms: ty.List[DicomSeries] = attrs.field(factory=list)
+    non_dicoms_pattern: str | None = None
+    non_dicom_fspaths: ty.List[Path] = attrs.field(factory=list)
+
+    def __getitem__(self, fieldname: str) -> ty.Any:
+        return self.metadata[fieldname]
 
     @property
     def name(self):
@@ -30,43 +36,70 @@ class DicomSession:
 
     @cached_property
     def modalities(self) -> ty.Set[str]:
-        return set(str(s["Modality"]) for s in self.scans)
+        return set(self["Modality"])
 
     @property
-    def resources(self) -> ty.Iterator[ty.Tuple[str, FileSet]]:
-        """Returns combined DICOM and non-DICOM resources along with the ID to
-        upload them to in a tuple pair"""
-        return itertools.chain(
-            [(str(s.series_number), s) for s in self.scans], self.non_dicoms.items()
-        )
+    def dicom_dir(self) -> Path:
+        "A common parent directory for all the top-level paths in the file-set"
+        return Path(os.path.commonpath(p.parent for p in self.dicoms))  # type: ignore
+
+    def select_resources(
+        self, dataset: Dataset
+    ) -> ty.Iterator[ty.Tuple[str, str, FileSet]]:
+        """Returns selected resources that match the columns in the dataset definition
+
+        Parameters
+        ----------
+        dataset : Dataset
+            Arcana dataset definition
+
+        Yields
+        ------
+        scan_id : str
+            the ID of the scan should be uploaded to
+        scan_type : str
+            the desc/type to assign to the scan
+        scan : FileSet
+            a fileset to upload
+        """
+        raise NotImplementedError
 
     @cached_property
     def metadata(self):
-        collated = copy(self.scans[0].metadata)
-        if len(self.scans) > 1:
-            for key, val in self.scans[1].metadata.items():
+        collated = copy(self.dicoms[0].metadata)
+        if len(self.dicoms) > 1:
+            for key, val in self.dicoms[1].metadata.items():
                 if val != collated[key]:  # Turn field into list
                     collated[key] = [collated[key], val]
-        for dicom in self.scans[2:]:
+        for dicom in self.dicoms[2:]:
             for key, val in dicom.metadata.items():
                 if val != collated[key]:
                     collated[key].append(val)
         return collated
 
     @classmethod
-    def from_paths(
+    def load(
         cls,
-        dicom_paths: ty.Iterable[Path],
+        dicoms_path: str | Path,
+        non_dicoms_pattern: str | None = None,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
-    ) -> ty.List["DicomSession"]:
+    ) -> ty.List["ImagingSession"]:
         """Loads all imaging sessions from a list of DICOM files
 
         Parameters
         ----------
-        dicom_paths : Iterable[Path]
-            paths to DICOM files to construct the sessions from
+        dicoms_path : str or Path
+            Path to a directory containging the DICOMS to load the sessions from, or a
+            glob string that selects the paths
+        non_dicoms_pattern : str
+            Pattern used to select the non-dicom files to include in the session. The
+            pattern can contain string template placeholders corresponding to DICOM
+            metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
+            are substituted before the string is used to glob the non-DICOM files. In
+            order to deidentify the filenames, the pattern must explicitly reference all
+            identifiable fields in string template placeholders.
         project_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
@@ -88,34 +121,48 @@ class DicomSession:
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
-
-        sessions = []
+        if isinstance(dicoms_path, Path) or "*" not in dicoms_path:
+            dicom_fspaths = list(Path(dicoms_path).iterdir())
+        else:
+            dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         session_dicoms = defaultdict(list)
-        for series in from_paths(dicom_paths, DicomSeries):
+        for series in from_paths(dicom_fspaths, DicomSeries):
             session_dicoms[series["StudyInstanceUID"]].append(series)
 
-        for scans in session_dicoms.values():
+        # Construct sessions from sorted series
+        sessions = []
+        for dicoms in session_dicoms.values():
 
             def get_id(field):
-                ids = set(s[field] for s in scans)
+                ids = set(s[field] for s in dicoms)
                 if len(ids) > 1:
                     raise DicomParseError(
                         f"Multiple values for '{field}' tag found across scans in session: "
-                        f"{scans}"
+                        f"{dicoms}"
                     )
                 id_ = next(iter(ids))
                 if isinstance(id_, list):
                     raise DicomParseError(
                         f"Multiple values for '{field}' tag found within scans in session: "
-                        f"{scans}"
+                        f"{dicoms}"
                     )
                 return id_
 
+            if non_dicoms_pattern:
+                non_dicoms_path = Path(
+                    os.path.commonpath(dicom_fspaths)
+                ) / non_dicoms_pattern.format(**dicoms[0].metadata)
+                non_dicom_fspaths = [Path(p) for p in glob(str(non_dicoms_path))]
+            else:
+                non_dicom_fspaths = []
+
             sessions.append(
                 cls(
-                    scans=scans,
+                    dicoms=dicoms,
+                    non_dicom_fspaths=non_dicom_fspaths,
+                    non_dicoms_pattern=non_dicoms_pattern,
                     project_id=get_id(project_field),
                     subject_id=get_id(subject_field),
                     session_id=get_id(session_field),
@@ -123,30 +170,6 @@ class DicomSession:
             )
 
         return sessions
-
-    def add_non_dicom(self, name: str, fileset: FileSet, dest_dir: Path) -> FileSet:
-        """Adds a non-DICOM fileset to the session, copying and renaming it inside the
-        destination dir (to remove any indentifying parts of the filename)
-
-        Parameters
-        ----------
-        name : str
-            name to assign to the files. Used to set the stem of the filenames in the fileset
-            in the copy (in order to remove any identifying info) and for the ID of the
-            resource to upload
-        fileset : FileSet
-            the fileset to add to the session
-        dest_dir : Path
-            destination directory to copy the non-DICOM files to.
-
-        Returns
-        -------
-        FileSet
-            the copied fileset
-        """
-        new_fileset = fileset.copy(dest_dir, new_stem=name)
-        self.non_dicoms[name].append(new_fileset)
-        return new_fileset
 
     def override_ids(self, yaml_file: Path):
         """Override IDs extracted from DICOM metadata with manually specified IDs loaded
@@ -188,20 +211,22 @@ class DicomSession:
             yaml_file,
         )
 
-    def anonymise(self, dest_dir: Path) -> "DicomSession":
-        """Anonymise DICOM scans by removing the fields listed `FIELDS_TO_ANONYMISE` and
+    def deidentify(self, dest_dir: Path) -> "ImagingSession":
+        """Deidentify files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
 
         Parameters
         ----------
         dest_dir : Path
-            destination directory
+            destination directory to save the deidentified files
 
         Returns
         -------
+        ImagingSession
+            a deidentified session with updated paths
         """
         new_dicoms = []
-        for dicom_series in self.scans:
+        for dicom_series in self.dicoms:
             scan_dir = dest_dir / dicom_series.series_number / "DICOM"
             scan_dir.mkdir(parents=True, exists_ok=True)
             new_dicom_paths = []
@@ -217,12 +242,30 @@ class DicomSession:
                 dcm.save_as(new_path)
                 new_dicom_paths.append(new_path)
             new_dicoms.append(DicomSeries(new_dicom_paths))
+        new_non_dicoms: ty.List[Path] = []
+        if self.non_dicoms_pattern:
+            original_path = self.non_dicoms_pattern.format(**self.metadata)
+            deidentified_path = self.non_dicoms_pattern.format(**dicom_series.metadata)
+            new_non_dicoms = [
+                Path(d)
+                for d in pattern_transform(
+                    [str(p) for p in self.non_dicom_fspaths],
+                    original_path,
+                    deidentified_path,
+                )
+            ]
+
         return type(self)(
-            scans=new_dicoms,
+            dicoms=new_dicoms,
+            non_dicom_fspaths=new_non_dicoms,
             project_id=self.project_id,
             subject_id=self.subject_id,
             session_id=self.session_id,
         )
+
+    def delete(self):
+        """Delete all data associated with the session"""
+        raise NotImplementedError
 
     FIELDS_TO_ANONYMISE = [
         ("0008", "0014"),  # Instance Creator UID

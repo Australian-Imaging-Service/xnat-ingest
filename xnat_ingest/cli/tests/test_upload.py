@@ -1,5 +1,5 @@
-from xnat_exported_scans.cli.upload import upload
-from xnat_exported_scans.utils import show_cli_trace
+from xnat_ingest.cli.upload import upload
+from xnat_ingest.utils import show_cli_trace
 
 
 PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"

@@ -10,7 +10,7 @@ from medimages4tests.dummy.dicom.pet.tbp.siemens.quadra.s7vb10b import (
     get_image,
     get_raw_data_files,
 )
-from xnat_exported_scans.utils import logger
+from xnat_ingest.utils import logger
 
 # Set DEBUG logging for unittests
 
