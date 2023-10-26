@@ -1,5 +1,6 @@
 import re
-from xnat_ingest.utils import glob_to_re, pattern_replacement
+from pathlib import Path
+from xnat_ingest.utils import glob_to_re, transform_paths
 
 
 def test_glob_to_re():
@@ -24,18 +25,18 @@ def test_glob_to_re():
 
 
 def test_pattern_replacement():
-    replacements = {"first": ("FIRST", "1st"), "second": ("SECOND", "2nd")}
+    old_values = {"first": "FIRST", "second": "SECOND"}
+    new_values = {"first": "1st", "second": "2nd"}
     paths_globs = (
         (
-            "**/bar/**/{first}{second}.dat",
             "baz/duck/bar/FIRST_SECOND/quack/FIRSTSECOND.dat",
-            "baz/duck/bar/FIRST_SECOND/quack/1st2nd.dat",
+            "**/bar/**/{first}_*/**/{first}{second}.dat",
+            "baz/duck/bar/1st_SECOND/quack/1st2nd.dat",
         ),
-        # ('bar/foo.py', '**/foo.py'),
-        # ('bar/baz/foo.py', 'bar/**/foo.py'),
-        # ('bar/baz/wut/foo.py', 'bar/**/foo.py'),
+        ('bar/FIRST.py', '**/{first}.py', 'bar/1st.py'),
+        ('bar/baz/SECOND.py', 'bar/**/{second}.py', 'bar/baz/2nd.py'),
+        ('bar/baz/SECOND/wut/foo.py', 'bar/**/{second}/**/foo.py', 'bar/baz/2nd/wut/foo.py'),
     )
 
-    for glb, path, replaced in paths_globs:
-        regex = pattern_replacement(glb, )
-        assert re.match(regex + "$", path)
+    for paths, glb, transformed in paths_globs:
+        assert str(transform_paths([paths], glb, old_values, new_values)[0]) == transformed

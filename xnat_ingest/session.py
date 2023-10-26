@@ -4,6 +4,7 @@ import logging
 import os.path
 from functools import cached_property
 from copy import copy
+import shutil
 import yaml
 import attrs
 from collections import defaultdict
@@ -13,7 +14,7 @@ from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet
 from arcana.core.data.set import Dataset
 from .exceptions import DicomParseError
-from .utils import add_exc_note, pattern_transform
+from .utils import add_exc_note, transform_paths
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -241,23 +242,22 @@ class ImagingSession:
                 new_path = scan_dir / dicom_file.name
                 dcm.save_as(new_path)
                 new_dicom_paths.append(new_path)
-            new_dicoms.append(DicomSeries(new_dicom_paths))
-        new_non_dicoms: ty.List[Path] = []
+            new_dicom_series = DicomSeries(new_dicom_paths)
+            new_dicoms.append(new_dicom_series)
+        new_metadata = dicom_series.metadata
         if self.non_dicoms_pattern:
-            original_path = self.non_dicoms_pattern.format(**self.metadata)
-            deidentified_path = self.non_dicoms_pattern.format(**dicom_series.metadata)
-            new_non_dicoms = [
-                Path(d)
-                for d in pattern_transform(
-                    [str(p) for p in self.non_dicom_fspaths],
-                    original_path,
-                    deidentified_path,
-                )
-            ]
+            new_non_dicom_fspaths = transform_paths(
+                self.non_dicom_fspaths,
+                self.non_dicoms_pattern,
+                self.metadata,
+                new_metadata,
+            )
+            for old, new in zip(self.non_dicom_fspaths, new_non_dicom_fspaths):
+                shutil.copy(old, new)
 
         return type(self)(
             dicoms=new_dicoms,
-            non_dicom_fspaths=new_non_dicoms,
+            non_dicom_fspaths=new_non_dicom_fspaths,
             project_id=self.project_id,
             subject_id=self.subject_id,
             session_id=self.session_id,

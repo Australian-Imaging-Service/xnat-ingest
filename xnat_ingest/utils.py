@@ -1,7 +1,9 @@
 import re
 import logging
 import traceback
-import difflib
+from collections import Counter
+from pathlib import Path
+
 
 logger = logging.getLogger("xnat-upload-exported-scans")
 logger.setLevel(logging.INFO)
@@ -58,59 +60,78 @@ def add_exc_note(e, note):
     return e
 
 
-def pattern_replacement(
-    fspaths: list[str], source_pattern: str, target_pattern: str
-) -> list[str]:
-    """Applys the transform from the `source` to `target` glob-like patterns and applies
-    it to the `to_transform` string provided
+def transform_paths(
+    fspaths: list[Path], glob_pattern: str, old_values: dict[str, str], new_values: dict[str, str]
+) -> list[Path]:
+    """Applys the transforms FS paths matching `glob_pattern` by replacing the template values
+    found in the `old_values` dict to the values in `new_values`. Used to strip any identifying
+    information from file names before they are uploaded by replacing it with values from the
+    de-identified metadata.
 
     Parameters
     ----------
-    fspaths : str
+    fspaths : list[Path]
         the file path to be transformed
-    source_pattern : str
-        source (glob-like) pattern, which was used to match `fspath`
-    target_pattern : str
-        target (glob-like) pattern, which the transformed fspath should match
+    glob_pattern : str
+        The glob-pattern, which was used to match `fspath`
+    old_values : dict[str, str]
+        the values used to parameterise the existing file paths
+    new_values : dict[str, str]
+        the new values to parameterise the transformed file paths
 
     Returns
     -------
-    transformed : str
+    transformed : list[Path]
         the transformed paths
     """
-    chardiffs = difflib.ndiff(source_pattern, target_pattern)
-    sections: list[str | tuple[str, str]] = []
-    word = ""
-    op = None
-    addition = ""
-    for diff in chardiffs:
-        new_op = diff[0]
-        ch = diff[2]
-        # If contiguous with previous operation append onto the current word
-        if new_op == op:
-            word += ch
-        # If the operation is different from the previous append the word to the sections
-        else:
-            if op == " ":
-                sections.append(word)
-            elif op == "+":
-                if new_op == " ":
-                    sections.append((word, ""))
-                elif new_op == "-":
-                    addition = word
-                else:
-                    assert False, f"Unrecognised op '{op}"
-            elif op == "-":
-                assert new_op == " "
-                sections.append((addition, word))
-                addition = ""
-            else:
-                assert False, f"Unrecognised op '{op}"
-            word = ch
+    # Convert glob-syntax to equivalent regex
+    expr = glob_to_re(glob_pattern)
+    expr = expr.replace(r'\{', '{')
+    expr = expr.replace(r'\}', '}')
+
+    group_count = Counter()
+
+    # Create regex groups for string template args
+    def str_templ_to_regex_group(match) -> str:
+        fieldname = match.group(0)[1:-1]
+        groupname = fieldname + "__" + str(group_count[fieldname])
+        group_str = f"(?P<{groupname}>{old_values[fieldname]})"
+        group_count[fieldname] += 1
+        return group_str
+
+    transform_path_pattern = _str_templ_replacement.sub(str_templ_to_regex_group, expr)
+    transform_path_re = re.compile(transform_path_pattern + "$")
+
+    # Define a custom replacement function
+    def replace_named_groups(match):
+        return new_values.get(match.lastgroup, match.group())
+
+    transformed = []
+    for fspath in fspaths:
+        fspath_str = str(fspath)
+        match = transform_path_re.match((str(fspath)))
+        assert match
+        prev_index = 0
+        new_fspath = ""
+        for groupname, group in match.groupdict().items():
+            fieldname = groupname.split('__')[0]
+            match_start = match.start(groupname)
+            match_end = match.end(groupname)
+            new_fspath += fspath_str[prev_index:match_start]
+            new_fspath += new_values[fieldname]
+            prev_index = match_end
+        new_fspath += fspath_str[match_end:]
+        # Use re.sub() with the custom replacement function
+        transformed.append(Path(new_fspath))
     return transformed
 
 
 # Taken from StackOverflow answer https://stackoverflow.com/a/63212852
+def glob_to_re(glob_pattern: str) -> str:
+    return _escaped_glob_replacement.sub(
+        lambda match: _escaped_glob_tokens_to_re[match.group(0)], re.escape(glob_pattern)
+    )
+
 
 _escaped_glob_tokens_to_re = dict(
     (
@@ -142,8 +163,4 @@ _escaped_glob_replacement = re.compile(
     "(%s)" % "|".join(_escaped_glob_tokens_to_re).replace("\\", "\\\\\\")
 )
 
-
-def glob_to_re(pattern):
-    return _escaped_glob_replacement.sub(
-        lambda match: _escaped_glob_tokens_to_re[match.group(0)], re.escape(pattern)
-    )
+_str_templ_replacement = re.compile(r"\{\w+\}")
