@@ -184,34 +184,11 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
-    "--staging-dir-name",
-    default="XNAT_UPLOAD_STAGING",
-    type=str,
-    envvar="XNAT_INGEST_STAGINGDIRNAME",
-    help=(
-        "The name of the directory that files are staged in before they are uploaded to "
-        "XNAT"
-    ),
-)
-@click.option(
     "--exclude-dicoms/--include-dicoms",
     default=False,
     type=bool,
     envvar="XNAT_INGEST_EXCLUDEDICOM",
     help=("Whether to exclude DICOM scans from upload or not"),
-)
-@click.option(
-    "--ignore",
-    type=str,
-    multiple=True,
-    help=(
-        "File patterns (regular expressions) to ignore, all files must either be "
-        "explicitly included or ignored"
-    ),
-)
-@click.option(
-    "--logs-dir",
-    envvar="XNAT_INGEST_LOGSDIR",
 )
 def upload(
     dicoms_path: str,
@@ -219,10 +196,10 @@ def upload(
     server: str,
     user: str,
     password: str,
+    non_dicoms_pattern: str,    
     project_field: str,
     subject_field: str,
     session_field: str,
-    non_dicoms_pattern: str,
     dicom_ext: str,
     delete,
     log_file,
@@ -230,7 +207,6 @@ def upload(
     mail_server,
     staging_dir_name,
     exclude_dicoms,
-    ignore,
 ):
     # Configure the email logger
     if log_emails:

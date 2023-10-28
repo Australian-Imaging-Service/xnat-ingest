@@ -67,8 +67,14 @@ def xnat_login(xnat_repository):
 
 
 @pytest.fixture(scope="session")
-def xnat_server(xnat_repository):
-    return xnat4tests.Config().xnat_uri
+def xnat_server(xnat_config):
+    return xnat_config.xnat_uri
+
+
+
+@pytest.fixture(scope="session")
+def xnat_config(xnat_repository):
+    return xnat4tests.Config()
 
 
 @pytest.fixture
