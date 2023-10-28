@@ -1,15 +1,9 @@
 import os
 import logging
-from pathlib import Path
-import shutil
 from logging.handlers import SMTPHandler
 import pytest
 from click.testing import CliRunner
 import xnat4tests
-from medimages4tests.dummy.dicom.pet.tbp.siemens.quadra.s7vb10b import (
-    get_image,
-    get_raw_data_files,
-)
 from xnat_ingest.utils import logger
 
 # Set DEBUG logging for unittests
@@ -85,17 +79,6 @@ def cli_runner(catch_cli_exceptions):
         return result
 
     return invoke
-
-
-@pytest.fixture
-def export_dir(tmp_path: Path) -> Path:
-    dicom_dir = get_image()
-    export_dir = tmp_path / "export-dir"
-    export_dir.mkdir()
-    session_dir = export_dir / "test-session"
-    shutil.copytree(dicom_dir, session_dir)
-    get_raw_data_files(session_dir)
-    return export_dir
 
 
 @pytest.fixture

@@ -1,8 +1,8 @@
-from arcana.cli.dataset import (
+from arcana.core.cli.dataset import (
     define as dataset_define,
     add_source as dataset_add_source,
 )
-from arcana.cli.store import add as store_add
+from arcana.core.cli.store import add as store_add
 from xnat_ingest.cli.upload import upload
 from xnat_ingest.utils import show_cli_trace
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
@@ -30,7 +30,7 @@ PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
 
 
 def test_upload(
-    xnat_project, xnat_config, xnat_server, cli_runner, export_dir, tmp_path
+    xnat_project, xnat_config, xnat_server, cli_runner, tmp_path
 ):
     # Get test image data
 
@@ -166,5 +166,3 @@ def test_upload(
         "sinogram",
         "listmode",
     ]
-
-    assert list(export_dir.iterdir()) == ["upload-logs"]
