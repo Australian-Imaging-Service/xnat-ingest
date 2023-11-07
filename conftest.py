@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 import logging
 from logging.handlers import SMTPHandler
 import pytest
 from click.testing import CliRunner
 import xnat4tests
+from datetime import datetime
 from xnat_ingest.utils import logger
 
 # Set DEBUG logging for unittests
@@ -39,6 +41,12 @@ def catch_cli_exceptions():
 
 
 @pytest.fixture(scope="session")
+def run_prefix():
+    "A datetime string used to avoid stale data left over from previous tests"
+    return datetime.strftime(datetime.now(), "%Y%m%d%H%M%S")
+
+
+@pytest.fixture(scope="session")
 def xnat_repository():
     xnat4tests.start_xnat()
 
@@ -49,21 +57,28 @@ def xnat_archive_dir(xnat_repository):
 
 
 @pytest.fixture(scope="session")
+def tmp_gen_dir():
+    tmp_gen_dir = Path("~").expanduser() / ".xnat-ingest-work2"
+    tmp_gen_dir.mkdir(exist_ok=True)
+    return tmp_gen_dir
+
+
+@pytest.fixture(scope="session")
 def xnat_login(xnat_repository):
-    # Ensure that project ID is present in test XNAT before we connect, as new projects
-    # often don't show up until you log-off/log-in again
-    with xnat4tests.connect() as xlogin:
-        try:
-            xlogin.projects[PROJECT_ID]
-        except KeyError:
-            xlogin.put(f"/data/archive/projects/{PROJECT_ID}")
     return xnat4tests.connect()
+
+
+@pytest.fixture(scope="session")
+def xnat_project(xnat_login, run_prefix):
+    project_id = f"INGESTUPLOAD"  # {run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+    return project_id
 
 
 @pytest.fixture(scope="session")
 def xnat_server(xnat_config):
     return xnat_config.xnat_uri
-
 
 
 @pytest.fixture(scope="session")
@@ -79,11 +94,6 @@ def cli_runner(catch_cli_exceptions):
         return result
 
     return invoke
-
-
-@pytest.fixture
-def xnat_project(xnat_login, scope="session"):
-    return xnat_login.projects[PROJECT_ID]
 
 
 # Create a custom handler that captures email messages for testing

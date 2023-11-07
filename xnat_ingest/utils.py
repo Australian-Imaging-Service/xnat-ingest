@@ -61,7 +61,10 @@ def add_exc_note(e, note):
 
 
 def transform_paths(
-    fspaths: list[Path], glob_pattern: str, old_values: dict[str, str], new_values: dict[str, str]
+    fspaths: list[Path],
+    glob_pattern: str,
+    old_values: dict[str, str],
+    new_values: dict[str, str],
 ) -> list[Path]:
     """Applys the transforms FS paths matching `glob_pattern` by replacing the template values
     found in the `old_values` dict to the values in `new_values`. Used to strip any identifying
@@ -86,16 +89,28 @@ def transform_paths(
     """
     # Convert glob-syntax to equivalent regex
     expr = glob_to_re(glob_pattern)
-    expr = expr.replace(r'\{', '{')
-    expr = expr.replace(r'\}', '}')
+    expr = expr.replace(r"\{", "{")
+    expr = expr.replace(r"\}", "}")
+    templ_attr_re = re.compile(r"\{([\w\.]+)\\\.([^\}]+)\}")
+    while templ_attr_re.findall(expr):
+        expr = templ_attr_re.sub(r"{\1.\2}", expr)
 
     group_count = Counter()
 
     # Create regex groups for string template args
     def str_templ_to_regex_group(match) -> str:
         fieldname = match.group(0)[1:-1]
-        groupname = fieldname + "__" + str(group_count[fieldname])
-        group_str = f"(?P<{groupname}>{old_values[fieldname]})"
+        if "." in fieldname:
+            fieldname, attr_name = fieldname.split(".")
+        else:
+            attr_name = ""
+        groupname = fieldname
+        old_val = old_values[fieldname]
+        if attr_name:
+            groupname += "__" + attr_name
+            old_val = getattr(old_val, attr_name)
+        groupname += "__" + str(group_count[fieldname])
+        group_str = f"(?P<{groupname}>{old_val})"
         group_count[fieldname] += 1
         return group_str
 
@@ -114,11 +129,18 @@ def transform_paths(
         prev_index = 0
         new_fspath = ""
         for groupname, group in match.groupdict().items():
-            fieldname = groupname.split('__')[0]
+            fieldname, remaining = groupname.split("__", maxsplit=1)
+            if "__" in remaining:
+                attr_name = remaining.split("__")[0]
+            else:
+                attr_name = ""
             match_start = match.start(groupname)
             match_end = match.end(groupname)
             new_fspath += fspath_str[prev_index:match_start]
-            new_fspath += new_values[fieldname]
+            new_val = new_values[fieldname]
+            if attr_name:
+                new_val = getattr(new_val, attr_name)
+            new_fspath += new_val
             prev_index = match_end
         new_fspath += fspath_str[match_end:]
         # Use re.sub() with the custom replacement function
@@ -129,7 +151,8 @@ def transform_paths(
 # Taken from StackOverflow answer https://stackoverflow.com/a/63212852
 def glob_to_re(glob_pattern: str) -> str:
     return _escaped_glob_replacement.sub(
-        lambda match: _escaped_glob_tokens_to_re[match.group(0)], re.escape(glob_pattern)
+        lambda match: _escaped_glob_tokens_to_re[match.group(0)],
+        re.escape(glob_pattern),
     )
 
 
@@ -163,4 +186,4 @@ _escaped_glob_replacement = re.compile(
     "(%s)" % "|".join(_escaped_glob_tokens_to_re).replace("\\", "\\\\\\")
 )
 
-_str_templ_replacement = re.compile(r"\{\w+\}")
+_str_templ_replacement = re.compile(r"\{[\w\.]+\}")

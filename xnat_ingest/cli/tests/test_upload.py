@@ -1,13 +1,19 @@
+import os
+import shutil
+from pathlib import Path
 from arcana.core.cli.dataset import (
     define as dataset_define,
     add_source as dataset_add_source,
 )
+import xnat4tests
 from arcana.core.cli.store import add as store_add
 from xnat_ingest.cli.upload import upload
 from xnat_ingest.utils import show_cli_trace
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,
 )
+from fileformats.medimage import DicomSeries
+
 
 # from medimages4tests.dummy.dicom.ct.wholebody.siemens.biograph_vision.vr20b import (
 #     get_image as get_ct_image,
@@ -30,55 +36,102 @@ PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
 
 
 def test_upload(
-    xnat_project, xnat_config, xnat_server, cli_runner, tmp_path
+    xnat_project,
+    xnat_config,
+    xnat_server,
+    cli_runner,
+    run_prefix,
+    tmp_path: Path,
+    tmp_gen_dir: Path,
 ):
     # Get test image data
 
     dicoms_dir = tmp_path / "dicoms"
-    dicoms_dir.mkdir()
+    dicoms_dir.mkdir(exist_ok=True)
 
     non_dicoms_dir = tmp_path / "non-dicoms"
-    non_dicoms_dir.mkdir()
+    non_dicoms_dir.mkdir(exist_ok=True)
 
     staging_dir = tmp_path / "staging"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
     staging_dir.mkdir()
 
     log_file = tmp_path / "logging.log"
+    if log_file.exists():
+        os.unlink(log_file)
 
-    for i, c in enumerate("abc"):
-        first_name = f"First{c.upper()}"
-        last_name = f"Last{c.upper()}"
-        PatientName = f"{first_name}^{last_name}"
-        StudyInstanceUID = f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
-
-        get_pet_image(
-            dicoms_dir, PatientName=PatientName, StudyInstanceUID=StudyInstanceUID
-        )
-        get_ac_image(
-            dicoms_dir, PatientName=PatientName, StudyInstanceUID=StudyInstanceUID
-        )
-        get_topogram_image(
-            dicoms_dir, PatientName=PatientName, StudyInstanceUID=StudyInstanceUID
-        )
-        get_statistics_image(
-            dicoms_dir, PatientName=PatientName, StudyInstanceUID=StudyInstanceUID
-        )
-
-        get_raw_data_files(
-            non_dicoms_dir,
-            first_name=first_name,
-            last_name=last_name,
-            date_time=f"2023.08.25.15.50.5{i}",
-        )
-
-    SESSION_ID = "987654321"
     # Delete any existing sessions from previous test runs
-    try:
-        xsession = xnat_project.experiments[SESSION_ID]
-    except KeyError:
-        pass
-    else:
-        xsession.delete()
+    session_ids = []
+    with xnat4tests.connect() as xnat_login:
+        for i, c in enumerate("abc"):
+            first_name = f"First{c.upper()}"
+            last_name = f"Last{c.upper()}"
+            PatientName = f"{first_name}^{last_name}"
+            PatientID = f"subject{i}"
+            AccessionNumber = f"98765432{i}"
+            session_ids.append(AccessionNumber)
+
+            StudyInstanceUID = (
+                f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
+            )
+
+            series = DicomSeries(
+                get_pet_image(
+                    tmp_gen_dir / f"pet{i}",
+                    PatientName=PatientName,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=xnat_project,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir / f"pet{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_ac_image(
+                    tmp_gen_dir / f"ac{i}",
+                    PatientName=PatientName,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=xnat_project,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir / f"ac{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_topogram_image(
+                    tmp_gen_dir / f"topogram{i}",
+                    PatientName=PatientName,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=xnat_project,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir / f"topogram{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_statistics_image(
+                    tmp_gen_dir / f"statistics{i}",
+                    PatientName=PatientName,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=xnat_project,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir / f"statistics{i}-{dcm.fspath.name}")
+            nd_fspaths = get_raw_data_files(
+                tmp_gen_dir / f"non-dicom{i}",
+                first_name=first_name,
+                last_name=last_name,
+                date_time=f"2023.08.25.15.50.5{i}",
+            )
+            for nd_fspath in nd_fspaths:
+                os.link(dcm, non_dicoms_dir / f"{nd_fspath.stem}-{i}{nd_fspath.suffix}")
 
     # Create data store
     result = cli_runner(
@@ -89,14 +142,14 @@ def test_upload(
             "--server",
             xnat_server,
             "--user",
-            xnat_config.user,
+            xnat_config.xnat_user,
             "--password",
-            xnat_config.password,
+            xnat_config.xnat_password,
         ],
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
-    dataset_locator = f"testxnat//{xnat_project.id}"
+    dataset_locator = f"testxnat//{xnat_project}"
 
     # Create dataset definition
     result = cli_runner(dataset_define, [dataset_locator])
@@ -118,7 +171,7 @@ def test_upload(
         ),
         (
             "countrate",
-            "medimage/vnd.siemens.biograph-vision-vr20b.pet-countrate",
+            "medimage/vnd.siemens.biograph-vision-vr20b.pet-count-rate",
             ".*PET_COUNTRATE.*",
         ),
     ]:
@@ -142,7 +195,7 @@ def test_upload(
             str(staging_dir),
             "--non-dicoms-pattern",
             str(non_dicoms_dir)
-            + "/{PatientName.given_name}_{PatientName.family_name}*.ptd"
+            + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             "--log-file",
             str(log_file),
         ],
@@ -155,14 +208,18 @@ def test_upload(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
-    xsession = xnat_project.experiments[SESSION_ID]
-    scan_ids = sorted(xsession.scans)
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[xnat_project]
 
-    assert scan_ids == [
-        "1",
-        "2",
-        "4",
-        "countrate",
-        "sinogram",
-        "listmode",
-    ]
+    for session_id in session_ids:
+        xsession = xproject.experiments[session_ids]
+        scan_ids = sorted(xsession.scans)
+
+        assert scan_ids == [
+            "1",
+            "2",
+            "4",
+            "countrate",
+            "sinogram",
+            "listmode",
+        ]

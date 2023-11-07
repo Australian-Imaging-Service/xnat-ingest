@@ -1,30 +1,38 @@
 import typing as ty
+import re
 from glob import glob
 import logging
 import os.path
 from functools import cached_property
-from copy import copy
 import shutil
 import yaml
 import attrs
+from itertools import chain
 from collections import defaultdict
 from pathlib import Path
 import pydicom
 from fileformats.medimage import DicomSeries
-from fileformats.core import from_paths, FileSet
+from fileformats.core import from_paths, FileSet, DataType
+from fileformats.generic import File
 from arcana.core.data.set import Dataset
-from .exceptions import DicomParseError
+from arcana.core.data.space import DataSpace
+from arcana.core.data.row import DataRow
+from arcana.core.data.store import DataStore
+from arcana.core.data.entry import DataEntry
+from arcana.core.data.tree import DataTree
+from arcana.core.exceptions import ArcanaDataMatchError
+from .exceptions import DicomParseError, StagingError
 from .utils import add_exc_note, transform_paths
 
 logger = logging.getLogger("xnat-ingest")
 
 
-@attrs.define
+@attrs.define(slots=False)
 class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    dicoms: ty.List[DicomSeries] = attrs.field(factory=list)
+    dicoms: ty.Dict[str, DicomSeries] = attrs.field(factory=dict)
     non_dicoms_pattern: str | None = None
     non_dicom_fspaths: ty.List[Path] = attrs.field(factory=list)
 
@@ -37,12 +45,15 @@ class ImagingSession:
 
     @cached_property
     def modalities(self) -> ty.Set[str]:
-        return set(self["Modality"])
+        modalities = self["Modality"]
+        if not isinstance(modalities, str):
+            modalities = set(modalities)
+        return modalities
 
     @property
     def dicom_dir(self) -> Path:
         "A common parent directory for all the top-level paths in the file-set"
-        return Path(os.path.commonpath(p.parent for p in self.dicoms))  # type: ignore
+        return Path(os.path.commonpath(p.parent for p in self.dicoms.values()))  # type: ignore
 
     def select_resources(
         self, dataset: Dataset
@@ -63,18 +74,53 @@ class ImagingSession:
         scan : FileSet
             a fileset to upload
         """
-        raise NotImplementedError
+        store = MockDataStore(self)
+
+        for column in dataset.columns.values():
+            try:
+                entry = column.match_entry(store.row)
+            except ArcanaDataMatchError as e:
+                raise StagingError(
+                    f"Did not find matching entry for {column} column in {dataset} from "
+                    f"{self.name} session"
+                ) from e
+            else:
+                scan = column.datatype(entry.uri)
+                if isinstance(scan, DicomSeries):
+                    scan_id = scan.series_number()
+                    scan_type = scan["SeriesDescription"]
+                else:
+                    scan_id = column.name
+                    strip_special_char_pattern = r"^[\._\-]*(.*[a-zA-Z0-9])[\._\-]*"
+                    assert isinstance(scan, File)
+                    scan_type = scan.stem
+                    match = re.match(strip_special_char_pattern, scan_type)
+                    assert (
+                        match
+                    ), f"{strip_special_char_pattern} did not match {scan_type}"
+                    scan_type = match.group(1)
+            yield scan_id, scan_type, scan
 
     @cached_property
     def metadata(self):
-        collated = copy(self.dicoms[0].metadata)
-        if len(self.dicoms) > 1:
-            for key, val in self.dicoms[1].metadata.items():
-                if val != collated[key]:  # Turn field into list
-                    collated[key] = [collated[key], val]
-        for dicom in self.dicoms[2:]:
-            for key, val in dicom.metadata.items():
+        all_dicoms = list(self.dicoms.values())
+        all_keys = [list(d.metadata.keys()) for d in all_dicoms]
+        common_keys = [
+            k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
+        ]
+        collated = {k: all_dicoms[0][k] for k in common_keys}
+        for i, series in enumerate(all_dicoms[1:], start=1):
+            for key in common_keys:
+                val = series[key]
                 if val != collated[key]:
+                    # Check whether the value is the same as the values in the previous
+                    # images in the series
+                    if (
+                        not isinstance(collated[key], list)
+                        or isinstance(val, list)
+                        and not isinstance(collated[key][0], list)
+                    ):
+                        collated[key] = [collated[key]] * i + [val]
                     collated[key].append(val)
         return collated
 
@@ -128,40 +174,41 @@ class ImagingSession:
             dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
 
         # Sort loaded series by StudyInstanceUID (imaging session)
-        session_dicoms = defaultdict(list)
+        dicom_sessions = defaultdict(list)
         for series in from_paths(dicom_fspaths, DicomSeries):
-            session_dicoms[series["StudyInstanceUID"]].append(series)
+            dicom_sessions[series["StudyInstanceUID"]].append(series)
 
         # Construct sessions from sorted series
         sessions = []
-        for dicoms in session_dicoms.values():
+        for session_dicom_series in dicom_sessions.values():
 
             def get_id(field):
-                ids = set(s[field] for s in dicoms)
+                ids = set(s[field.keyword] for s in session_dicom_series)
                 if len(ids) > 1:
                     raise DicomParseError(
                         f"Multiple values for '{field}' tag found across scans in session: "
-                        f"{dicoms}"
+                        f"{session_dicom_series}"
                     )
                 id_ = next(iter(ids))
                 if isinstance(id_, list):
                     raise DicomParseError(
                         f"Multiple values for '{field}' tag found within scans in session: "
-                        f"{dicoms}"
+                        f"{session_dicom_series}"
                     )
+                id_ = id_.replace(" ", "_")
                 return id_
 
             if non_dicoms_pattern:
                 non_dicoms_path = Path(
                     os.path.commonpath(dicom_fspaths)
-                ) / non_dicoms_pattern.format(**dicoms[0].metadata)
+                ) / non_dicoms_pattern.format(**session_dicom_series[0].metadata)
                 non_dicom_fspaths = [Path(p) for p in glob(str(non_dicoms_path))]
             else:
                 non_dicom_fspaths = []
 
             sessions.append(
                 cls(
-                    dicoms=dicoms,
+                    dicoms={series["SeriesNumber"]: series in session_dicom_series},
                     non_dicom_fspaths=non_dicom_fspaths,
                     non_dicoms_pattern=non_dicoms_pattern,
                     project_id=get_id(project_field),
@@ -227,24 +274,26 @@ class ImagingSession:
             a deidentified session with updated paths
         """
         new_dicoms = []
-        for dicom_series in self.dicoms:
-            scan_dir = dest_dir / dicom_series.series_number / "DICOM"
-            scan_dir.mkdir(parents=True, exists_ok=True)
+        for series_number, dicom_series in self.dicoms.items():
+            scan_dir = dest_dir / series_number / "DICOM"
+            scan_dir.mkdir(parents=True, exist_ok=True)
             new_dicom_paths = []
             for dicom_file in dicom_series.fspaths:
                 dcm = pydicom.dcmread(dicom_file)
                 dcm.PatientBirthDate = dcm.PatientBirthDate[:4] + "0101"
-                for field in self.FIELDS_TO_ANONYMISE:
+                for field in self.FIELDS_TO_DEIDENTIFY:
                     try:
-                        del dcm[(int(field[0]), int(field[1]))]
+                        elem = dcm[field]  # type: ignore
                     except KeyError:
                         pass
+                    else:
+                        elem.value = ""
                 new_path = scan_dir / dicom_file.name
                 dcm.save_as(new_path)
                 new_dicom_paths.append(new_path)
             new_dicom_series = DicomSeries(new_dicom_paths)
             new_dicoms.append(new_dicom_series)
-        new_metadata = dicom_series.metadata
+        new_metadata = new_dicom_series.metadata
         if self.non_dicoms_pattern:
             new_non_dicom_fspaths = transform_paths(
                 self.non_dicom_fspaths,
@@ -267,7 +316,7 @@ class ImagingSession:
         """Delete all data associated with the session"""
         raise NotImplementedError
 
-    FIELDS_TO_ANONYMISE = [
+    FIELDS_TO_DEIDENTIFY = [
         ("0008", "0014"),  # Instance Creator UID
         ("0008", "1111"),  # Referenced Performed Procedure Step SQ
         ("0008", "1120"),  # Referenced Patient SQ
@@ -338,3 +387,129 @@ class ImagingSession:
         ("0400", "0561"),  # Original Attributes Sequence
         ("5200", "9229"),  # Shared Functional Groups SQ
     ]
+
+
+@attrs.define
+class MockDataStore(DataStore):
+    """Mock data store so we can use the column.match_entry method on the "entries" in
+    the data row
+    """
+
+    session: ImagingSession
+
+    @property
+    def row(self):
+        return DataRow(
+            ids={},
+            dataset=Dataset(id=None, store=self, space=DummySpace),
+            frequency="_",
+        )
+
+    def populate_row(self, row: DataRow):
+        """
+        Populate a row with all data entries found in the corresponding node in the data
+        store (e.g. files within a directory, scans within an XNAT session) using the
+        ``DataRow.add_entry`` method. Within a node/row there are assumed to be two types
+        of entries, "primary" entries (e.g. acquired scans) common to all analyses performed
+        on the dataset and "derivative" entries corresponding to intermediate outputs
+        of previously performed analyses. These types should be stored in separate
+        namespaces so there is no chance of a derivative overriding a primary data item.
+
+        The name of the dataset/analysis a derivative was generated by is appended to
+        to a base path, delimited by "@", e.g. "brain_mask@my_analysis". The dataset
+        name is left blank by default, in which case "@" is just appended to the
+        derivative path, i.e. "brain_mask@".
+
+        Parameters
+        ----------
+        row : DataRow
+            The row to populate with entries
+        """
+        for series_number, dcm in self.session.dicoms.items():
+            row.add_entry(
+                path=dcm["SeriesDescription"],
+                datatype=DicomSeries,
+                uri=f"dicom::{dcm['SeriesNumber']}",
+            )
+        for non_dcm_fspath in self.session.non_dicom_fspaths:
+            row.add_entry(
+                path=non_dcm_fspath.name,
+                datatype=FileSet,
+                uri=f"nondicom::{non_dcm_fspath}",
+            )
+
+    def get(self, entry: DataEntry, datatype: type) -> DataType:
+        """
+        Gets the data item corresponding to the given entry
+
+        Parameters
+        ----------
+        entry : DataEntry
+            the data entry to update
+        datatype : type
+            the datatype to interpret the entry's item as
+
+        Returns
+        -------
+        item : DataType
+            the item stored within the specified entry
+        """
+        file_category, path = entry.uri.split("::")
+        if file_category == "dicom":
+            fileset = datatype(self.session.dicoms[path])
+        else:
+            fileset = datatype(path)
+        return fileset
+
+    ######################################
+    # The following methods can be empty #
+    ######################################
+
+    def populate_tree(self, tree: DataTree):
+        pass
+
+    def connect(self) -> ty.Any:
+        pass
+
+    def disconnect(self, session: ty.Any):
+        pass
+
+    def create_data_tree(
+        self,
+        id: str,
+        leaves: ty.List[ty.Tuple[str, ...]],
+        hierarchy: ty.List[str],
+        space: type,
+        **kwargs,
+    ):
+        raise NotImplementedError
+
+    ###################################
+    # The following shouldn't be used #
+    ###################################
+
+    def put(self, item: DataType, entry: DataEntry) -> DataType:
+        raise NotImplementedError
+
+    def put_provenance(self, provenance: ty.Dict[str, ty.Any], entry: DataEntry):
+        raise NotImplementedError
+
+    def get_provenance(self, entry: DataEntry) -> ty.Dict[str, ty.Any]:
+        raise NotImplementedError
+
+    def save_dataset_definition(
+        self, dataset_id: str, definition: ty.Dict[str, ty.Any], name: str
+    ):
+        raise NotImplementedError
+
+    def load_dataset_definition(
+        self, dataset_id: str, name: str
+    ) -> ty.Dict[str, ty.Any]:
+        raise NotImplementedError
+
+    def create_entry(self, path: str, datatype: type, row: DataRow) -> DataEntry:
+        raise NotImplementedError
+
+
+class DummySpace(DataSpace):
+    _ = 0b0
