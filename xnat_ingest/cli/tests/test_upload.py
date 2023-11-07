@@ -9,15 +9,10 @@ import xnat4tests
 from arcana.core.cli.store import add as store_add
 from xnat_ingest.cli.upload import upload
 from xnat_ingest.utils import show_cli_trace
+from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,
 )
-from fileformats.medimage import DicomSeries
-
-
-# from medimages4tests.dummy.dicom.ct.wholebody.siemens.biograph_vision.vr20b import (
-#     get_image as get_ct_image,
-# )
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
     get_image as get_ac_image,
 )

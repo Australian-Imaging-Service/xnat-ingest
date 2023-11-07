@@ -143,6 +143,17 @@ def transform_paths(
             new_fspath += new_val
             prev_index = match_end
         new_fspath += fspath_str[match_end:]
+        stripped_fspath = None
+        strip_start_re = re.compile(r"^[\._\-]+")
+        strip_end_re = re.compile(r"[\._\-]+$")
+        for part in Path(new_fspath).parts:
+            part = strip_start_re.sub("", part)
+            part = strip_end_re.sub("", part)
+            if stripped_fspath is None:
+                stripped_fspath = Path(part)
+            else:
+                stripped_fspath /= part
+        new_fspath = stripped_fspath
         # Use re.sub() with the custom replacement function
         transformed.append(Path(new_fspath))
     return transformed

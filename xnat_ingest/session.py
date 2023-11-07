@@ -27,12 +27,18 @@ from .utils import add_exc_note, transform_paths
 logger = logging.getLogger("xnat-ingest")
 
 
+def dicoms_converter(multi_dicom_series: ty.Union[ty.List[DicomSeries], ty.Dict[str, DicomSeries]]) -> ty.Dict[str, DicomSeries]:
+    if isinstance(multi_dicom_series, ty.Sequence):
+        multi_dicom_series = {str(s["SeriesNumber"]): s for s in multi_dicom_series}
+    return multi_dicom_series
+
+
 @attrs.define(slots=False)
 class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    dicoms: ty.Dict[str, DicomSeries] = attrs.field(factory=dict)
+    dicoms: ty.Dict[str, DicomSeries] = attrs.field(factory=dict, converter=dicoms_converter)
     non_dicoms_pattern: str | None = None
     non_dicom_fspaths: ty.List[Path] = attrs.field(factory=list)
 
@@ -85,7 +91,7 @@ class ImagingSession:
                     f"{self.name} session"
                 ) from e
             else:
-                scan = column.datatype(entry.uri)
+                scan = column.datatype(entry.item)
                 if isinstance(scan, DicomSeries):
                     scan_id = scan.series_number()
                     scan_type = scan["SeriesDescription"]
@@ -208,7 +214,7 @@ class ImagingSession:
 
             sessions.append(
                 cls(
-                    dicoms={series["SeriesNumber"]: series in session_dicom_series},
+                    dicoms={str(s["SeriesNumber"]): s for s in session_dicom_series},
                     non_dicom_fspaths=non_dicom_fspaths,
                     non_dicoms_pattern=non_dicoms_pattern,
                     project_id=get_id(project_field),
@@ -400,9 +406,9 @@ class MockDataStore(DataStore):
     @property
     def row(self):
         return DataRow(
-            ids={},
-            dataset=Dataset(id=None, store=self, space=DummySpace),
-            frequency="_",
+            ids={DummySpace._: None},
+            dataset=Dataset(id=None, store=self, hierarchy=[], space=DummySpace),
+            frequency=DummySpace._,
         )
 
     def populate_row(self, row: DataRow):
@@ -505,6 +511,9 @@ class MockDataStore(DataStore):
     def load_dataset_definition(
         self, dataset_id: str, name: str
     ) -> ty.Dict[str, ty.Any]:
+        raise NotImplementedError
+
+    def site_licenses_dataset(self):
         raise NotImplementedError
 
     def create_entry(self, path: str, datatype: type, row: DataRow) -> DataEntry:
