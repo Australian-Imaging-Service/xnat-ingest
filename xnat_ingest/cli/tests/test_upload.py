@@ -157,17 +157,17 @@ def test_upload(
         (
             "listmode",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-list-mode",
-            ".*PET_LISTMODE.*",
+            ".*(PET_LISTMODE).*",
         ),
         (
             "sinogram",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-sinogram",
-            ".*PET_EM_SINO.*",
+            ".*(PET_EM_SINO).*",
         ),
         (
             "countrate",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-count-rate",
-            ".*PET_COUNTRATE.*",
+            ".*(PET_COUNTRATE).*",
         ),
     ]:
         # Add dataset columns
@@ -193,6 +193,7 @@ def test_upload(
             + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             "--log-file",
             str(log_file),
+            "--raise-errors",
         ],
         env={
             "XNAT_INGEST_HOST": xnat_server,
@@ -205,16 +206,15 @@ def test_upload(
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[xnat_project]
+        for session_id in session_ids:
+            xsession = xproject.experiments[session_id]
+            scan_ids = sorted(xsession.scans)
 
-    for session_id in session_ids:
-        xsession = xproject.experiments[session_ids]
-        scan_ids = sorted(xsession.scans)
-
-        assert scan_ids == [
-            "1",
-            "2",
-            "4",
-            "countrate",
-            "sinogram",
-            "listmode",
-        ]
+            assert scan_ids == [
+                "1",
+                "2",
+                "4",
+                "countrate",
+                "sinogram",
+                "listmode",
+            ]

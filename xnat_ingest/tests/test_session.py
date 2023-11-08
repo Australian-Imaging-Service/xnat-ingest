@@ -87,17 +87,17 @@ def dataset(tmp_path: Path) -> Dataset:
         (
             "listmode",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-list-mode",
-            ".*PET_LISTMODE.*",
+            ".*(PET_LISTMODE).*",
         ),
         (
             "sinogram",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-sinogram",
-            ".*PET_EM_SINO.*",
+            ".*(PET_EM_SINO).*",
         ),
         (
             "countrate",
             "medimage/vnd.siemens.biograph-vision-vr20b.pet-count-rate",
-            ".*PET_COUNTRATE.*",
+            ".*(PET_COUNTRATE).*",
         ),
     ]:
         dataset.add_source(col_name, from_mime(col_type), col_pattern, is_regex=True)
@@ -120,9 +120,9 @@ def test_session_select_resources(
     assert sorted(descs) == [
         "AC CT 3.0  SWB HD_FoV",
         "PET SWB 8MIN",
-        "PT.PET_U_FDG_SWB_LM_(Adult).602.PET_COUNTRATE.2023.08.25.15.50.51.083000.2.0.52858872",
-        "PT.PET_U_FDG_SWB_LM_(Adult).602.PET_LISTMODE.2023.08.25.15.50.51.080000.2.0.52858858",
-        "PT.PET_U_FDG_SWB_LM_(Adult).603.PET_EM_SINO.2023.08.25.15.50.51.30.118000.2.0.54764616",
+        "PET_COUNTRATE",
+        "PET_EM_SINO",
+        "PET_LISTMODE",
         "Topogram 0.6 Tr60",
     ]
     assert set(type(s) for s in scans) == set(

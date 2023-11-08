@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import logging
+import tempfile
 from logging.handlers import SMTPHandler
 import pytest
 from click.testing import CliRunner
@@ -58,9 +59,10 @@ def xnat_archive_dir(xnat_repository):
 
 @pytest.fixture(scope="session")
 def tmp_gen_dir():
-    tmp_gen_dir = Path("~").expanduser() / ".xnat-ingest-work2"
-    tmp_gen_dir.mkdir(exist_ok=True)
-    return tmp_gen_dir
+    # tmp_gen_dir = Path("~").expanduser() / ".xnat-ingest-work3"
+    # tmp_gen_dir.mkdir(exist_ok=True)
+    # return tmp_gen_dir
+    return Path(tempfile.mkdtemp())
 
 
 @pytest.fixture(scope="session")
@@ -70,7 +72,7 @@ def xnat_login(xnat_repository):
 
 @pytest.fixture(scope="session")
 def xnat_project(xnat_login, run_prefix):
-    project_id = f"INGESTUPLOAD"  # {run_prefix}"
+    project_id = f"INGESTUPLOAD{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
     return project_id

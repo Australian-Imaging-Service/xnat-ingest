@@ -1,13 +1,14 @@
-# - [ ] Email errors from upload script - emails configurable via env var
-# - [ ] add delete option to upload script
+# - [x] Email errors from upload script - emails configurable via env var
+# - [x] add delete option to upload script
 # - [x] add option to manually specify project/subject/session IDs in YAML file
 # - [x] handle partial re-uploads (override, merge, error), option in YAML file
-# - [ ] Generalise to handle different types of raw data files
+# - [x] Generalise to handle different types of raw data files
 # - [ ] Send instructions to Dean/Fang on how it should be configured
 # - [x] Pull info from DICOM headers/OHIF viewer
 from pathlib import Path
 import shutil
 import typing as ty
+import traceback
 import tempfile
 import hashlib
 import logging.config
@@ -16,12 +17,12 @@ import click
 from tqdm import tqdm
 import pydicom
 from fileformats.core import from_mime, FileSet
+from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
 from .base import cli
 from ..session import ImagingSession
-from ..exceptions import StagingError, UploadError
 from ..utils import logger, add_exc_note
 
 
@@ -185,11 +186,20 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
-    "--exclude-dicoms/--include-dicoms",
+    "--include-dicoms/--exclude-dicoms",
     default=False,
     type=bool,
     envvar="XNAT_INGEST_EXCLUDEDICOM",
-    help=("Whether to exclude DICOM scans from upload or not"),
+    help=(
+        "Whether to exclude DICOM scans in upload regardless of whether they are "
+        "specified in a column or not"
+    ),
+)
+@click.option(
+    "--raise-errors/--dont-raise-errors",
+    default=False,
+    type=bool,
+    help="Whether to raise errors instead of logging them (typically for debugging)"
 )
 def upload(
     dicoms_path: str,
@@ -201,11 +211,12 @@ def upload(
     project_field: str,
     subject_field: str,
     session_field: str,
-    delete,
-    log_file,
-    log_emails,
-    mail_server,
-    exclude_dicoms,
+    delete: bool,
+    log_file: Path,
+    log_emails: LoggerEmail,
+    mail_server: MailServer,
+    include_dicoms: bool,
+    raise_errors: bool,
 ):
     # Configure the email logger
     if log_emails:
@@ -248,144 +259,145 @@ def upload(
         server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
     )
 
-    partial_upload = False
-
     with xnat_repo.connection:
         for session in tqdm(
             sessions, f"Processing DICOM sessions found in '{dicoms_path}'"
         ):
-            # try:
-            session_staging_dir = staging_dir / session.name
-            session_staging_dir.mkdir(exist_ok=True)
-            spec_file = session_staging_dir / "UPLOAD-SPECIFICATION.yaml"
-            if spec_file.exists():
+            try:
+                if "MR" in session.modalities:
+                    SessionClass = xnat_repo.connection.classes.MrSessionData
+                    default_scan_modality = "MR"
+                elif "PT" in session.modalities:
+                    SessionClass = xnat_repo.connection.classes.PetSessionData
+                    default_scan_modality = "PT"
+                elif "CT" in session.modalities:
+                    SessionClass = xnat_repo.connection.classes.CtSessionData
+                    default_scan_modality = "CT"
+                else:
+                    raise RuntimeError(
+                        f"Found the following unsupported modalities {session.modalities}, "
+                        "in the session. Must contain one of 'MR', 'PT' or 'CT'"
+                    )
+
+                session_staging_dir = staging_dir / session.name
+                session_staging_dir.mkdir(exist_ok=True)
+                spec_file = session_staging_dir / "UPLOAD-SPECIFICATION.yaml"
+                if spec_file.exists():
+                    try:
+                        session.override_ids(spec_file)
+                    except Exception as e:
+                        add_exc_note(
+                            e,
+                            f"Could not load specification file from '{spec_file}', please "
+                            f"correct it and try again",
+                        )
+                        raise
+                else:
+                    logger.info(
+                        f"Did not find manual specification file at '{spec_file}'"
+                    )
+                    session.save_ids(spec_file)
+
+                # Deidentify files and save them to the staging directory
+                staged_session = session.deidentify(session_staging_dir)
+                # Create corresponding session on XNAT
+                xproject = xnat_repo.connection.projects[session.project_id]
+                xsubject = xnat_repo.connection.classes.SubjectData(
+                    label=session.subject_id, parent=xproject
+                )
                 try:
-                    session.override_ids(spec_file)
+                    xsession = xproject.experiments[session.session_id]
+                except KeyError:
+                    if "MR" in session.modalities:
+                        SessionClass = xnat_repo.connection.classes.MrSessionData
+                    elif "PT" in session.modalities:
+                        SessionClass = xnat_repo.connection.classes.PetSessionData
+                    elif "CT" in session.modalities:
+                        SessionClass = xnat_repo.connection.classes.CtSessionData
+                    else:
+                        logger.error(
+                            "Found the following unsupported modalities in "
+                            f"{session.name}: {session.modalities}"
+                        )
+                        continue
+                    xsession = SessionClass(label=session.session_id, parent=xsubject)
+                session_path = (
+                    f"{session.project_id}:{session.subject_id}:{session.session_id}"
+                )
+
+                # Access Arcana dataset associated with project
+                try:
+                    dataset = Dataset.load(session.project_id, xnat_repo)
                 except Exception as e:
                     add_exc_note(
                         e,
-                        f"Could not load specification file from '{spec_file}', please "
-                        f"correct it and try again",
+                        f"Did not load dataset definition from {session.project_id} project "
+                        f"on {server}. Please set one up using the Arcana command line tool "
+                        "in order to check presence of required scans and associated "
+                        "files (e.g. raw-data exports)",
                     )
-                    raise
-            else:
-                logger.info(
-                    f"Did not find manual specification file at '{spec_file}'"
-                )
+                    raise e
 
-            # Deidentify files and save them to the staging directory
-            staged_session = session.deidentify(session_staging_dir)
-            # except StagingError as e:
-            #     logger.error(
-            #         f"Skipping '{session.name}' session due to error in staging: {e}"
-            #     )
-            #     continue
-            # try:
-            # Create corresponding session on XNAT
-            xproject = xnat_repo.connection.projects[session.project_id]
-            xsubject = xnat_repo.connection.classes.SubjectData(
-                label=session.subject_id, parent=xproject
-            )
-            try:
-                xsession = xproject.experiments[session.session_id]
-            except KeyError:
-                if "MR" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.MrSessionData
-                elif "PT" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.PetSessionData
-                elif "CT" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.CtSessionData
-                else:
-                    logger.error(
-                        "Found the following unsupported modalities in "
-                        f"{session.name}: {session.modalities}"
+                # Anonymise DICOMs and save to directory prior to upload
+                if include_dicoms:
+                    logger.info(
+                        f"Including all DICOMS in upload from '{session.name}' to "
+                        f"{session_path} as `--include-dicoms` is set"
                     )
-                    continue
-                xsession = SessionClass(label=session.session_id, parent=xsubject)
-            session_path = (
-                f"{session.project_id}:{session.subject_id}:{session.session_id}"
-            )
-
-            # Access Arcana dataset associated with project
-            try:
-                dataset = Dataset.load(session.project_id, xnat_repo)
-            except Exception as e:
-                add_exc_note(
-                    e,
-                    f"Did not load dataset definition from {session.project_id} project "
-                    f"on {server}. Please set one up using the Arcana command line tool "
-                    "in order to check presence of required scans and associated "
-                    "files (e.g. raw-data exports)",
-                )
-                raise e
-
-            # Anonymise DICOMs and save to directory prior to upload
-            if exclude_dicoms:
-                logger.info("Omitting DICOMS as `--exclude-dicoms` is set")
-            else:
-                logger.info(
-                    f"Uploading DICOMS from '{session.name}' to {session_path}"
-                )
-
-            for scan_id, scan_type, scan in tqdm(
-                staged_session.select_resources(dataset),
-                f"Uploading scans found in {session.name}",
-            ):
-                if scan.modality == "SC":
-                    ScanClass = xnat_repo.connection.classes.ScScanData
-                elif scan.modality == "MR":
-                    ScanClass = xnat_repo.connection.classes.MrScanData
-                elif scan.modality == "PT":
-                    ScanClass = xnat_repo.connection.classes.PetScanData
-                elif scan.modality == "CT":
-                    ScanClass = xnat_repo.connection.classes.CtScanData
                 else:
-                    raise RuntimeError(
-                        f"Unsupported image modality '{scan.modality}'"
+                    logger.info(
+                        f"Excluding DICOMS from '{session.name}' to {session_path} "
+                        "unless they are explicitly specified in a column"
                     )
-                xscan = ScanClass(id=scan_id, type=scan_id, parent=xsession)
-                if isinstance(scan, DicomSeries):
-                    resource_name = "DICOM"
-                else:
-                    resource_name = scan.mime_like.split("/")[-1].replace("-", "_")
-                xresource = xscan.create_resource(resource_name)
-                xresource.upload_dir(scan.parent)
-                remote_checksums = get_checksums(xresource)
-                calc_checksums = calculate_checksums(scan)
-                if remote_checksums != calc_checksums:
-                    mismatching = [
-                        k
-                        for k, v in remote_checksums.items()
-                        if v != calc_checksums[k]
-                    ]
-                    logger.error(
-                        "Checksums do not match after upload of "
-                        f"'{session.name}:{scan_id}:{resource_name}' resource. "
-                        f"Mismatching files were {mismatching}"
-                    )
-                    upload_errors = True
-                else:
-                    partial_upload = True
-                if upload_errors:
-                    if not partial_upload:
+
+                for scan_id, scan_type, scan in tqdm(
+                    staged_session.select_resources(dataset, include_all_dicoms=include_dicoms),
+                    f"Uploading scans found in {session.name}",
+                ):
+                    try:
+                        modality = scan["Modality"]
+                    except KeyError:
+                        modality = default_scan_modality
+                    if modality == "SC":
+                        ScanClass = xnat_repo.connection.classes.ScScanData
+                    elif modality == "MR":
+                        ScanClass = xnat_repo.connection.classes.MrScanData
+                    elif modality == "PT":
+                        ScanClass = xnat_repo.connection.classes.PetScanData
+                    elif modality == "CT":
+                        ScanClass = xnat_repo.connection.classes.CtScanData
+                    else:
                         raise RuntimeError(
-                            f"Error on first upload from '{session.name}', "
-                            "aborting all uploads"
+                            f"Unsupported image modality '{scan.modality}'"
                         )
-                else:
+                    xscan = ScanClass(id=scan_id, type=scan_type, parent=xsession)
+                    if isinstance(scan, DicomSeries):
+                        resource_name = "DICOM"
+                    else:
+                        resource_name = scan.mime_like.split("/")[-1].replace("-", "_")
+                    xresource = xscan.create_resource(resource_name)
+                    if isinstance(scan, File):
+                        for fspath in scan.fspaths:
+                            xresource.upload(str(fspath), fspath.name)
+                    else:
+                        xresource.upload_dir(scan.parent)
+                    remote_checksums = get_checksums(xresource)
+                    calc_checksums = calculate_checksums(scan)
+                    if remote_checksums != calc_checksums:
+                        mismatching = [
+                            k
+                            for k, v in remote_checksums.items()
+                            if v != calc_checksums[k]
+                        ]
+                        raise RuntimeError(
+                            "Checksums do not match after upload of "
+                            f"'{session.name}:{scan_id}:{resource_name}' resource. "
+                            f"Mismatching files were {mismatching}"
+                        )
                     logger.info(f"Uploaded '{scan_id}' in '{session.name}'")
-            if upload_errors:
-                if partial_upload:
-                    raise RuntimeError(
-                        f"Some files did not upload correctly from "
-                        f"'{session.name}', a partial upload has been created"
-                    )
-                else:
-                    raise RuntimeError(
-                        f"Could not upload any files from '{session.name}'"
-                    )
-            else:
+                logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
+                logger.info("Extracting metadata from DICOMs on XNAT..")
                 xnat_repo.connection.put(
                     f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
                 )
@@ -398,16 +410,23 @@ def upload(
 
                 msg = f"Succesfully uploaded all files in '{session.name}'"
                 if delete:
-                    msg += ", deleting"
+                    msg += ", deleting originals..."
                 logger.info(msg)
                 if delete:
                     session.delete()
-                    shutil.rmtree(session_staging_dir)
                     logger.info(
-                        f"Successfully deleted '{session.name}' session after upload"
+                        f"Deleted original '{session.name}' session data after successful upload"
                     )
-            # except UploadError as e:
-            #     logger.error(f"Error in upload of '{session.name}' session: {e}")
+                shutil.rmtree(session_staging_dir)
+            except Exception as e:
+                if not raise_errors:
+                    logger.error(
+                        f"Skipping '{session.name}' session due to error in staging: \"{e}\""
+                        f"\n{traceback.format_exc()}\n\n"
+                    )
+                    continue
+                else:
+                    raise
 
 
 def get_checksums(xresource) -> ty.Dict[str, str]:
@@ -457,5 +476,5 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
             checksum = hsh.hexdigest()
         except OSError:
             raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        checksums[fspath.relative_to(scan.parent)] = checksum
+        checksums[str(fspath.relative_to(scan.parent))] = checksum
     return checksums

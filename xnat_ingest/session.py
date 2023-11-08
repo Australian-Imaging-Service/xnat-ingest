@@ -13,7 +13,7 @@ from pathlib import Path
 import pydicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet, DataType
-from fileformats.generic import File
+from fileformats.generic import File, Directory
 from arcana.core.data.set import Dataset
 from arcana.core.data.space import DataSpace
 from arcana.core.data.row import DataRow
@@ -62,7 +62,7 @@ class ImagingSession:
         return Path(os.path.commonpath(p.parent for p in self.dicoms.values()))  # type: ignore
 
     def select_resources(
-        self, dataset: Dataset
+        self, dataset: Dataset, include_all_dicoms: bool,
     ) -> ty.Iterator[ty.Tuple[str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -70,6 +70,9 @@ class ImagingSession:
         ----------
         dataset : Dataset
             Arcana dataset definition
+        include_all_dicoms : bool
+            whether to include all dicoms in upload or only those that are explicitly
+            specified by a column in the dataset
 
         Yields
         ------
@@ -82,6 +85,10 @@ class ImagingSession:
         """
         store = MockDataStore(self)
 
+        if include_all_dicoms:
+            for scan_id, dcm in self.dicoms.items():
+                yield scan_id, dcm["SeriesDescription"], dcm
+
         for column in dataset.columns.values():
             try:
                 entry = column.match_entry(store.row)
@@ -93,17 +100,25 @@ class ImagingSession:
             else:
                 scan = column.datatype(entry.item)
                 if isinstance(scan, DicomSeries):
+                    if include_all_dicoms:
+                        continue  # Will have been already uploaded
                     scan_id = scan.series_number()
                     scan_type = scan["SeriesDescription"]
                 else:
                     scan_id = column.name
-                    strip_special_char_pattern = r"^[\._\-]*(.*[a-zA-Z0-9])[\._\-]*"
-                    assert isinstance(scan, File)
-                    scan_type = scan.stem
-                    match = re.match(strip_special_char_pattern, scan_type)
-                    assert (
-                        match
-                    ), f"{strip_special_char_pattern} did not match {scan_type}"
+                    if column.is_regex and re.compile(column.path).groups:
+                        pattern = column.path
+                    else:
+                        pattern = r"^[\._\-]*(.*[a-zA-Z0-9])[\._\-]*"
+                    if isinstance(scan, File):
+                        scan_type = scan.stem
+                    elif isinstance(scan, Directory):
+                        scan_type = scan.fspath.name
+                    else:
+                        scan_type = scan.parent
+                    match = re.match(pattern, scan_type)
+                    if not match:
+                        raise RuntimeError(f"{pattern} did not match {scan_type}")
                     scan_type = match.group(1)
             yield scan_id, scan_type, scan
 
@@ -256,14 +271,15 @@ class ImagingSession:
         yaml_file : Path
             name of the file to load the manually specified IDs from (YAML format)
         """
-        yaml.dump(
-            {
-                "project": self.project_id,
-                "subject": self.subject_id,
-                "session": self.session_id,
-            },
-            yaml_file,
-        )
+        with open(yaml_file, "w") as f:
+            yaml.dump(
+                {
+                    "project": self.project_id,
+                    "subject": self.subject_id,
+                    "session": self.session_id,
+                },
+                f,
+            )
 
     def deidentify(self, dest_dir: Path) -> "ImagingSession":
         """Deidentify files by removing the fields listed `FIELDS_TO_ANONYMISE` and
@@ -301,14 +317,17 @@ class ImagingSession:
             new_dicoms.append(new_dicom_series)
         new_metadata = new_dicom_series.metadata
         if self.non_dicoms_pattern:
-            new_non_dicom_fspaths = transform_paths(
+            transformed_fspaths = transform_paths(
                 self.non_dicom_fspaths,
                 self.non_dicoms_pattern,
                 self.metadata,
                 new_metadata,
             )
-            for old, new in zip(self.non_dicom_fspaths, new_non_dicom_fspaths):
-                shutil.copy(old, new)
+            new_non_dicom_fspaths = []
+            for old, new in zip(self.non_dicom_fspaths, transformed_fspaths):
+                dest_path = dest_dir / new.name
+                shutil.copy(old, dest_path)
+                new_non_dicom_fspaths.append(dest_path)
 
         return type(self)(
             dicoms=new_dicoms,
