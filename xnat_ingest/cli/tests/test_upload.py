@@ -194,6 +194,8 @@ def test_upload(
             "--log-file",
             str(log_file),
             "--raise-errors",
+            "--include-dicoms",
+            "--delete",
         ],
         env={
             "XNAT_INGEST_HOST": xnat_server,
@@ -214,6 +216,7 @@ def test_upload(
                 "1",
                 "2",
                 "4",
+                "6",
                 "countrate",
                 "sinogram",
                 "listmode",
