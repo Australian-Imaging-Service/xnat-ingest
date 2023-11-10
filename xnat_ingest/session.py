@@ -3,6 +3,7 @@ import re
 from glob import glob
 import logging
 import os.path
+import subprocess as sp
 from functools import cached_property
 import shutil
 import yaml
@@ -11,6 +12,7 @@ from itertools import chain
 from collections import defaultdict
 from pathlib import Path
 import pydicom
+from fileformats.application import Dicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet, DataType
 from fileformats.generic import File, Directory
@@ -27,7 +29,9 @@ from .utils import add_exc_note, transform_paths
 logger = logging.getLogger("xnat-ingest")
 
 
-def dicoms_converter(multi_dicom_series: ty.Union[ty.List[DicomSeries], ty.Dict[str, DicomSeries]]) -> ty.Dict[str, DicomSeries]:
+def dicoms_converter(
+    multi_dicom_series: ty.Union[ty.List[DicomSeries], ty.Dict[str, DicomSeries]]
+) -> ty.Dict[str, DicomSeries]:
     if isinstance(multi_dicom_series, ty.Sequence):
         multi_dicom_series = {str(s["SeriesNumber"]): s for s in multi_dicom_series}
     return multi_dicom_series
@@ -38,7 +42,9 @@ class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    dicoms: ty.Dict[str, DicomSeries] = attrs.field(factory=dict, converter=dicoms_converter)
+    dicoms: ty.Dict[str, DicomSeries] = attrs.field(
+        factory=dict, converter=dicoms_converter
+    )
     non_dicoms_pattern: str | None = None
     non_dicom_fspaths: ty.List[Path] = attrs.field(factory=list)
 
@@ -62,7 +68,9 @@ class ImagingSession:
         return Path(os.path.commonpath(p.parent for p in self.dicoms.values()))  # type: ignore
 
     def select_resources(
-        self, dataset: Dataset, include_all_dicoms: bool,
+        self,
+        dataset: Dataset,
+        include_all_dicoms: bool,
     ) -> ty.Iterator[ty.Tuple[str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -295,24 +303,20 @@ class ImagingSession:
         ImagingSession
             a deidentified session with updated paths
         """
+        if not self._dcmedit_path:
+            logger.warning(
+                "Did not find `dcmedit` tool from the MRtrix package on the system path, "
+                "de-identification will be performed by pydicom instead and may be slower"
+            )
         new_dicoms = []
         for series_number, dicom_series in self.dicoms.items():
             scan_dir = dest_dir / series_number / "DICOM"
             scan_dir.mkdir(parents=True, exist_ok=True)
             new_dicom_paths = []
             for dicom_file in dicom_series.fspaths:
-                dcm = pydicom.dcmread(dicom_file)
-                dcm.PatientBirthDate = dcm.PatientBirthDate[:4] + "0101"
-                for field in self.FIELDS_TO_DEIDENTIFY:
-                    try:
-                        elem = dcm[field]  # type: ignore
-                    except KeyError:
-                        pass
-                    else:
-                        elem.value = ""
-                new_path = scan_dir / dicom_file.name
-                dcm.save_as(new_path)
-                new_dicom_paths.append(new_path)
+                new_dicom_paths.append(
+                    self.deidentify_dicom(dicom_file, scan_dir / dicom_file.name)
+                )
             new_dicom_series = DicomSeries(new_dicom_paths)
             new_dicoms.append(new_dicom_series)
         new_metadata = new_dicom_series.metadata
@@ -326,7 +330,10 @@ class ImagingSession:
             new_non_dicom_fspaths = []
             for old, new in zip(self.non_dicom_fspaths, transformed_fspaths):
                 dest_path = dest_dir / new.name
-                shutil.copy(old, dest_path)
+                if Dicom.matches(old):
+                    self.deidentify_dicom(old, dest_path)
+                else:
+                    shutil.copyfile(old, dest_path)
                 new_non_dicom_fspaths.append(dest_path)
 
         return type(self)(
@@ -339,9 +346,84 @@ class ImagingSession:
 
     def delete(self):
         """Delete all data associated with the session"""
-        raise NotImplementedError
+        for fspath in chain(
+            self.non_dicom_fspaths, *(d.fspaths for d in self.dicoms.values())
+        ):
+            os.unlink(fspath)
 
-    FIELDS_TO_DEIDENTIFY = [
+    def deidentify_dicom(
+        self, dicom_file: Path, new_path: Path, series_number: str | None = None
+    ) -> Path:
+        if self._dcmedit_path:
+            # Get year of birth
+            # yob = (
+            #     sp.check_output(
+            #         [self._dcminfo_path, "-tag", "0010", "0030", str(dicom_file)]
+            #     )
+            #     .decode("utf-8")
+            #     .split(" ")[-4:]
+            # )
+            # Copy to new path
+            shutil.copyfile(dicom_file, new_path)
+            # Replace date of birth date with 1st of Jan
+            args = [
+                self._dcmedit_path,
+                "-anonymise",
+                str(new_path),
+            ]
+            if series_number:
+                args += ["-tag", "0020", "0011", series_number]
+            sp.check_call(args)
+            # sp.check_call(
+            #     [
+            #         self._dcmedit_path,
+            #         "-tag",
+            #         "0010",
+            #         "0030",
+            #         f"0101{yob}",
+            #         str(new_path),
+            #     ]
+            # )
+            # # Clear remaining identifable fields
+            # sp.check_call(
+            #     (
+            #         [self._dcmedit_path]
+            #         + list(
+            #             chain(*(("-tag",) + t + ("",) for t in self.FIELDS_TO_CLEAR))
+            #         )
+            #         + [str(new_path)]
+            #     )
+            # )
+        else:
+            dcm = pydicom.dcmread(dicom_file)
+            dcm.PatientBirthDate = ""  # dcm.PatientBirthDate[:4] + "0101"
+            if series_number:
+                dcm.SeriesNumber = series_number
+            for field in self.FIELDS_TO_CLEAR:
+                try:
+                    elem = dcm[field]  # type: ignore
+                except KeyError:
+                    pass
+                else:
+                    elem.value = ""
+            dcm.save_as(new_path)
+        return new_path
+
+    @cached_property
+    def _dcmedit_path(self) -> str:
+        try:
+            return sp.check_output("which dcmedit", shell=True).decode("utf-8").strip()
+        except sp.CalledProcessError:
+            return None
+
+    @cached_property
+    def _dcminfo_path(self) -> str:
+        try:
+            return sp.check_output("which dcminfo", shell=True).decode("utf-8").strip()
+        except sp.CalledProcessError:
+            return None
+
+    FIELDS_TO_CLEAR = [
         ("0008", "0014"),  # Instance Creator UID
         ("0008", "1111"),  # Referenced Performed Procedure Step SQ
         ("0008", "1120"),  # Referenced Patient SQ
