@@ -352,7 +352,7 @@ class ImagingSession:
             os.unlink(fspath)
 
     def deidentify_dicom(
-        self, dicom_file: Path, new_path: Path, series_number: str | None = None
+        self, dicom_file: Path, new_path: Path
     ) -> Path:
         if self._dcmedit_path:
             # Get year of birth
@@ -371,8 +371,6 @@ class ImagingSession:
                 "-anonymise",
                 str(new_path),
             ]
-            if series_number:
-                args += ["-tag", "0020", "0011", series_number]
             sp.check_call(args)
             # sp.check_call(
             #     [
@@ -397,8 +395,6 @@ class ImagingSession:
         else:
             dcm = pydicom.dcmread(dicom_file)
             dcm.PatientBirthDate = ""  # dcm.PatientBirthDate[:4] + "0101"
-            if series_number:
-                dcm.SeriesNumber = series_number
             for field in self.FIELDS_TO_CLEAR:
                 try:
                     elem = dcm[field]  # type: ignore
