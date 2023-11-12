@@ -109,7 +109,7 @@ class DicomScan:
                     errors.append(f"Session ID ({session_field}) not provided")
         if errors:
             raise DicomParseError("\n".join(errors))
-        non_dicom_dir_name = "_".join(dcm.PatientName.split("^")) + "_" + dcm.StudyDate
+        associated_file_dir_name = "_".join(dcm.PatientName.split("^")) + "_" + dcm.StudyDate
         return scans, SessionMetadata(
-            project_id, subject_id, session_id, non_dicom_dir_name
+            project_id, subject_id, session_id, associated_file_dir_name
         )

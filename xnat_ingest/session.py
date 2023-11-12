@@ -45,8 +45,8 @@ class ImagingSession:
     dicoms: ty.Dict[str, DicomSeries] = attrs.field(
         factory=dict, converter=dicoms_converter
     )
-    non_dicoms_pattern: str | None = None
-    non_dicom_fspaths: ty.List[Path] = attrs.field(factory=list)
+    associated_files_pattern: str | None = None
+    associated_file_fspaths: ty.List[Path] = attrs.field(factory=list)
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
@@ -157,7 +157,7 @@ class ImagingSession:
     def load(
         cls,
         dicoms_path: str | Path,
-        non_dicoms_pattern: str | None = None,
+        associated_files_pattern: str | None = None,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
@@ -169,7 +169,7 @@ class ImagingSession:
         dicoms_path : str or Path
             Path to a directory containging the DICOMS to load the sessions from, or a
             glob string that selects the paths
-        non_dicoms_pattern : str
+        associated_files_pattern : str
             Pattern used to select the non-dicom files to include in the session. The
             pattern can contain string template placeholders corresponding to DICOM
             metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
@@ -227,19 +227,19 @@ class ImagingSession:
                 id_ = id_.replace(" ", "_")
                 return id_
 
-            if non_dicoms_pattern:
-                non_dicoms_path = Path(
+            if associated_files_pattern:
+                associated_files_path = Path(
                     os.path.commonpath(dicom_fspaths)
-                ) / non_dicoms_pattern.format(**session_dicom_series[0].metadata)
-                non_dicom_fspaths = [Path(p) for p in glob(str(non_dicoms_path))]
+                ) / associated_files_pattern.format(**session_dicom_series[0].metadata)
+                associated_file_fspaths = [Path(p) for p in glob(str(associated_files_path))]
             else:
-                non_dicom_fspaths = []
+                associated_file_fspaths = []
 
             sessions.append(
                 cls(
                     dicoms={str(s["SeriesNumber"]): s for s in session_dicom_series},
-                    non_dicom_fspaths=non_dicom_fspaths,
-                    non_dicoms_pattern=non_dicoms_pattern,
+                    associated_file_fspaths=associated_file_fspaths,
+                    associated_files_pattern=associated_files_pattern,
                     project_id=get_id(project_field),
                     subject_id=get_id(subject_field),
                     session_id=get_id(session_field),
@@ -320,25 +320,25 @@ class ImagingSession:
             new_dicom_series = DicomSeries(new_dicom_paths)
             new_dicoms.append(new_dicom_series)
         new_metadata = new_dicom_series.metadata
-        if self.non_dicoms_pattern:
+        if self.associated_files_pattern:
             transformed_fspaths = transform_paths(
-                self.non_dicom_fspaths,
-                self.non_dicoms_pattern,
+                self.associated_file_fspaths,
+                self.associated_files_pattern,
                 self.metadata,
                 new_metadata,
             )
-            new_non_dicom_fspaths = []
-            for old, new in zip(self.non_dicom_fspaths, transformed_fspaths):
+            new_associated_file_fspaths = []
+            for old, new in zip(self.associated_file_fspaths, transformed_fspaths):
                 dest_path = dest_dir / new.name
                 if Dicom.matches(old):
                     self.deidentify_dicom(old, dest_path)
                 else:
                     shutil.copyfile(old, dest_path)
-                new_non_dicom_fspaths.append(dest_path)
+                new_associated_file_fspaths.append(dest_path)
 
         return type(self)(
             dicoms=new_dicoms,
-            non_dicom_fspaths=new_non_dicom_fspaths,
+            associated_file_fspaths=new_associated_file_fspaths,
             project_id=self.project_id,
             subject_id=self.subject_id,
             session_id=self.session_id,
@@ -347,7 +347,7 @@ class ImagingSession:
     def delete(self):
         """Delete all data associated with the session"""
         for fspath in chain(
-            self.non_dicom_fspaths, *(d.fspaths for d in self.dicoms.values())
+            self.associated_file_fspaths, *(d.fspaths for d in self.dicoms.values())
         ):
             os.unlink(fspath)
 
@@ -534,11 +534,11 @@ class MockDataStore(DataStore):
                 datatype=DicomSeries,
                 uri=f"dicom::{dcm['SeriesNumber']}",
             )
-        for non_dcm_fspath in self.session.non_dicom_fspaths:
+        for non_dcm_fspath in self.session.associated_file_fspaths:
             row.add_entry(
                 path=non_dcm_fspath.name,
                 datatype=FileSet,
-                uri=f"nondicom::{non_dcm_fspath}",
+                uri=f"associated_file::{non_dcm_fspath}",
             )
 
     def get(self, entry: DataEntry, datatype: type) -> DataType:

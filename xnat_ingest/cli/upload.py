@@ -207,7 +207,7 @@ def upload(
     server: str,
     user: str,
     password: str,
-    non_dicoms_pattern: str,
+    associated_files_pattern: str,
     project_field: str,
     subject_field: str,
     session_field: str,
@@ -249,7 +249,7 @@ def upload(
 
     sessions = ImagingSession.load(
         dicoms_path=dicoms_path,
-        non_dicoms_pattern=non_dicoms_pattern,
+        associated_files_pattern=associated_files_pattern,
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,

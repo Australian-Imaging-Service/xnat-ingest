@@ -44,8 +44,8 @@ def test_upload(
     dicoms_dir = tmp_path / "dicoms"
     dicoms_dir.mkdir(exist_ok=True)
 
-    non_dicoms_dir = tmp_path / "non-dicoms"
-    non_dicoms_dir.mkdir(exist_ok=True)
+    associated_files_dir = tmp_path / "non-dicoms"
+    associated_files_dir.mkdir(exist_ok=True)
 
     staging_dir = tmp_path / "staging"
     if staging_dir.exists():
@@ -126,7 +126,7 @@ def test_upload(
                 date_time=f"2023.08.25.15.50.5{i}",
             )
             for nd_fspath in nd_fspaths:
-                os.link(dcm, non_dicoms_dir / f"{nd_fspath.stem}-{i}{nd_fspath.suffix}")
+                os.link(dcm, associated_files_dir / f"{nd_fspath.stem}-{i}{nd_fspath.suffix}")
 
     # Create data store
     result = cli_runner(
@@ -189,7 +189,7 @@ def test_upload(
             str(dicoms_dir),
             str(staging_dir),
             "--non-dicoms-pattern",
-            str(non_dicoms_dir)
+            str(associated_files_dir)
             + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             "--log-file",
             str(log_file),

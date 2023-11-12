@@ -45,8 +45,8 @@ def imaging_session() -> ImagingSession:
                 get_statistics_image(PatientName=PatientName),
             )
         ],
-        non_dicoms_pattern="**/{PatientName.given_name}_{PatientName.family_name}*.ptd",
-        non_dicom_fspaths=get_raw_data_files(
+        associated_files_pattern="**/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+        associated_file_fspaths=get_raw_data_files(
             first_name=first_name, last_name=last_name
         ),
     )
