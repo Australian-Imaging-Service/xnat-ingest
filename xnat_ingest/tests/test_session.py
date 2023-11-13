@@ -3,9 +3,9 @@ import pytest
 from fileformats.core import from_mime
 from fileformats.medimage import (
     DicomSeries,
-    Vnd_Siemens_BiographVisionVr20b_PetCountRate,
-    Vnd_Siemens_BiographVisionVr20b_PetListMode,
-    Vnd_Siemens_BiographVisionVr20b_PetSinogram,
+    Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+    Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+    Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
 )
 from arcana.core.data.set import Dataset
 from arcana.common import DirTree
@@ -133,8 +133,8 @@ def test_session_select_resources(
     assert set(type(s) for s in scans) == set(
         [
             DicomSeries,
-            Vnd_Siemens_BiographVisionVr20b_PetListMode,
-            Vnd_Siemens_BiographVisionVr20b_PetCountRate,
-            Vnd_Siemens_BiographVisionVr20b_PetSinogram,
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
         ]
     )
