@@ -70,8 +70,8 @@ class ImagingSession:
     def select_resources(
         self,
         dataset: Dataset,
-        include_all_dicoms: bool,
-    ) -> ty.Iterator[ty.Tuple[str, str, FileSet]]:
+        include_all_dicoms: bool = False,
+    ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
         Parameters
@@ -88,14 +88,19 @@ class ImagingSession:
             the ID of the scan should be uploaded to
         scan_type : str
             the desc/type to assign to the scan
+        resource_name : str
+            the name of the resource under the scan to upload it to
         scan : FileSet
             a fileset to upload
         """
         store = MockDataStore(self)
 
+        uploaded: ty.Set[FileSet] = set()
+
         if include_all_dicoms:
             for scan_id, dcm in self.dicoms.items():
-                yield scan_id, dcm["SeriesDescription"], dcm
+                uploaded.add(dcm)
+                yield scan_id, dcm["SeriesDescription"], "DICOM", dcm
 
         for column in dataset.columns.values():
             try:
@@ -107,11 +112,20 @@ class ImagingSession:
                 ) from e
             else:
                 scan = column.datatype(entry.item)
-                if isinstance(scan, DicomSeries):
-                    if include_all_dicoms:
-                        continue  # Will have been already uploaded
-                    scan_id = scan.series_number()
-                    scan_type = scan["SeriesDescription"]
+                if scan in uploaded:
+                    logger.warning(
+                        "scan %s already matched by previous columns (or `included_all_dicoms` option), "
+                        "skipping match with %s", scan, column
+                    )
+                    continue
+                resource_name = column.datatype.mime_like.split("/")[-1].replace('-', '_').split(".")[-1]
+                if resource_name == "dicom_series":
+                    resource_name = "DICOM"
+                if isinstance(scan, (DicomSeries, Dicom)):
+                    scan_id = str(scan.metadata["SeriesNumber"])
+                    scan_type = str(scan["SeriesDescription"])
+                elif isinstance(scan, Dicom):
+                    scan_id = scan["Series"]
                 else:
                     scan_id = column.name
                     if column.is_regex and re.compile(column.path).groups:
@@ -128,7 +142,8 @@ class ImagingSession:
                     if not match:
                         raise RuntimeError(f"{pattern} did not match {scan_type}")
                     scan_type = match.group(1)
-            yield scan_id, scan_type, scan
+            uploaded.add(scan)
+            yield scan_id, scan_type, resource_name, scan
 
     @cached_property
     def metadata(self):

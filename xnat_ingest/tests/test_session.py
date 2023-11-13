@@ -115,16 +115,21 @@ def test_session_select_resources(
     resources = list(staged_session.select_resources(dataset))
 
     assert len(resources) == 6
-    ids, descs, scans = zip(*resources)
-    assert sorted(ids) == ["1", "2", "4", "countrate", "listmode", "sinogram"]
-    assert sorted(descs) == [
-        "AC CT 3.0  SWB HD_FoV",
-        "PET SWB 8MIN",
-        "PET_COUNTRATE",
-        "PET_EM_SINO",
-        "PET_LISTMODE",
-        "Topogram 0.6 Tr60",
-    ]
+    ids, descs, resource_names, scans = zip(*resources)
+    assert set(ids) == set(("1", "2", "4", "6", "countrate", "listmode", "sinogram"))
+    assert set(descs) == set(
+        [
+            "AC CT 3.0  SWB HD_FoV",
+            "PET SWB 8MIN",
+            "Topogram 0.6 Tr60",
+            "PET_LISTMODE",
+            "PET_COUNTRATE",
+            "PET_EM_SINO",
+        ]
+    )
+    assert set(resource_names) == set(
+        ("DICOM", "pet_list_mode", "pet_count_rate", "pet_sinogram")
+    )
     assert set(type(s) for s in scans) == set(
         [
             DicomSeries,

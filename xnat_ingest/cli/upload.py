@@ -132,7 +132,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
-    "--non-dicoms-pattern",
+    "--assoc-files-glob",
     type=str,
     default=None,
     envvar="XNAT_INGEST_NONDICOMSPATTERN",
@@ -207,7 +207,7 @@ def upload(
     server: str,
     user: str,
     password: str,
-    associated_files_pattern: str,
+    assoc_files_glob: str,
     project_field: str,
     subject_field: str,
     session_field: str,
@@ -249,7 +249,7 @@ def upload(
 
     sessions = ImagingSession.load(
         dicoms_path=dicoms_path,
-        associated_files_pattern=associated_files_pattern,
+        associated_files_pattern=assoc_files_glob,
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,
@@ -350,14 +350,15 @@ def upload(
                         "unless they are explicitly specified in a column"
                     )
 
-                for scan_id, scan_type, scan in tqdm(
+                for scan_id, scan_type, resource_name, scan in tqdm(
                     staged_session.select_resources(dataset, include_all_dicoms=include_dicoms),
                     f"Uploading scans found in {session.name}",
                 ):
-                    try:
-                        modality = scan["Modality"]
-                    except KeyError:
-                        modality = default_scan_modality
+                    image_type = scan.metadata.get("ImageType")
+                    if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
+                        modality = "SC"
+                    else:
+                        modality = scan.metadata.get("Modality", default_scan_modality)
                     if modality == "SC":
                         ScanClass = xnat_repo.connection.classes.ScScanData
                     elif modality == "MR":
