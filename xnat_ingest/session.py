@@ -230,7 +230,7 @@ class ImagingSession:
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info("Loading DICOM series from %s", str(dicoms_path))
         dicom_sessions = defaultdict(list)
-        for series in from_paths(dicom_fspaths, DicomSeries):
+        for series in from_paths(dicom_fspaths, DicomSeries, ignore=".*"):
             dicom_sessions[series["StudyInstanceUID"]].append(series)
 
         # Construct sessions from sorted series
