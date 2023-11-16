@@ -176,6 +176,7 @@ class ImagingSession:
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
+        project_id: str | None = None,
     ) -> ty.List["ImagingSession"]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -200,6 +201,9 @@ class ImagingSession:
         session_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
+        project_id : str
+            Override the project ID loaded from the DICOM header (useful when invoking 
+            manually)
 
         Returns
         -------
@@ -255,7 +259,7 @@ class ImagingSession:
                     dicoms={str(s["SeriesNumber"]): s for s in session_dicom_series},
                     associated_file_fspaths=associated_file_fspaths,
                     associated_files_pattern=associated_files_pattern,
-                    project_id=get_id(project_field),
+                    project_id=(project_id if project_id else get_id(project_field)),
                     subject_id=get_id(subject_field),
                     session_id=get_id(session_field),
                 )

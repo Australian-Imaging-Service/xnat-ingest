@@ -132,6 +132,14 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
+    "--project-id",
+    type=str,
+    default=None,
+    help=(
+        "Override the project ID read from the DICOM headers"
+    )
+)
+@click.option(
     "--assoc-files-glob",
     type=str,
     default=None,
@@ -211,6 +219,7 @@ def upload(
     project_field: str,
     subject_field: str,
     session_field: str,
+    project_id: str | None,
     delete: bool,
     log_file: Path,
     log_emails: LoggerEmail,
@@ -253,6 +262,7 @@ def upload(
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,
+        project_id=project_id,
     )
 
     xnat_repo = Xnat(
