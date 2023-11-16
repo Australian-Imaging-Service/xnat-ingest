@@ -48,6 +48,10 @@ jobs:
         echo "machine localhost:8080" > $HOME/.netrc
         echo "user admin" >> $HOME/.netrc
         echo "password admin" >> $HOME/.netrc
-
     - name: Pytest
-      run: pytest -vvs
+      run: pytest -vvs --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v2
+      with:
+        fail_ci_if_error: true
+        token: ${{ secrets.CODECOV_TOKEN }}
