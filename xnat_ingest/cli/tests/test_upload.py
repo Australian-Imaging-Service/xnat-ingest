@@ -219,7 +219,7 @@ def test_upload(
                 "1",
                 "2",
                 "4",
-                "6"
+                "6",
                 "countrate",
                 "listmode",
                 "sinogram",
