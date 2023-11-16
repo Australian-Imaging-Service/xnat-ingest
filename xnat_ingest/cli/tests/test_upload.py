@@ -159,17 +159,17 @@ def test_upload(
         ("atten_corr", "medimage/dicom-series", "AC CT.*"),
         (
             "listmode",
-            "medimage/vnd.siemens.biograph-vision-vr20b.pet-list-mode",
+            "medimage/vnd.siemens.biograph128-vision-vr20b.pet-list-mode",
             ".*(PET_LISTMODE).*",
         ),
         (
             "sinogram",
-            "medimage/vnd.siemens.biograph-vision-vr20b.pet-sinogram",
+            "medimage/vnd.siemens.biograph128-vision-vr20b.pet-sinogram",
             ".*(PET_EM_SINO).*",
         ),
         (
             "countrate",
-            "medimage/vnd.siemens.biograph-vision-vr20b.pet-count-rate",
+            "medimage/vnd.siemens.biograph128-vision-vr20b.pet-count-rate",
             ".*(PET_COUNTRATE).*",
         ),
     ]:
