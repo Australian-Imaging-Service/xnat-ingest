@@ -354,11 +354,14 @@ def upload(
                     staged_session.select_resources(dataset, include_all_dicoms=include_dicoms),
                     f"Uploading scans found in {session.name}",
                 ):
-                    image_type = scan.metadata.get("ImageType")
-                    if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
-                        modality = "SC"
+                    if scan.metadata:
+                        image_type = scan.metadata.get("ImageType")
+                        if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
+                            modality = "SC"
+                        else:
+                            modality = scan.metadata.get("Modality", default_scan_modality)
                     else:
-                        modality = scan.metadata.get("Modality", default_scan_modality)
+                        modality = default_scan_modality
                     if modality == "SC":
                         ScanClass = xnat_repo.connection.classes.ScScanData
                     elif modality == "MR":
