@@ -138,3 +138,12 @@ def test_session_select_resources(
             Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
         ]
     )
+
+
+def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
+
+    imaging_session.save(tmp_path)
+    reloaded = ImagingSession.load(tmp_path)
+
+    assert reloaded is not imaging_session
+    assert reloaded == imaging_session

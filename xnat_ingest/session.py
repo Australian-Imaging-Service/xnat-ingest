@@ -115,10 +115,16 @@ class ImagingSession:
                 if scan in uploaded:
                     logger.warning(
                         "scan %s already matched by previous columns (or `included_all_dicoms` option), "
-                        "skipping match with %s", scan, column
+                        "skipping match with %s",
+                        scan,
+                        column,
                     )
                     continue
-                resource_name = column.datatype.mime_like.split("/")[-1].replace('-', '_').split(".")[-1]
+                resource_name = (
+                    column.datatype.mime_like.split("/")[-1]
+                    .replace("-", "_")
+                    .split(".")[-1]
+                )
                 if resource_name == "dicom_series":
                     resource_name = "DICOM"
                 if isinstance(scan, (DicomSeries, Dicom)):
@@ -169,7 +175,7 @@ class ImagingSession:
         return collated
 
     @classmethod
-    def load(
+    def construct(
         cls,
         dicoms_path: str | Path,
         associated_files_pattern: str | None = None,
@@ -202,7 +208,7 @@ class ImagingSession:
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
         project_id : str
-            Override the project ID loaded from the DICOM header (useful when invoking 
+            Override the project ID loaded from the DICOM header (useful when invoking
             manually)
 
         Returns
@@ -250,7 +256,9 @@ class ImagingSession:
                 associated_files_path = Path(
                     os.path.commonpath(dicom_fspaths)
                 ) / associated_files_pattern.format(**session_dicom_series[0].metadata)
-                associated_file_fspaths = [Path(p) for p in glob(str(associated_files_path))]
+                associated_file_fspaths = [
+                    Path(p) for p in glob(str(associated_files_path))
+                ]
             else:
                 associated_file_fspaths = []
 
@@ -267,7 +275,8 @@ class ImagingSession:
 
         return sessions
 
-    def override_ids(self, yaml_file: Path):
+    @classmethod
+    def load(cls, save_dir: Path):
         """Override IDs extracted from DICOM metadata with manually specified IDs loaded
         from a YAML
 
@@ -276,20 +285,24 @@ class ImagingSession:
         yaml_file : Path
             name of the file to load the manually specified IDs from (YAML format)
         """
+        yaml_file = save_dir / cls.SAVE_FILENAME
         try:
             with open(yaml_file) as f:
-                spec = yaml.load(f, Loader=yaml.SafeLoader)
+                dct = yaml.load(f, Loader=yaml.SafeLoader)
         except Exception as e:
             add_exc_note(
                 e,
-                f"Loading manual override of IDs from {yaml_file}, please check that it "
+                f"Loading saved session from {yaml_file}, please check that it "
                 "is a valid YAML file",
             )
             raise e
-        for name, val in spec.items():
-            setattr(self, name, val)
+        dct["dicoms"] = {k: DicomSeries(v) for k, v in dct["dicoms"].items()}
+        dct["associated_file_fspaths"] = [
+            Path(f) for f in dct["associated_file_fspaths"]
+        ]
+        return cls(**dct)
 
-    def save_ids(self, yaml_file):
+    def save(self, save_dir: Path):
         """Save the project/subject/session IDs loaded from the session to a YAML file,
         so they can be manually overridden.
 
@@ -298,13 +311,15 @@ class ImagingSession:
         yaml_file : Path
             name of the file to load the manually specified IDs from (YAML format)
         """
+        dct = attrs.asdict(self, recurse=True)
+        dct["associated_file_fspaths"] = [
+            str(p) for p in dct["associated_file_fspaths"]
+        ]
+        dct["dicoms"] = {k: [str(p) for p in v["fspaths"]] for k, v in dct["dicoms"].items()}
+        yaml_file = save_dir / self.SAVE_FILENAME
         with open(yaml_file, "w") as f:
             yaml.dump(
-                {
-                    "project": self.project_id,
-                    "subject": self.subject_id,
-                    "session": self.session_id,
-                },
+                dct,
                 f,
             )
 
@@ -370,9 +385,7 @@ class ImagingSession:
         ):
             os.unlink(fspath)
 
-    def deidentify_dicom(
-        self, dicom_file: Path, new_path: Path
-    ) -> Path:
+    def deidentify_dicom(self, dicom_file: Path, new_path: Path) -> Path:
         if self._dcmedit_path:
             # Get year of birth
             # yob = (
@@ -509,6 +522,8 @@ class ImagingSession:
         ("0400", "0561"),  # Original Attributes Sequence
         ("5200", "9229"),  # Shared Functional Groups SQ
     ]
+
+    SAVE_FILENAME = "saved-session.yaml"
 
 
 @attrs.define

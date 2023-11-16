@@ -7,7 +7,7 @@ from arcana.core.cli.dataset import (
 )
 import xnat4tests
 from arcana.core.cli.store import add as store_add
-from xnat_ingest.cli.upload import upload
+from xnat_ingest.cli import stage, upload
 from xnat_ingest.utils import show_cli_trace
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
@@ -30,7 +30,7 @@ from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
 PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
 
 
-def test_upload(
+def test_stage_and_upload(
     xnat_project,
     xnat_config,
     xnat_server,
@@ -187,13 +187,26 @@ def test_upload(
         assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        upload,
+        stage,
         [
             str(dicoms_dir),
             str(staging_dir),
             "--assoc-files-glob",
             str(associated_files_dir)
             + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+            "--log-file",
+            str(log_file),
+            "--raise-errors",
+            "--delete",
+        ]
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        upload,
+        [
+            str(staging_dir),
             "--log-file",
             str(log_file),
             "--raise-errors",

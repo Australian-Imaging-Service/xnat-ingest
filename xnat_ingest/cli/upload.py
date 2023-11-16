@@ -15,8 +15,7 @@ import logging.config
 import logging.handlers
 import click
 from tqdm import tqdm
-import pydicom
-from fileformats.core import from_mime, FileSet
+from fileformats.core import FileSet
 from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from arcana.core.data.set import Dataset
@@ -24,74 +23,16 @@ from arcana.xnat import Xnat
 from .base import cli
 from ..session import ImagingSession
 from ..utils import logger, add_exc_note
+from .utils import LoggerEmail, MailServer
 
 
 HASH_CHUNK_SIZE = 2**20
 
 
-class LoggerEmail:
-    def __init__(self, address, loglevel, subject):
-        self.address = address
-        self.loglevel = loglevel
-        self.subject = subject
-
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(*entry.split(",")) for entry in envvar.split(";")]
-
-    def __str__(self):
-        return self.address
-
-
-class MailServer:
-    def __init__(self, host, sender_email, user, password):
-        self.host = host
-        self.sender_email = sender_email
-        self.user = user
-        self.password = password
-
-
-class NonDicomType(str):
-    def __init__(self, mime):
-        self.type = from_mime(mime)
-
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(entry) for entry in envvar.split(";")]
-
-
-class DicomField:
-    def __init__(self, keyword_or_tag):
-        # Get the tag associated with the keyword
-        try:
-            self.tag = pydicom.datadict.tag_for_keyword(keyword_or_tag)
-        except ValueError:
-            try:
-                self.keyword = pydicom.datadict.dictionary_description(keyword_or_tag)
-            except ValueError:
-                raise ValueError(
-                    f'Could not parse "{keyword_or_tag}" as a DICOM keyword or tag'
-                )
-            else:
-                self.tag = keyword_or_tag
-        else:
-            self.keyword = keyword_or_tag
-
-    def __str__(self):
-        return f"'{self.keyword}' field ({','.join(self.tag)})"
-
-
 @cli.command(
-    help="""uploads all scans found in the export directory to XNAT. It assumes
-that each session is saved in a separate sub-directory and contains DICOM files with
-metadata fields containing the XNAT project, subject and session IDs to upload the data to
-
-Non-dicom data found in the directory will be uploaded if it matches any of the regular
-expressions passed to the `--non-dicom` flags.
-
-DICOMS_PATH is either the path to a directory containing the DICOM files to upload, or
-a glob pattern that selects the DICOM paths directly
-
+    help="""uploads all sessions found in the staging directory (as prepared by the
+`stage` sub-command) to XNAT.
+    
 STAGING_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
 
@@ -103,60 +44,13 @@ USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env.
 PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
 """,
 )
-@click.argument("dicoms_path", type=str)
 @click.argument("staging_dir", type=click.Path(path_type=Path))
 @click.argument("server", type=str, envvar="XNAT_INGEST_HOST")
 @click.argument("user", type=str, envvar="XNAT_INGEST_USER")
 @click.argument("password", type=str, envvar="XNAT_INGEST_PASS")
 @click.option(
-    "--project-field",
-    type=DicomField,
-    default="StudyID",
-    envvar="XNAT_INGEST_PROJECT",
-    help=("The keyword or tag of the DICOM field to extract the XNAT project ID from "),
-)
-@click.option(
-    "--subject-field",
-    type=DicomField,
-    default="PatientID",
-    envvar="XNAT_INGEST_SUBJECT",
-    help=("The keyword or tag of the DICOM field to extract the XNAT subject ID from "),
-)
-@click.option(
-    "--session-field",
-    type=DicomField,
-    default="AccessionNumber",
-    envvar="XNAT_INGEST_SESSION",
-    help=(
-        "The keyword or tag of the DICOM field to extract the XNAT imaging session ID from "
-    ),
-)
-@click.option(
-    "--project-id",
-    type=str,
-    default=None,
-    help=(
-        "Override the project ID read from the DICOM headers"
-    )
-)
-@click.option(
-    "--assoc-files-glob",
-    type=str,
-    default=None,
-    envvar="XNAT_INGEST_NONDICOMSPATTERN",
-    help=(
-        "Glob pattern by which to detect non-DICOM files that "
-        "corresponding to DICOM sessions. Can contain string templates corresponding to "
-        "DICOM metadata fields, which are substituted before the glob is called. For "
-        'example, "/path/to/non-dicoms/{PatientName.given_name}_{PatientName.family_name}/*)" '
-        "will find all files under the subdirectory within '/path/to/non-dicoms/' that matches "
-        "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
-        "if a relative path is provided."
-    ),
-)
-@click.option(
     "--delete/--dont-delete",
-    default=False,
+    default=True,
     envvar="XNAT_INGEST_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
@@ -207,19 +101,13 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--raise-errors/--dont-raise-errors",
     default=False,
     type=bool,
-    help="Whether to raise errors instead of logging them (typically for debugging)"
+    help="Whether to raise errors instead of logging them (typically for debugging)",
 )
 def upload(
-    dicoms_path: str,
     staging_dir: Path,
     server: str,
     user: str,
     password: str,
-    assoc_files_glob: str,
-    project_field: str,
-    subject_field: str,
-    session_field: str,
-    project_id: str | None,
     delete: bool,
     log_file: Path,
     log_emails: LoggerEmail,
@@ -256,23 +144,16 @@ def upload(
         )
         logger.addHandler(log_file_hdle)
 
-    sessions = ImagingSession.load(
-        dicoms_path=dicoms_path,
-        associated_files_pattern=assoc_files_glob,
-        project_field=project_field,
-        subject_field=subject_field,
-        session_field=session_field,
-        project_id=project_id,
-    )
-
     xnat_repo = Xnat(
         server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
     )
 
     with xnat_repo.connection:
-        for session in tqdm(
-            sessions, f"Processing DICOM sessions found in '{dicoms_path}'"
+        for session_staging_dir in tqdm(
+            list(staging_dir.iterdir()),
+            f"Processing staged sessions found in '{str(staging_dir)}' directory",
         ):
+            session = ImagingSession.load(session_staging_dir)
             try:
                 if "MR" in session.modalities:
                     SessionClass = xnat_repo.connection.classes.MrSessionData
@@ -289,27 +170,6 @@ def upload(
                         "in the session. Must contain one of 'MR', 'PT' or 'CT'"
                     )
 
-                session_staging_dir = staging_dir / session.name
-                session_staging_dir.mkdir(exist_ok=True)
-                spec_file = session_staging_dir / "UPLOAD-SPECIFICATION.yaml"
-                if spec_file.exists():
-                    try:
-                        session.override_ids(spec_file)
-                    except Exception as e:
-                        add_exc_note(
-                            e,
-                            f"Could not load specification file from '{spec_file}', please "
-                            f"correct it and try again",
-                        )
-                        raise
-                else:
-                    logger.info(
-                        f"Did not find manual specification file at '{spec_file}'"
-                    )
-                    session.save_ids(spec_file)
-
-                # Deidentify files and save them to the staging directory
-                staged_session = session.deidentify(session_staging_dir)
                 # Create corresponding session on XNAT
                 xproject = xnat_repo.connection.projects[session.project_id]
                 xsubject = xnat_repo.connection.classes.SubjectData(
@@ -325,11 +185,10 @@ def upload(
                     elif "CT" in session.modalities:
                         SessionClass = xnat_repo.connection.classes.CtSessionData
                     else:
-                        logger.error(
+                        raise RuntimeError(
                             "Found the following unsupported modalities in "
                             f"{session.name}: {session.modalities}"
                         )
-                        continue
                     xsession = SessionClass(label=session.session_id, parent=xsubject)
                 session_path = (
                     f"{session.project_id}:{session.subject_id}:{session.session_id}"
@@ -361,7 +220,9 @@ def upload(
                     )
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
-                    staged_session.select_resources(dataset, include_all_dicoms=include_dicoms),
+                    session.select_resources(
+                        dataset, include_all_dicoms=include_dicoms
+                    ),
                     f"Uploading scans found in {session.name}",
                 ):
                     if scan.metadata:
@@ -369,7 +230,9 @@ def upload(
                         if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
                             modality = "SC"
                         else:
-                            modality = scan.metadata.get("Modality", default_scan_modality)
+                            modality = scan.metadata.get(
+                                "Modality", default_scan_modality
+                            )
                     else:
                         modality = default_scan_modality
                     if modality == "SC":
@@ -427,11 +290,11 @@ def upload(
                     msg += ", deleting originals..."
                 logger.info(msg)
                 if delete:
-                    session.delete()
+                    shutil.rmtree(session_staging_dir)
                     logger.info(
-                        f"Deleted original '{session.name}' session data after successful upload"
+                        f"Deleted staging dir '{str(session_staging_dir)}' session data "
+                        "after successful upload"
                     )
-                shutil.rmtree(session_staging_dir)
             except Exception as e:
                 if not raise_errors:
                     logger.error(
