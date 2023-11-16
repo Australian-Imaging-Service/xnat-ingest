@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "xnat-exported-scans"
+name = "xnat-ingest"
 description = "Uploads exported DICOM and raw data to XNAT, parsing metadata from DICOMs"
 readme = "README.md"
 requires-python = ">=3.8"
