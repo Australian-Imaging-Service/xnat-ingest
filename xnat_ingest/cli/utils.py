@@ -89,7 +89,7 @@ def set_logger_handling(log_level: str, log_emails: LogEmail, log_file: Path, ma
                 "are provided: " + ", ".join(log_emails)
             )
         for log_email in log_emails:
-            smtp_handler = logging.handlers.SMTPHandler(
+            smtp_hdle = logging.handlers.SMTPHandler(
                 mailhost=mail_server.host,
                 fromaddr=mail_server.sender_email,
                 toaddrs=[log_email.address],
@@ -97,22 +97,23 @@ def set_logger_handling(log_level: str, log_emails: LogEmail, log_file: Path, ma
                 credentials=(mail_server.user, mail_server.password),
                 secure=None,
             )
-            logger.addHandler(smtp_handler)
-            logger.info(f"Email logger configured for {log_email}")
+            smtp_hdle.setLevel(getattr(logging, log_email.loglevel.upper()))
+            logger.addHandler(smtp_hdle)
 
     # Configure the file logger
     if log_file is not None:
-        log_file.parent.mkdir(exist_ok=True)
+        log_file.path.parent.mkdir(exist_ok=True)
         log_file_hdle = logging.FileHandler(log_file)
+        log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
         log_file_hdle.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         logger.addHandler(log_file_hdle)
 
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(console_handler)
+    console_hdle = logging.StreamHandler(sys.stdout)
+    console_hdle.setLevel(getattr(logging, log_level.upper()))
+    console_hdle.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(console_hdle)
 
 
 def get_checksums(xresource) -> ty.Dict[str, str]:
