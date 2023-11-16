@@ -158,7 +158,7 @@ def stage(
         )
         logger.addHandler(log_file_hdle)
 
-    sessions = ImagingSession.constuct(
+    sessions = ImagingSession.construct(
         dicoms_path=dicoms_path,
         associated_files_pattern=assoc_files_glob,
         project_field=project_field,
