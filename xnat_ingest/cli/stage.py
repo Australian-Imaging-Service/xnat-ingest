@@ -1,16 +1,11 @@
 from pathlib import Path
 import traceback
-import logging.config
-import logging.handlers
 import click
 from tqdm import tqdm
 from .base import cli
 from ..session import ImagingSession
 from ..utils import logger
-from .utils import DicomField, LoggerEmail, MailServer
-
-
-HASH_CHUNK_SIZE = 2**20
+from .utils import DicomField, LogFile, LogEmail, MailServer, set_logger_handling
 
 
 @cli.command(
@@ -77,9 +72,18 @@ are uploaded to XNAT
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
+    "--log-level",
+    default="info",
+    type=str,
+    envvar="XNAT_INGEST_LOGLEVEL",
+    help=(
+        "The level of the logging printed to stdout"
+    )
+)
+@click.option(
     "--log-file",
     default=None,
-    type=click.Path(path_type=Path),
+    type=LogFile,
     envvar="XNAT_INGEST_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
@@ -89,7 +93,7 @@ are uploaded to XNAT
 @click.option(
     "--log-email",
     "log_emails",
-    type=LoggerEmail,
+    type=LogEmail,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
     envvar="XNAT_INGEST_LOGEMAIL",
@@ -124,39 +128,20 @@ def stage(
     session_field: str,
     project_id: str | None,
     delete: bool,
+    log_level: str,
     log_file: Path,
-    log_emails: LoggerEmail,
+    log_emails: LogEmail,
     mail_server: MailServer,
     raise_errors: bool,
 ):
-    # Configure the email logger
-    if log_emails:
-        if not mail_server:
-            raise ValueError(
-                "Mail server needs to be provided, either by `--mail-server` option or "
-                "XNAT_INGEST_MAILSERVER environment variable if logger emails "
-                "are provided: " + ", ".join(log_emails)
-            )
-        for log_email in log_emails:
-            smtp_handler = logging.handlers.SMTPHandler(
-                mailhost=mail_server.host,
-                fromaddr=mail_server.sender_email,
-                toaddrs=[log_email.address],
-                subject=log_email.subject,
-                credentials=(mail_server.user, mail_server.password),
-                secure=None,
-            )
-            logger.addHandler(smtp_handler)
-            logger.info(f"Email logger configured for {log_email}")
 
-    # Configure the file logger
-    if log_file is not None:
-        log_file.parent.mkdir(exist_ok=True)
-        log_file_hdle = logging.FileHandler(log_file)
-        log_file_hdle.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        logger.addHandler(log_file_hdle)
+    set_logger_handling(log_level, log_file, log_emails, mail_server)
+
+    logger.info(
+        "Loading DICOM sessions from '%s' and associated files from '%s'",
+        str(dicoms_path),
+        str(assoc_files_glob),
+    )
 
     sessions = ImagingSession.construct(
         dicoms_path=dicoms_path,
@@ -167,15 +152,16 @@ def stage(
         project_id=project_id,
     )
 
-    for session in tqdm(
-        sessions, f"Staging DICOM sessions found in '{dicoms_path}'"
-    ):
+    logger.info("Staging sessions to '%s'", str(staging_dir))
+
+    for session in tqdm(sessions, f"Staging DICOM sessions found in '{dicoms_path}'"):
         try:
             session_staging_dir = staging_dir / session.name
             if session_staging_dir.exists():
                 logger.info(
                     "Skipping %s session as staging directory %s already exists",
-                    session.name, str(session_staging_dir)
+                    session.name,
+                    str(session_staging_dir),
                 )
                 continue
             session_staging_dir.mkdir(exist_ok=True)

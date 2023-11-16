@@ -228,11 +228,13 @@ class ImagingSession:
             dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
 
         # Sort loaded series by StudyInstanceUID (imaging session)
+        logger.info("Loading DICOM series from %s", str(dicoms_path))
         dicom_sessions = defaultdict(list)
         for series in from_paths(dicom_fspaths, DicomSeries):
             dicom_sessions[series["StudyInstanceUID"]].append(series)
 
         # Construct sessions from sorted series
+        logger.info("Searching for associated files ")
         sessions = []
         for session_dicom_series in dicom_sessions.values():
 
