@@ -86,8 +86,6 @@ def set_logger_handling(
 ):
     # Configure the email logger
     if log_emails:
-        if isinstance(log_emails, tuple):
-            log_email = LogEmail(*log_emails)
         if not mail_server:
             raise ValueError(
                 "Mail server needs to be provided, either by `--mail-server` option or "
@@ -107,9 +105,7 @@ def set_logger_handling(
             logger.addHandler(smtp_hdle)
 
     # Configure the file logger
-    if log_file is not None:
-        if isinstance(log_file, tuple):
-            log_file = LogFile(*log_file)
+    if log_file:
         log_file.path.parent.mkdir(exist_ok=True)
         log_file_hdle = logging.FileHandler(log_file)
         log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
