@@ -10,8 +10,9 @@ from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
 from .base import cli
 from ..session import ImagingSession
-from ..utils import logger, add_exc_note
-from .utils import (
+from ..utils import (
+    logger,
+    add_exc_note,
     LogFile,
     LogEmail,
     MailServer,
@@ -57,6 +58,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--log-file",
     default=None,
     type=LogFile,
+    metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '

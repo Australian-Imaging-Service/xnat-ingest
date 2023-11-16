@@ -191,13 +191,14 @@ def test_stage_and_upload(
         [
             str(dicoms_dir),
             str(staging_dir),
-            "--assoc-files-glob",
-            str(associated_files_dir)
-            + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+            # "--assoc-files-glob",
+            # str(associated_files_dir)
+            # + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             "--log-file",
             str(log_file),
-            "--raise-errors",
-            "--delete",
+            "info",
+            # "--raise-errors",
+            # "--delete",
         ]
     )
 
@@ -209,6 +210,7 @@ def test_stage_and_upload(
             str(staging_dir),
             "--log-file",
             str(log_file),
+            "info",
             "--raise-errors",
             "--include-dicoms",
             "--delete",

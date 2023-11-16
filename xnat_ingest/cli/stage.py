@@ -4,8 +4,14 @@ import click
 from tqdm import tqdm
 from .base import cli
 from ..session import ImagingSession
-from ..utils import logger
-from .utils import DicomField, LogFile, LogEmail, MailServer, set_logger_handling
+from ..utils import (
+    DicomField,
+    logger,
+    LogFile,
+    LogEmail,
+    MailServer,
+    set_logger_handling,
+)
 
 
 @cli.command(
@@ -84,6 +90,7 @@ are uploaded to XNAT
     "--log-file",
     default=None,
     type=LogFile,
+    metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
