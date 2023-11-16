@@ -6,8 +6,8 @@
 [![Supported Python versions](https://img.shields.io/pypi/pyversions/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
 [![PyPI](https://img.shields.io/pypi/v/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
 
-Upload exported DICOM and list-mode data from Siemens Quadra "Total Body" PET scanner to
-XNAT
+De-identify and upload exported DICOM and associated data files to XNAT based on ID values
+stored within the DICOM headers.
 
 
 ## Installation
