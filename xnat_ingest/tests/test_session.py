@@ -116,7 +116,7 @@ def test_session_select_resources(
 
     assert len(resources) == 6
     ids, descs, resource_names, scans = zip(*resources)
-    assert set(ids) == set(("1", "2", "4", "6", "countrate", "listmode", "sinogram"))
+    assert set(ids) == set(("1", "2", "4", "countrate", "listmode", "sinogram"))
     assert set(descs) == set(
         [
             "AC CT 3.0  SWB HD_FoV",
