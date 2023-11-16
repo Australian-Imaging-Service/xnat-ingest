@@ -3,8 +3,6 @@
 
 [![tests](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/tests.yml/badge.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/tests.yml)
 [![coverage](https://codecov.io/gh/arcanaframework/xnat-ingest/branch/main/graph/badge.svg?token=UIS0OGPST7)](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest)
-[![Supported Python versions](https://img.shields.io/pypi/pyversions/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
-[![PyPI](https://img.shields.io/pypi/v/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
 
 De-identify and upload exported DICOM and associated data files to XNAT based on ID values
 stored within the DICOM headers.
