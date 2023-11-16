@@ -78,8 +78,9 @@ class DicomField:
         return f"'{self.keyword}' field ({','.join(self.tag)})"
 
 
-def set_logger_handling(log_level: str, log_emails: LogEmail, log_file: Path, mail_server: MailServer):
-
+def set_logger_handling(
+    log_level: str, log_emails: LogEmail, log_file: Path, mail_server: MailServer
+):
     # Configure the email logger
     if log_emails:
         if not mail_server:
@@ -112,7 +113,9 @@ def set_logger_handling(log_level: str, log_emails: LogEmail, log_file: Path, ma
 
     console_hdle = logging.StreamHandler(sys.stdout)
     console_hdle.setLevel(getattr(logging, log_level.upper()))
-    console_hdle.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    console_hdle.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
     logger.addHandler(console_hdle)
 
 
