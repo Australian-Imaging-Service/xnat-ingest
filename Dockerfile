@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
   python3-pip \
   git \
   dcmtk \
+  mrtrix3 \
   && rm -rf /var/lib/apt/lists/*
 
 # Add application code
@@ -14,4 +15,4 @@ RUN pip3 install /app
 
 
 # Set application entrypoint to docker entrypoint
-ENTRYPOINT ["xnat-siemens-export-upload"]
+ENTRYPOINT ["xnat-ingest"]
