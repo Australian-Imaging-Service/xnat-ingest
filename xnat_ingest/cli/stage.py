@@ -57,18 +57,29 @@ are uploaded to XNAT
     help=("Override the project ID read from the DICOM headers"),
 )
 @click.option(
-    "--assoc-files-glob",
+    "--associated",
     type=str,
     default=None,
     envvar="XNAT_INGEST_NONDICOMSPATTERN",
     help=(
-        "Glob pattern by which to detect non-DICOM files that "
-        "corresponding to DICOM sessions. Can contain string templates corresponding to "
+        "Glob pattern by which to detect associated files to be attached to the DICOM "
+        "sessions. Can contain string templates corresponding to "
         "DICOM metadata fields, which are substituted before the glob is called. For "
         'example, "/path/to/non-dicoms/{PatientName.given_name}_{PatientName.family_name}/*)" '
         "will find all files under the subdirectory within '/path/to/non-dicoms/' that matches "
         "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
         "if a relative path is provided."
+    ),
+)
+@click.option(
+    "--assoc-identification",
+    type=str,
+    default=None,
+    envvar="XNAT_INGEST_ASSOCIDENTIFICATION",
+    help=(
+        "Used to extract the scan ID & type/resource from the associated filename. Should "
+        "be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g. "
+        r"--assoc-id-pattern '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
     ),
 )
 @click.option(
@@ -129,7 +140,8 @@ are uploaded to XNAT
 def stage(
     dicoms_path: str,
     staging_dir: Path,
-    assoc_files_glob: str,
+    associated: str,
+    assoc_identification: str,
     project_field: str,
     subject_field: str,
     session_field: str,
@@ -147,12 +159,13 @@ def stage(
     logger.info(
         "Loading DICOM sessions from '%s' and associated files from '%s'",
         str(dicoms_path),
-        str(assoc_files_glob),
+        str(associated),
     )
 
     sessions = ImagingSession.construct(
         dicoms_path=dicoms_path,
-        associated_files_pattern=assoc_files_glob,
+        associated_files_pattern=associated,
+        assoc_files_identification=assoc_identification,
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,

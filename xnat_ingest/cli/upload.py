@@ -89,12 +89,22 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
-    "--include-dicoms/--exclude-dicoms",
+    "--all-dicoms/--not-all-dicoms",
     default=False,
     type=bool,
-    envvar="XNAT_INGEST_EXCLUDEDICOM",
+    envvar="XNAT_INGEST_ALLDICOMS",
     help=(
-        "Whether to exclude DICOM scans in upload regardless of whether they are "
+        "Whether to include all DICOM scans in the upload regardless of whether they are "
+        "specified in a column or not"
+    ),
+)
+@click.option(
+    "--all-assoc/--not-all-assoc",
+    default=False,
+    type=bool,
+    envvar="XNAT_INGEST_ALLASSOC",
+    help=(
+        "Whether to include all associated files in the upload regardless of whether they are "
         "specified in a column or not"
     ),
 )
@@ -114,9 +124,16 @@ def upload(
     log_file: Path,
     log_emails: LogEmail,
     mail_server: MailServer,
-    include_dicoms: bool,
+    all_dicoms: bool,
+    all_assoc: bool,
     raise_errors: bool,
 ):
+
+    if all_assoc:
+        raise NotImplementedError(
+            "--all-assoc option hasn't been implemented yet"
+        )
+
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
     xnat_repo = Xnat(
@@ -183,7 +200,7 @@ def upload(
                     raise e
 
                 # Anonymise DICOMs and save to directory prior to upload
-                if include_dicoms:
+                if all_dicoms:
                     logger.info(
                         f"Including all DICOMS in upload from '{session.name}' to "
                         f"{session_path} as `--include-dicoms` is set"
@@ -196,7 +213,9 @@ def upload(
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
                     session.select_resources(
-                        dataset, include_all_dicoms=include_dicoms
+                        dataset,
+                        include_all_dicoms=all_dicoms,
+                        include_all_assoc=all_assoc,
                     ),
                     f"Uploading scans found in {session.name}",
                 ):

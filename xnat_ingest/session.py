@@ -71,6 +71,8 @@ class ImagingSession:
         self,
         dataset: Dataset,
         include_all_dicoms: bool = False,
+        include_all_assoc: bool = False,
+        assoc_id_pattern: str = None
     ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -93,7 +95,7 @@ class ImagingSession:
         scan : FileSet
             a fileset to upload
         """
-        store = MockDataStore(self)
+        store = MockDataStore(self, assoc_id_pattern=assoc_id_pattern)
 
         uploaded: ty.Set[FileSet] = set()
 
@@ -133,7 +135,6 @@ class ImagingSession:
                 elif isinstance(scan, Dicom):
                     scan_id = scan["Series"]
                 else:
-                    scan_id = column.name
                     if column.is_regex and re.compile(column.path).groups:
                         pattern = column.path
                     else:
@@ -147,7 +148,12 @@ class ImagingSession:
                     match = re.match(pattern, scan_type)
                     if not match:
                         raise RuntimeError(f"{pattern} did not match {scan_type}")
-                    scan_type = match.group(1)
+                    if len(match.groups()) == 1:
+                        scan_type = match.group(1)
+                        scan_id = column.name
+                    else:
+                        scan_type = match.group("type")
+                        scan_id = match.group("id")
             uploaded.add(scan)
             yield scan_id, scan_type, resource_name, scan
 
@@ -179,6 +185,7 @@ class ImagingSession:
         cls,
         dicoms_path: str | Path,
         associated_files_pattern: str | None = None,
+        assoc_files_identification: str | None = None,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
@@ -191,13 +198,17 @@ class ImagingSession:
         dicoms_path : str or Path
             Path to a directory containging the DICOMS to load the sessions from, or a
             glob string that selects the paths
-        associated_files_pattern : str
+        associated_files_pattern : str, optional
             Pattern used to select the non-dicom files to include in the session. The
             pattern can contain string template placeholders corresponding to DICOM
             metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
             are substituted before the string is used to glob the non-DICOM files. In
             order to deidentify the filenames, the pattern must explicitly reference all
             identifiable fields in string template placeholders.
+        assoc_files_identification : str, optional
+            Used to extract the scan ID & type/resource from the associated filename. Should
+            be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
+            '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
         project_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
@@ -226,6 +237,9 @@ class ImagingSession:
             dicom_fspaths = list(Path(dicoms_path).iterdir())
         else:
             dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
+
+        if assoc_files_identification:
+            raise NotImplementedError
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info("Loading DICOM series from %s", str(dicoms_path))
@@ -535,6 +549,7 @@ class MockDataStore(DataStore):
     """
 
     session: ImagingSession
+    assoc_id_pattern: str
 
     @property
     def row(self):
@@ -564,17 +579,23 @@ class MockDataStore(DataStore):
         row : DataRow
             The row to populate with entries
         """
+        series_numbers = []
         for series_number, dcm in self.session.dicoms.items():
             row.add_entry(
                 path=dcm["SeriesDescription"],
                 datatype=DicomSeries,
-                uri=f"dicom::{dcm['SeriesNumber']}",
+                uri=f"dicom::{series_number}",
             )
-        for non_dcm_fspath in self.session.associated_file_fspaths:
+            series_numbers.append(series_number)
+        
+        collated = defaultdict(list)
+        for assoc_fspath in self.session.associated_file_fspaths:
+
+        for resource in collated:
             row.add_entry(
-                path=non_dcm_fspath.name,
+                path=assoc_fspath.name,
                 datatype=FileSet,
-                uri=f"associated_file::{non_dcm_fspath}",
+                uri=f"associated_file::{assoc_fspath}",
             )
 
     def get(self, entry: DataEntry, datatype: type) -> DataType:
