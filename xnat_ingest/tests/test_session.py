@@ -32,19 +32,23 @@ def imaging_session() -> ImagingSession:
     first_name = "GivenName"
     last_name = "FamilyName"
     PatientName = f"{first_name}^{last_name}"
+    dicoms = [
+        DicomSeries(d.iterdir())
+        for d in (
+            get_pet_image(PatientName=PatientName),
+            get_ac_image(PatientName=PatientName),
+            get_topogram_image(PatientName=PatientName),
+            get_statistics_image(PatientName=PatientName),
+        )
+    ]
+    resources = {str(d["SeriesNumber"]): {"DICOM": d} for d in dicoms}
+    scan_types = {str(d["SeriesNumber"]): str(d["SeriesDescription"]) for d in dicoms}
     return ImagingSession(
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
-        resources=[
-            DicomSeries(d.iterdir())
-            for d in (
-                get_pet_image(PatientName=PatientName),
-                get_ac_image(PatientName=PatientName),
-                get_topogram_image(PatientName=PatientName),
-                get_statistics_image(PatientName=PatientName),
-            )
-        ],
+        resources=resources,
+        scan_types=scan_types,
         associated_files_pattern="**/{PatientName.given_name}_{PatientName.family_name}*.ptd",
         associated_fspaths=get_raw_data_files(
             first_name=first_name, last_name=last_name
@@ -87,17 +91,17 @@ def dataset(tmp_path: Path) -> Dataset:
         (
             "listmode",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
-            ".*(PET_LISTMODE).*",
+            ".*/LISTMODE",
         ),
         (
             "sinogram",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
-            ".*(PET_EM_SINO).*",
+            ".*/EM_SINO",
         ),
         (
             "countrate",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
-            ".*(PET_COUNTRATE).*",
+            ".*/COUNTRATE",
         ),
     ]:
         dataset.add_source(col_name, from_mime(col_type), col_pattern, is_regex=True)
@@ -110,25 +114,27 @@ def test_session_select_resources(
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
 
-    staged_session = imaging_session.deidentify(staging_dir)
+    staged_session = imaging_session.stage(
+        staging_dir,
+        assoc_identification=r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+    )
 
     resources = list(staged_session.select_resources(dataset))
 
     assert len(resources) == 6
     ids, descs, resource_names, scans = zip(*resources)
-    assert set(ids) == set(("1", "2", "4", "countrate", "listmode", "sinogram"))
+    assert set(ids) == set(("1", "2", "4", "602", "603"))
     assert set(descs) == set(
         [
             "AC CT 3.0  SWB HD_FoV",
             "PET SWB 8MIN",
             "Topogram 0.6 Tr60",
-            "PET_LISTMODE",
-            "PET_COUNTRATE",
-            "PET_EM_SINO",
+            "602",
+            "603",
         ]
     )
     assert set(resource_names) == set(
-        ("DICOM", "pet_list_mode", "pet_count_rate", "pet_sinogram")
+        ("DICOM", "LISTMODE", "COUNTRATE", "EM_SINO")
     )
     assert set(type(s) for s in scans) == set(
         [
@@ -141,7 +147,6 @@ def test_session_select_resources(
 
 
 def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
-
     imaging_session.save(tmp_path)
     reloaded = ImagingSession.load(tmp_path)
 

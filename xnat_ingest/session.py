@@ -2,6 +2,7 @@ import typing as ty
 import re
 from glob import glob
 import logging
+from copy import copy
 import os.path
 import subprocess as sp
 from functools import cached_property
@@ -15,7 +16,6 @@ import pydicom
 from fileformats.application import Dicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet, DataType, from_mime, to_mime
-from fileformats.generic import File, Directory
 from arcana.core.data.set import Dataset
 from arcana.core.data.space import DataSpace
 from arcana.core.data.row import DataRow
@@ -29,34 +29,15 @@ from .utils import add_exc_note, transform_paths
 logger = logging.getLogger("xnat-ingest")
 
 
-def resources_converter(
-    resources: ty.Union[
-        ty.List[DicomSeries], ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]]
-    ]
-) -> ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]]:
-    if isinstance(resources, ty.Sequence):
-        resources_dict = {}
-        for resource in resources:
-            if not isinstance(resource, DicomSeries):
-                raise TypeError(
-                    f"Only sequences of DicomSeries can be converted, otherwise needs "
-                    f"to be already in a dictionary, found {resources}"
-                )
-            resources_dict[
-                (str(resource["SeriesNumber"]), "DICOM")
-            ] = (str(resource["SeriesDescription"]), resource)
-        resources = resources_dict
-    return resources
-
-
 @attrs.define(slots=False)
 class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    resources: ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]] = attrs.field(
-        factory=dict, converter=resources_converter
+    resources: ty.Dict[str, ty.Tuple[str, ty.Dict[str, FileSet]]] = attrs.field(
+        factory=dict, validator=attrs.validators.instance_of(dict)
     )  # keys -> scan-id & resource-type, values -> description, scan
+    scan_types: ty.Dict[str, str] = attrs.field(factory=dict)
     associated_files_pattern: str | None = None
     associated_fspaths: ty.List[Path] = attrs.field(factory=list)
 
@@ -75,6 +56,10 @@ class ImagingSession:
         return modalities
 
     @property
+    def dicoms(self):
+        return (r["DICOM"] for r in self.resources.values() if "DICOM" in r)
+
+    @property
     def dicom_dir(self) -> Path:
         "A common parent directory for all the top-level paths in the file-set"
         return Path(os.path.commonpath(p.parent for p in self.dicoms.values()))  # type: ignore
@@ -82,8 +67,7 @@ class ImagingSession:
     def select_resources(
         self,
         dataset: Dataset,
-        include_all_dicoms: bool = False,
-        include_all_assoc: bool = False,
+        include_all: bool = False,
     ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -108,69 +92,27 @@ class ImagingSession:
         """
         store = MockDataStore(self)
 
-        uploaded: ty.Set[FileSet] = set()
-
-        if include_all_dicoms:
-            for scan_id, dcm in self.dicoms.items():
-                uploaded.add(dcm)
-                yield scan_id, dcm["SeriesDescription"], "DICOM", dcm
-
-        for column in dataset.columns.values():
-            try:
-                entry = column.match_entry(store.row)
-            except ArcanaDataMatchError as e:
-                raise StagingError(
-                    f"Did not find matching entry for {column} column in {dataset} from "
-                    f"{self.name} session"
-                ) from e
-            else:
-                scan = column.datatype(entry.item)
-                if scan in uploaded:
-                    logger.warning(
-                        "scan %s already matched by previous columns (or `included_all_dicoms` option), "
-                        "skipping match with %s",
-                        scan,
-                        column,
-                    )
-                    continue
-                resource_name = (
-                    column.datatype.mime_like.split("/")[-1]
-                    .replace("-", "_")
-                    .split(".")[-1]
-                )
-                if resource_name == "dicom_series":
-                    resource_name = "DICOM"
-                if isinstance(scan, (DicomSeries, Dicom)):
-                    scan_id = str(scan.metadata["SeriesNumber"])
-                    scan_type = str(scan["SeriesDescription"])
-                elif isinstance(scan, Dicom):
-                    scan_id = scan["Series"]
+        if include_all:
+            for scan_id, scan_resources in self.resources.items():
+                for resource, fileset in scan_resources.items():
+                    yield scan_id, self.scan_types[scan_id], resource, fileset
+        else:
+            for column in dataset.columns.values():
+                try:
+                    entry = column.match_entry(store.row)
+                except ArcanaDataMatchError as e:
+                    raise StagingError(
+                        f"Did not find matching entry for {column} column in {dataset} from "
+                        f"{self.name} session"
+                    ) from e
                 else:
-                    if column.is_regex and re.compile(column.path).groups:
-                        pattern = column.path
-                    else:
-                        pattern = r"^[\._\-]*(.*[a-zA-Z0-9])[\._\-]*"
-                    if isinstance(scan, File):
-                        scan_type = scan.stem
-                    elif isinstance(scan, Directory):
-                        scan_type = scan.fspath.name
-                    else:
-                        scan_type = scan.parent
-                    match = re.match(pattern, scan_type)
-                    if not match:
-                        raise RuntimeError(f"{pattern} did not match {scan_type}")
-                    if len(match.groups()) == 1:
-                        scan_type = match.group(1)
-                        scan_id = column.name
-                    else:
-                        scan_type = match.group("type")
-                        scan_id = match.group("id")
-            uploaded.add(scan)
-            yield scan_id, scan_type, resource_name, scan
+                    scan = column.datatype(entry.item)
+                    scan_id, resource_name = entry.uri
+                yield scan_id, self.scan_types[scan_id], resource_name, scan
 
     @cached_property
     def metadata(self):
-        all_dicoms = list(self.dicoms.values())
+        all_dicoms = list(self.dicoms)
         all_keys = [list(d.metadata.keys()) for d in all_dicoms]
         common_keys = [
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
@@ -281,9 +223,17 @@ class ImagingSession:
             else:
                 associated_fspaths = []
 
+            resources = defaultdict(dict)
+            scan_types = {}
+            for dicom_series in session_dicom_series:
+                series_number = str(dicom_series["SeriesNumber"])
+                resources[series_number]["DICOM"] = dicom_series
+                scan_types[series_number] = str(dicom_series["SeriesDescription"])
+
             sessions.append(
                 cls(
                     resources=session_dicom_series,
+                    scan_types=scan_types,
                     associated_fspaths=associated_fspaths,
                     associated_files_pattern=associated_files_pattern,
                     project_id=(project_id if project_id else get_id(project_field)),
@@ -358,7 +308,7 @@ class ImagingSession:
             )
 
     def stage(
-        self, dest_dir: Path, assoc_files_identification: str | None = None
+        self, dest_dir: Path, assoc_identification: str
     ) -> "ImagingSession":
         """Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
@@ -367,7 +317,7 @@ class ImagingSession:
         ----------
         dest_dir : Path
             destination directory to save the deidentified files
-        assoc_files_identification : str, optional
+        assoc_identification : str
             Used to extract the scan ID & type/resource from the associated filename. Should
             be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
             '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
@@ -382,23 +332,24 @@ class ImagingSession:
                 "Did not find `dcmedit` tool from the MRtrix package on the system path, "
                 "de-identification will be performed by pydicom instead and may be slower"
             )
-        staged_resources = []
+        staged_resources = defaultdict(dict)
         staged_metadata = {}
-        for scan_id, resource, (desc, fileset) in self.resources.items():
-            scan_dir = dest_dir / scan_id / resource
-            scan_dir.mkdir(parents=True, exist_ok=True)
-            if isinstance(fileset, DicomSeries):
-                staged_dicom_paths = []
-                for dicom_file in fileset.fspaths:
-                    staged_dicom_paths.append(
-                        self.deidentify_dicom(dicom_file, scan_dir / dicom_file.name)
-                    )
-                staged_resource = DicomSeries(staged_dicom_paths)
-                # Add to the combined metadata dictionary
-                staged_metadata.update(staged_resource.metadata)
-            else:
-                continue  # associated files will be staged later
-            staged_resources.append(staged_resource)
+        for scan_id, scan_resources in self.resources.items():
+            for resource_name, fileset in scan_resources.items():
+                scan_dir = dest_dir / scan_id / resource_name
+                scan_dir.mkdir(parents=True, exist_ok=True)
+                if isinstance(fileset, DicomSeries):
+                    staged_dicom_paths = []
+                    for dicom_file in fileset.fspaths:
+                        staged_dicom_paths.append(
+                            self.deidentify_dicom(dicom_file, scan_dir / dicom_file.name)
+                        )
+                    staged_resource = DicomSeries(staged_dicom_paths)
+                    # Add to the combined metadata dictionary
+                    staged_metadata.update(staged_resource.metadata)
+                else:
+                    continue  # associated files will be staged later
+                staged_resources[scan_id][resource_name] = staged_resource
         if self.associated_files_pattern:
             transformed_fspaths = transform_paths(
                 self.associated_fspaths,
@@ -414,34 +365,42 @@ class ImagingSession:
                 else:
                     shutil.copyfile(old, dest_path)
                 staged_associated_fspaths.append(dest_path)
-        if assoc_files_identification:
-            assoc_resources = {}
-            assoc_re = re.compile(assoc_files_identification)
-            for fspath in staged_associated_fspaths:
-                match = assoc_re.match(str(fspath))
-                if match:
-                    scan_id = match.group("scan_id")
-                    resource = match.group("resource")
-                    desc = match.group("desc")
-                    if desc is None:
-                        desc = resource
-                    key = (scan_id, resource)
-                    try:
-                        matched_fspaths = assoc_resources[key][1]
-                    except KeyError:
-                        matched_fspaths = []
-                        assoc_resources[key] = (desc, matched_fspaths)
-                    matched_fspaths.append(fspath)
-            if key_clashes := set(staged_resources) & set(assoc_resources):
-                raise RuntimeError(
-                    f"Key clashes between dicom resources {list(staged_resources)} and "
-                    f"identified associated resources {list(assoc_resources)}: {key_clashes}"
-                )
-            staged_resources.update(
-                {k: (v[0], FileSet(v[1])) for k, v in assoc_resources.items()}
-            )
+        scan_types = copy(self.scan_types)
+        assoc_resources = defaultdict(lambda: defaultdict(list))
+        assoc_scan_types = {}
+        assoc_re = re.compile(assoc_identification)
+        for fspath in staged_associated_fspaths:
+            match = assoc_re.match(str(fspath))
+            if match:
+                scan_id = match.group("id")
+                resource = match.group("resource")
+                try:
+                    scan_type = match.group("type")
+                except IndexError:
+                    scan_type = scan_id
+                if scan_id in assoc_scan_types:
+                    if scan_type != assoc_scan_types[scan_id]:
+                        raise RuntimeError(
+                            f"Mismatched scan types '{scan_type}' and "
+                            f"'{assoc_scan_types[scan_id]}' for scan ID '{scan_id}'"
+                        )
+                else:
+                    assoc_scan_types[scan_id] = scan_type
+                assoc_resources[scan_id][resource].append(fspath)
+        for scan_id, scan_resources in assoc_resources.items():
+            if scan_id in scan_types and scan_id in assoc_scan_types:
+                del assoc_scan_types[scan_id]
+            for resource_name, fspaths in scan_resources.items():
+                if resource_name in staged_resources[scan_id]:
+                    raise RuntimeError(
+                        f"Conflict between dicom resource and associated files "
+                        f"for {scan_id}:{resource_name}"
+                    )
+                staged_resources[scan_id][resource_name] = FileSet(fspaths)
+        scan_types.update(assoc_scan_types)
         return type(self)(
             resources=staged_resources,
+            scan_types=scan_types,
             associated_fspaths=staged_associated_fspaths,
             project_id=self.project_id,
             subject_id=self.subject_id,
@@ -603,7 +562,6 @@ class MockDataStore(DataStore):
     """
 
     session: ImagingSession
-    assoc_id_pattern: str
 
     @property
     def row(self):
@@ -633,12 +591,13 @@ class MockDataStore(DataStore):
         row : DataRow
             The row to populate with entries
         """
-        for (scan_id, scan_type), (scan_desc, scan) in self.session.scans.items():
-            row.add_entry(
-                path=scan_desc,
-                datatype=type(scan),
-                uri=(scan_id, scan_type),
-            )
+        for scan_id, scan_resources in self.session.resources.items():
+            for resource_name, resource in scan_resources.items():
+                row.add_entry(
+                    path=self.session.scan_types[scan_id] + "/" + resource_name,
+                    datatype=type(resource),
+                    uri=(scan_id, resource_name),
+                )
 
     def get(self, entry: DataEntry, datatype: type) -> DataType:
         """
@@ -656,7 +615,8 @@ class MockDataStore(DataStore):
         item : DataType
             the item stored within the specified entry
         """
-        return datatype(self.session.scans[entry.uri])
+        scan_id, resource_name = entry.uri
+        return datatype(self.session.resources[scan_id][resource_name])
 
     ######################################
     # The following methods can be empty #

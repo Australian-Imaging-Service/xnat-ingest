@@ -183,7 +183,7 @@ def stage(
             session_staging_dir.mkdir(exist_ok=True)
             # Deidentify files and save them to the staging directory
             staged_session = session.stage(
-                session_staging_dir, assoc_files_identification=assoc_identification
+                session_staging_dir, assoc_identification=assoc_identification
             )
             staged_session.save(session_staging_dir)
             if delete:
