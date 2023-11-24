@@ -36,7 +36,7 @@ def imaging_session() -> ImagingSession:
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
-        dicoms=[
+        resources=[
             DicomSeries(d.iterdir())
             for d in (
                 get_pet_image(PatientName=PatientName),

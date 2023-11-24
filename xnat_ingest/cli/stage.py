@@ -93,9 +93,7 @@ are uploaded to XNAT
     default="info",
     type=str,
     envvar="XNAT_INGEST_LOGLEVEL",
-    help=(
-        "The level of the logging printed to stdout"
-    )
+    help=("The level of the logging printed to stdout"),
 )
 @click.option(
     "--log-file",
@@ -153,7 +151,6 @@ def stage(
     mail_server: MailServer,
     raise_errors: bool,
 ):
-
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
     logger.info(
@@ -165,7 +162,6 @@ def stage(
     sessions = ImagingSession.construct(
         dicoms_path=dicoms_path,
         associated_files_pattern=associated,
-        assoc_files_identification=assoc_identification,
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,
@@ -186,7 +182,9 @@ def stage(
                 continue
             session_staging_dir.mkdir(exist_ok=True)
             # Deidentify files and save them to the staging directory
-            staged_session = session.deidentify(session_staging_dir)
+            staged_session = session.stage(
+                session_staging_dir, assoc_files_identification=assoc_identification
+            )
             staged_session.save(session_staging_dir)
             if delete:
                 session.delete()

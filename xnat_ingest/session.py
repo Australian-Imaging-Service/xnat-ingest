@@ -14,7 +14,7 @@ from pathlib import Path
 import pydicom
 from fileformats.application import Dicom
 from fileformats.medimage import DicomSeries
-from fileformats.core import from_paths, FileSet, DataType
+from fileformats.core import from_paths, FileSet, DataType, from_mime, to_mime
 from fileformats.generic import File, Directory
 from arcana.core.data.set import Dataset
 from arcana.core.data.space import DataSpace
@@ -29,12 +29,24 @@ from .utils import add_exc_note, transform_paths
 logger = logging.getLogger("xnat-ingest")
 
 
-def dicoms_converter(
-    multi_dicom_series: ty.Union[ty.List[DicomSeries], ty.Dict[str, DicomSeries]]
-) -> ty.Dict[str, DicomSeries]:
-    if isinstance(multi_dicom_series, ty.Sequence):
-        multi_dicom_series = {str(s["SeriesNumber"]): s for s in multi_dicom_series}
-    return multi_dicom_series
+def resources_converter(
+    resources: ty.Union[
+        ty.List[DicomSeries], ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]]
+    ]
+) -> ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]]:
+    if isinstance(resources, ty.Sequence):
+        resources_dict = {}
+        for resource in resources:
+            if not isinstance(resource, DicomSeries):
+                raise TypeError(
+                    f"Only sequences of DicomSeries can be converted, otherwise needs "
+                    f"to be already in a dictionary, found {resources}"
+                )
+            resources_dict[
+                (str(resource["SeriesNumber"]), "DICOM")
+            ] = (str(resource["SeriesDescription"]), resource)
+        resources = resources_dict
+    return resources
 
 
 @attrs.define(slots=False)
@@ -42,9 +54,9 @@ class ImagingSession:
     project_id: str
     subject_id: str
     session_id: str
-    dicoms: ty.Dict[str, DicomSeries] = attrs.field(
-        factory=dict, converter=dicoms_converter
-    )
+    resources: ty.Dict[ty.Tuple[str, str], ty.Tuple[str, FileSet]] = attrs.field(
+        factory=dict, converter=resources_converter
+    )  # keys -> scan-id & resource-type, values -> description, scan
     associated_files_pattern: str | None = None
     associated_file_fspaths: ty.List[Path] = attrs.field(factory=list)
 
@@ -72,7 +84,6 @@ class ImagingSession:
         dataset: Dataset,
         include_all_dicoms: bool = False,
         include_all_assoc: bool = False,
-        assoc_id_pattern: str = None
     ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -95,7 +106,7 @@ class ImagingSession:
         scan : FileSet
             a fileset to upload
         """
-        store = MockDataStore(self, assoc_id_pattern=assoc_id_pattern)
+        store = MockDataStore(self)
 
         uploaded: ty.Set[FileSet] = set()
 
@@ -185,7 +196,6 @@ class ImagingSession:
         cls,
         dicoms_path: str | Path,
         associated_files_pattern: str | None = None,
-        assoc_files_identification: str | None = None,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
         session_field: str = "AccessionNumber",
@@ -205,10 +215,6 @@ class ImagingSession:
             are substituted before the string is used to glob the non-DICOM files. In
             order to deidentify the filenames, the pattern must explicitly reference all
             identifiable fields in string template placeholders.
-        assoc_files_identification : str, optional
-            Used to extract the scan ID & type/resource from the associated filename. Should
-            be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
-            '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
         project_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
@@ -237,9 +243,6 @@ class ImagingSession:
             dicom_fspaths = list(Path(dicoms_path).iterdir())
         else:
             dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
-
-        if assoc_files_identification:
-            raise NotImplementedError
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info("Loading DICOM series from %s", str(dicoms_path))
@@ -280,7 +283,7 @@ class ImagingSession:
 
             sessions.append(
                 cls(
-                    dicoms={str(s["SeriesNumber"]): s for s in session_dicom_series},
+                    resources=session_dicom_series,
                     associated_file_fspaths=associated_file_fspaths,
                     associated_files_pattern=associated_files_pattern,
                     project_id=(project_id if project_id else get_id(project_field)),
@@ -312,7 +315,13 @@ class ImagingSession:
                 "is a valid YAML file",
             )
             raise e
-        dct["dicoms"] = {k: DicomSeries(v) for k, v in dct["dicoms"].items()}
+        dct["resources"] = {
+            (rd["scan_id"], rd["resource"]): (
+                rd["description"],
+                from_mime(rd["datatype"])(rd["fspaths"]),
+            )
+            for rd in dct["resources"]
+        }
         dct["associated_file_fspaths"] = [
             Path(f) for f in dct["associated_file_fspaths"]
         ]
@@ -327,11 +336,20 @@ class ImagingSession:
         yaml_file : Path
             name of the file to load the manually specified IDs from (YAML format)
         """
-        dct = attrs.asdict(self, recurse=True)
+        dct = attrs.asdict(self, recurse=False)
         dct["associated_file_fspaths"] = [
             str(p) for p in dct["associated_file_fspaths"]
         ]
-        dct["dicoms"] = {k: [str(p) for p in v["fspaths"]] for k, v in dct["dicoms"].items()}
+        dct["resources"] = [
+            {
+                "scan_id": id_,
+                "resource": res,
+                "description": desc,
+                "datatype": to_mime(scan, official=False),
+                "fspaths": [str(p) for p in scan.fspaths],
+            }
+            for (id_, res), (desc, scan) in dct["resources"].items()
+        ]
         yaml_file = save_dir / self.SAVE_FILENAME
         with open(yaml_file, "w") as f:
             yaml.dump(
@@ -339,14 +357,20 @@ class ImagingSession:
                 f,
             )
 
-    def deidentify(self, dest_dir: Path) -> "ImagingSession":
-        """Deidentify files by removing the fields listed `FIELDS_TO_ANONYMISE` and
+    def stage(
+        self, dest_dir: Path, assoc_files_identification: str | None = None
+    ) -> "ImagingSession":
+        """Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
 
         Parameters
         ----------
         dest_dir : Path
             destination directory to save the deidentified files
+        assoc_files_identification : str, optional
+            Used to extract the scan ID & type/resource from the associated filename. Should
+            be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
+            '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
 
         Returns
         -------
@@ -579,23 +603,11 @@ class MockDataStore(DataStore):
         row : DataRow
             The row to populate with entries
         """
-        series_numbers = []
-        for series_number, dcm in self.session.dicoms.items():
+        for (scan_id, scan_type), (scan_desc, scan) in self.session.scans.items():
             row.add_entry(
-                path=dcm["SeriesDescription"],
-                datatype=DicomSeries,
-                uri=f"dicom::{series_number}",
-            )
-            series_numbers.append(series_number)
-        
-        collated = defaultdict(list)
-        for assoc_fspath in self.session.associated_file_fspaths:
-
-        for resource in collated:
-            row.add_entry(
-                path=assoc_fspath.name,
-                datatype=FileSet,
-                uri=f"associated_file::{assoc_fspath}",
+                path=scan_desc,
+                datatype=type(scan),
+                uri=(scan_id, scan_type),
             )
 
     def get(self, entry: DataEntry, datatype: type) -> DataType:
@@ -614,12 +626,7 @@ class MockDataStore(DataStore):
         item : DataType
             the item stored within the specified entry
         """
-        file_category, path = entry.uri.split("::")
-        if file_category == "dicom":
-            fileset = datatype(self.session.dicoms[path])
-        else:
-            fileset = datatype(path)
-        return fileset
+        return datatype(self.session.scans[entry.uri])
 
     ######################################
     # The following methods can be empty #
