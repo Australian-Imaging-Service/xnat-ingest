@@ -58,7 +58,7 @@ class ImagingSession:
         factory=dict, converter=resources_converter
     )  # keys -> scan-id & resource-type, values -> description, scan
     associated_files_pattern: str | None = None
-    associated_file_fspaths: ty.List[Path] = attrs.field(factory=list)
+    associated_fspaths: ty.List[Path] = attrs.field(factory=list)
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
@@ -275,16 +275,16 @@ class ImagingSession:
                 associated_files_path = Path(
                     os.path.commonpath(dicom_fspaths)
                 ) / associated_files_pattern.format(**session_dicom_series[0].metadata)
-                associated_file_fspaths = [
+                associated_fspaths = [
                     Path(p) for p in glob(str(associated_files_path))
                 ]
             else:
-                associated_file_fspaths = []
+                associated_fspaths = []
 
             sessions.append(
                 cls(
                     resources=session_dicom_series,
-                    associated_file_fspaths=associated_file_fspaths,
+                    associated_fspaths=associated_fspaths,
                     associated_files_pattern=associated_files_pattern,
                     project_id=(project_id if project_id else get_id(project_field)),
                     subject_id=get_id(subject_field),
@@ -322,8 +322,8 @@ class ImagingSession:
             )
             for rd in dct["resources"]
         }
-        dct["associated_file_fspaths"] = [
-            Path(f) for f in dct["associated_file_fspaths"]
+        dct["associated_fspaths"] = [
+            Path(f) for f in dct["associated_fspaths"]
         ]
         return cls(**dct)
 
@@ -337,8 +337,8 @@ class ImagingSession:
             name of the file to load the manually specified IDs from (YAML format)
         """
         dct = attrs.asdict(self, recurse=False)
-        dct["associated_file_fspaths"] = [
-            str(p) for p in dct["associated_file_fspaths"]
+        dct["associated_fspaths"] = [
+            str(p) for p in dct["associated_fspaths"]
         ]
         dct["resources"] = [
             {
@@ -382,37 +382,67 @@ class ImagingSession:
                 "Did not find `dcmedit` tool from the MRtrix package on the system path, "
                 "de-identification will be performed by pydicom instead and may be slower"
             )
-        new_dicoms = []
-        for series_number, dicom_series in self.dicoms.items():
-            scan_dir = dest_dir / series_number / "DICOM"
+        staged_resources = []
+        staged_metadata = {}
+        for scan_id, resource, (desc, fileset) in self.resources.items():
+            scan_dir = dest_dir / scan_id / resource
             scan_dir.mkdir(parents=True, exist_ok=True)
-            new_dicom_paths = []
-            for dicom_file in dicom_series.fspaths:
-                new_dicom_paths.append(
-                    self.deidentify_dicom(dicom_file, scan_dir / dicom_file.name)
-                )
-            new_dicom_series = DicomSeries(new_dicom_paths)
-            new_dicoms.append(new_dicom_series)
-        new_metadata = new_dicom_series.metadata
+            if isinstance(fileset, DicomSeries):
+                staged_dicom_paths = []
+                for dicom_file in fileset.fspaths:
+                    staged_dicom_paths.append(
+                        self.deidentify_dicom(dicom_file, scan_dir / dicom_file.name)
+                    )
+                staged_resource = DicomSeries(staged_dicom_paths)
+                # Add to the combined metadata dictionary
+                staged_metadata.update(staged_resource.metadata)
+            else:
+                continue  # associated files will be staged later
+            staged_resources.append(staged_resource)
         if self.associated_files_pattern:
             transformed_fspaths = transform_paths(
-                self.associated_file_fspaths,
+                self.associated_fspaths,
                 self.associated_files_pattern,
                 self.metadata,
-                new_metadata,
+                staged_metadata,
             )
-            new_associated_file_fspaths = []
-            for old, new in zip(self.associated_file_fspaths, transformed_fspaths):
+            staged_associated_fspaths = []
+            for old, new in zip(self.associated_fspaths, transformed_fspaths):
                 dest_path = dest_dir / new.name
                 if Dicom.matches(old):
                     self.deidentify_dicom(old, dest_path)
                 else:
                     shutil.copyfile(old, dest_path)
-                new_associated_file_fspaths.append(dest_path)
-
+                staged_associated_fspaths.append(dest_path)
+        if assoc_files_identification:
+            assoc_resources = {}
+            assoc_re = re.compile(assoc_files_identification)
+            for fspath in staged_associated_fspaths:
+                match = assoc_re.match(str(fspath))
+                if match:
+                    scan_id = match.group("scan_id")
+                    resource = match.group("resource")
+                    desc = match.group("desc")
+                    if desc is None:
+                        desc = resource
+                    key = (scan_id, resource)
+                    try:
+                        matched_fspaths = assoc_resources[key][1]
+                    except KeyError:
+                        matched_fspaths = []
+                        assoc_resources[key] = (desc, matched_fspaths)
+                    matched_fspaths.append(fspath)
+            if key_clashes := set(staged_resources) & set(assoc_resources):
+                raise RuntimeError(
+                    f"Key clashes between dicom resources {list(staged_resources)} and "
+                    f"identified associated resources {list(assoc_resources)}: {key_clashes}"
+                )
+            staged_resources.update(
+                {k: (v[0], FileSet(v[1])) for k, v in assoc_resources.items()}
+            )
         return type(self)(
-            dicoms=new_dicoms,
-            associated_file_fspaths=new_associated_file_fspaths,
+            resources=staged_resources,
+            associated_fspaths=staged_associated_fspaths,
             project_id=self.project_id,
             subject_id=self.subject_id,
             session_id=self.session_id,
@@ -421,7 +451,7 @@ class ImagingSession:
     def delete(self):
         """Delete all data associated with the session"""
         for fspath in chain(
-            self.associated_file_fspaths, *(d.fspaths for d in self.dicoms.values())
+            self.associated_fspaths, *(d.fspaths for d in self.dicoms.values())
         ):
             os.unlink(fspath)
 

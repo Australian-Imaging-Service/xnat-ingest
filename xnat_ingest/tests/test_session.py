@@ -46,7 +46,7 @@ def imaging_session() -> ImagingSession:
             )
         ],
         associated_files_pattern="**/{PatientName.given_name}_{PatientName.family_name}*.ptd",
-        associated_file_fspaths=get_raw_data_files(
+        associated_fspaths=get_raw_data_files(
             first_name=first_name, last_name=last_name
         ),
     )
