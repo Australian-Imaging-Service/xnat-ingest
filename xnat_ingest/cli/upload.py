@@ -223,10 +223,6 @@ def upload(
                             f"Unsupported image modality '{scan.modality}'"
                         )
                     xscan = ScanClass(id=scan_id, type=scan_type, parent=xsession)
-                    if isinstance(scan, DicomSeries):
-                        resource_name = "DICOM"
-                    else:
-                        resource_name = scan.mime_like.split("/")[-1].replace("-", "_")
                     xresource = xscan.create_resource(resource_name)
                     if isinstance(scan, File):
                         for fspath in scan.fspaths:
