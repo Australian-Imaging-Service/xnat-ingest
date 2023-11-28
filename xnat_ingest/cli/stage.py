@@ -6,6 +6,7 @@ from .base import cli
 from ..session import ImagingSession
 from ..utils import (
     DicomField,
+    AssociatedFiles,
     logger,
     LogFile,
     LogEmail,
@@ -57,28 +58,23 @@ are uploaded to XNAT
     help=("Override the project ID read from the DICOM headers"),
 )
 @click.option(
-    "--associated",
-    type=str,
+    "--associated-files",
+    type=AssociatedFiles(),
+    nargs=2,
     default=None,
-    envvar="XNAT_INGEST_NONDICOMSPATTERN",
+    envvar="XNAT_INGEST_ASSOCIATED",
+    metavar="<glob> <id-pattern>",
     help=(
-        "Glob pattern by which to detect associated files to be attached to the DICOM "
+        "The \"glob\" arg is a glob pattern by which to detect associated files to be attached to the DICOM "
         "sessions. Can contain string templates corresponding to "
         "DICOM metadata fields, which are substituted before the glob is called. For "
         'example, "/path/to/non-dicoms/{PatientName.given_name}_{PatientName.family_name}/*)" '
         "will find all files under the subdirectory within '/path/to/non-dicoms/' that matches "
         "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
-        "if a relative path is provided."
-    ),
-)
-@click.option(
-    "--assoc-identification",
-    type=str,
-    default=None,
-    envvar="XNAT_INGEST_ASSOCIDENTIFICATION",
-    help=(
-        "Used to extract the scan ID & type/resource from the associated filename. Should "
-        "be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g. "
+        "if a relative path is provided.\n"
+        "The \"id-pattern\" arg is a regular expression that is used to extract the scan ID & "
+        "type/resource from the associated filename. Should be a regular-expression "
+        "(Python syntax) with named groups called 'id' and 'type', e.g. "
         r"--assoc-id-pattern '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
     ),
 )
@@ -98,7 +94,8 @@ are uploaded to XNAT
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile,
+    type=LogFile(),
+    nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
     help=(
@@ -109,7 +106,8 @@ are uploaded to XNAT
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail,
+    type=LogEmail(),
+    nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
     envvar="XNAT_INGEST_LOGEMAIL",
@@ -120,7 +118,8 @@ are uploaded to XNAT
 )
 @click.option(
     "--mail-server",
-    type=MailServer,
+    type=MailServer(),
+    nargs=4,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
     envvar="XNAT_INGEST_MAILSERVER",
@@ -138,8 +137,7 @@ are uploaded to XNAT
 def stage(
     dicoms_path: str,
     staging_dir: Path,
-    associated: str,
-    assoc_identification: str,
+    associated_files: AssociatedFiles,
     project_field: str,
     subject_field: str,
     session_field: str,
@@ -153,15 +151,15 @@ def stage(
 ):
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
-    logger.info(
-        "Loading DICOM sessions from '%s' and associated files from '%s'",
-        str(dicoms_path),
-        str(associated),
-    )
+    msg = f"Loading DICOM sessions from '{dicoms_path}'"
 
-    sessions = ImagingSession.construct(
+    if associated_files:
+        msg += f" with associated files selected from '{associated_files.glob}'"
+
+    logger.info(msg)
+
+    sessions = ImagingSession.from_dicoms(
         dicoms_path=dicoms_path,
-        associated_files_pattern=associated,
         project_field=project_field,
         subject_field=subject_field,
         session_field=session_field,
@@ -183,14 +181,10 @@ def stage(
             session_staging_dir.mkdir(exist_ok=True)
             # Deidentify files and save them to the staging directory
             staged_session = session.stage(
-                session_staging_dir, assoc_identification=assoc_identification
+                session_staging_dir, associated_files=associated_files,
+                delete_original=delete
             )
             staged_session.save(session_staging_dir)
-            if delete:
-                session.delete()
-                logger.info(
-                    f"Deleted original '{session.name}' session data after successful upload"
-                )
         except Exception as e:
             if not raise_errors:
                 logger.error(

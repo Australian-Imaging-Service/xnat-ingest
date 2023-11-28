@@ -6,61 +6,18 @@ from pathlib import Path
 import sys
 import typing as ty
 import hashlib
+import attrs
+import click.types
 import pydicom
-from fileformats.core import from_mime
 from fileformats.core import FileSet
 
 logger = logging.getLogger("xnat-ingest")
 
 
-class LogEmail:
-    def __init__(self, address, loglevel, subject):
-        self.address = address
-        self.loglevel = loglevel
-        self.subject = subject
-
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(*entry.split(",")) for entry in envvar.split(";")]
-
-    def __str__(self):
-        return self.address
-
-
-class LogFile:
-    def __init__(self, path, loglevel):
-        self.path = Path(path)
-        self.loglevel = loglevel
-
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(*entry.split(",")) for entry in envvar.split(";")]
-
-    def __str__(self):
-        return str(self.path)
-
-    def __fspath__(self):
-        return self.path
-
-
-class MailServer:
-    def __init__(self, host, sender_email, user, password):
-        self.host = host
-        self.sender_email = sender_email
-        self.user = user
-        self.password = password
-
-
-class NonDicomType(str):
-    def __init__(self, mime):
-        self.type = from_mime(mime)
-
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(entry) for entry in envvar.split(";")]
-
-
 class DicomField:
+
+    name = "dicom_field"
+
     def __init__(self, keyword_or_tag):
         # Get the tag associated with the keyword
         try:
@@ -79,6 +36,81 @@ class DicomField:
 
     def __str__(self):
         return f"'{self.keyword}' field ({','.join(self.tag)})"
+
+
+class CliType(click.types.ParamType):
+
+    is_composite = True
+
+    def convert(
+        self, value: ty.Any, param: click.Parameter | None, ctx: click.Context | None
+    ):
+        return type(self)(*value)
+
+    @property
+    def arity(self):
+        return len(attrs.fields(type(self)))
+
+    @property
+    def name(self):
+        return type(self).__name__.lower()
+
+    @classmethod
+    def split_envvar_value(cls, envvar):
+        return cls(*envvar.split(","))
+
+
+class MultiCliType(CliType):
+
+    @classmethod
+    def split_envvar_value(cls, envvar):
+        return [cls(*entry.split(",")) for entry in envvar.split(";")]
+
+
+@attrs.define
+class LogEmail(CliType):
+
+    address: str = None
+    loglevel: str = None
+    subject: str = None
+
+    def __str__(self):
+        return self.address
+
+
+def path_or_none_converter(path: str | Path | None):
+    if path is None:
+        return None
+    return Path(path)
+
+
+@attrs.define
+class LogFile(MultiCliType):
+
+    path: Path = attrs.field(converter=path_or_none_converter, default=None)
+    loglevel: str = None
+
+    def __str__(self):
+        return str(self.path)
+
+    def __fspath__(self):
+        return self.path
+
+
+@attrs.define
+class MailServer(CliType):
+
+    host: str = None
+    sender_email: str = None
+    user: str = None
+    password: str = None
+
+
+@attrs.define
+class AssociatedFiles(CliType):
+
+    glob: str = None
+    identity_pattern: str = None
 
 
 def set_logger_handling(
@@ -291,7 +323,7 @@ def transform_paths(
     transformed = []
     for fspath in fspaths:
         fspath_str = str(fspath)
-        match = transform_path_re.match((str(fspath)))
+        match = transform_path_re.match(fspath_str)
         assert match
         prev_index = 0
         new_fspath = ""

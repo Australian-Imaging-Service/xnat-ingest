@@ -25,7 +25,7 @@ from ..utils import (
 @cli.command(
     help="""uploads all sessions found in the staging directory (as prepared by the
 `stage` sub-command) to XNAT.
-    
+
 STAGING_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
 
@@ -57,7 +57,8 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile,
+    type=LogFile(),
+    nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
     help=(
@@ -68,7 +69,8 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail,
+    type=LogEmail(),
+    nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
     envvar="XNAT_INGEST_LOGEMAIL",
@@ -79,7 +81,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--mail-server",
-    type=MailServer,
+    type=MailServer(),
     metavar="<host> <sender-email> <user> <password>",
     default=None,
     envvar="XNAT_INGEST_MAILSERVER",
@@ -89,22 +91,13 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
-    "--all-dicoms/--not-all-dicoms",
-    default=False,
-    type=bool,
-    envvar="XNAT_INGEST_ALLDICOMS",
+    "--always-include",
+    "-i",
+    default=None,
+    type=click.Choice(("all", "dicom", "associated"), case_sensitive=False),
+    envvar="XNAT_INGEST_ALWAYSINCLUDE",
     help=(
-        "Whether to include all DICOM scans in the upload regardless of whether they are "
-        "specified in a column or not"
-    ),
-)
-@click.option(
-    "--all-assoc/--not-all-assoc",
-    default=False,
-    type=bool,
-    envvar="XNAT_INGEST_ALLASSOC",
-    help=(
-        "Whether to include all associated files in the upload regardless of whether they are "
+        "Whether to include scans in the upload regardless of whether they are "
         "specified in a column or not"
     ),
 )
@@ -124,15 +117,9 @@ def upload(
     log_file: Path,
     log_emails: LogEmail,
     mail_server: MailServer,
-    all_dicoms: bool,
-    all_assoc: bool,
+    always_include: str,
     raise_errors: bool,
 ):
-
-    if all_assoc:
-        raise NotImplementedError(
-            "--all-assoc option hasn't been implemented yet"
-        )
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
@@ -200,22 +187,16 @@ def upload(
                     raise e
 
                 # Anonymise DICOMs and save to directory prior to upload
-                if all_dicoms:
+                if always_include:
                     logger.info(
-                        f"Including all DICOMS in upload from '{session.name}' to "
-                        f"{session_path} as `--include-dicoms` is set"
-                    )
-                else:
-                    logger.info(
-                        f"Excluding DICOMS from '{session.name}' to {session_path} "
-                        "unless they are explicitly specified in a column"
+                        f"Including {always_include} scans/files in upload from '{session.name}' to "
+                        f"{session_path} regardless of whether they are explicitly specified"
                     )
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
                     session.select_resources(
                         dataset,
-                        include_all_dicoms=all_dicoms,
-                        include_all_assoc=all_assoc,
+                        always_include=always_include,
                     ),
                     f"Uploading scans found in {session.name}",
                 ):

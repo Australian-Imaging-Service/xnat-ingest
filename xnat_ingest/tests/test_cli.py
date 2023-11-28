@@ -119,16 +119,16 @@ def test_stage_and_upload(
             )
             for dcm in series.contents:
                 os.link(dcm, dicoms_dir / f"statistics{i}-{dcm.fspath.name}")
-            nd_fspaths = get_raw_data_files(
+            assoc_fspaths = get_raw_data_files(
                 tmp_gen_dir / f"non-dicom{i}",
                 first_name=first_name,
                 last_name=last_name,
                 date_time=f"2023.08.25.15.50.5{i}",
             )
-            for nd_fspath in nd_fspaths:
+            for assoc_fspath in assoc_fspaths:
                 os.link(
-                    dcm,
-                    associated_files_dir / f"{nd_fspath.stem}-{i}{nd_fspath.suffix}",
+                    assoc_fspath,
+                    associated_files_dir / f"{assoc_fspath.stem}-{i}{assoc_fspath.suffix}",
                 )
 
     # Create data store
@@ -160,17 +160,17 @@ def test_stage_and_upload(
         (
             "listmode",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
-            ".*(PET_LISTMODE).*",
+            ".*/LISTMODE",
         ),
         (
             "sinogram",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
-            ".*(PET_EM_SINO).*",
+            ".*/EM_SINO",
         ),
         (
             "countrate",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
-            ".*(PET_COUNTRATE).*",
+            ".*/COUNTRATE",
         ),
     ]:
         # Add dataset columns
@@ -191,14 +191,15 @@ def test_stage_and_upload(
         [
             str(dicoms_dir),
             str(staging_dir),
-            # "--assoc-files-glob",
-            # str(associated_files_dir)
-            # + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
-            "--log-file",
-            str(log_file),
-            "info",
-            # "--raise-errors",
-            # "--delete",
+            "--associated-files",
+            str(associated_files_dir)
+            + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+            # "--log-file",
+            # str(log_file),
+            # "info",
+            "--raise-errors",
+            "--delete",
         ]
     )
 
@@ -208,12 +209,12 @@ def test_stage_and_upload(
         upload,
         [
             str(staging_dir),
-            "--log-file",
-            str(log_file),
-            "info",
+            # "--log-file",
+            # str(log_file),
+            # "info",
+            "--always-include",
+            "dicom",
             "--raise-errors",
-            "--include-dicoms",
-            "--delete",
         ],
         env={
             "XNAT_INGEST_HOST": xnat_server,
@@ -235,7 +236,6 @@ def test_stage_and_upload(
                 "2",
                 "4",
                 "6",
-                "countrate",
-                "listmode",
-                "sinogram",
+                "602",
+                "603",
             ]

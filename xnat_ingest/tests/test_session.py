@@ -24,14 +24,16 @@ from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b im
 from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
     get_files as get_raw_data_files,
 )
-from xnat_ingest.session import ImagingSession, DummySpace
+from xnat_ingest.session import ImagingSession, ImagingScan, DummySpace
+
+
+FIRST_NAME = "GivenName"
+LAST_NAME = "FamilyName"
 
 
 @pytest.fixture
 def imaging_session() -> ImagingSession:
-    first_name = "GivenName"
-    last_name = "FamilyName"
-    PatientName = f"{first_name}^{last_name}"
+    PatientName = f"{FIRST_NAME}^{LAST_NAME}"
     dicoms = [
         DicomSeries(d.iterdir())
         for d in (
@@ -41,18 +43,16 @@ def imaging_session() -> ImagingSession:
             get_statistics_image(PatientName=PatientName),
         )
     ]
-    resources = {str(d["SeriesNumber"]): {"DICOM": d} for d in dicoms}
-    scan_types = {str(d["SeriesNumber"]): str(d["SeriesDescription"]) for d in dicoms}
+    scans = [
+        ImagingScan(
+            id=str(d["SeriesNumber"]),
+            type=str(d["SeriesDescription"]),
+            resources={"DICOM": d}) for d in dicoms]
     return ImagingSession(
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
-        resources=resources,
-        scan_types=scan_types,
-        associated_files_pattern="**/{PatientName.given_name}_{PatientName.family_name}*.ptd",
-        associated_fspaths=get_raw_data_files(
-            first_name=first_name, last_name=last_name
-        ),
+        scans=scans,
     )
 
 
@@ -111,12 +111,24 @@ def dataset(tmp_path: Path) -> Dataset:
 def test_session_select_resources(
     imaging_session: ImagingSession, dataset: Dataset, tmp_path: Path
 ):
+
+    assoc_dir = tmp_path / "assoc"
+    assoc_dir.mkdir()
+
+    for fspath in get_raw_data_files(
+        first_name=FIRST_NAME, last_name=LAST_NAME
+    ):
+        fspath.rename(assoc_dir / fspath.name)
+
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
 
     staged_session = imaging_session.stage(
         staging_dir,
-        assoc_identification=r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+        associated_files=(
+            str(assoc_dir) + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*"
+        ),
     )
 
     resources = list(staged_session.select_resources(dataset))
