@@ -7,6 +7,7 @@ import subprocess as sp
 from functools import cached_property
 import shutil
 import yaml
+from tqdm import tqdm
 import attrs
 from itertools import chain
 from collections import defaultdict

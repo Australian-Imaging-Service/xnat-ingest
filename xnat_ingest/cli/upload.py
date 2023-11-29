@@ -5,7 +5,6 @@ import tempfile
 import click
 from tqdm import tqdm
 from fileformats.generic import File
-from fileformats.medimage import DicomSeries
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
 from .base import cli
