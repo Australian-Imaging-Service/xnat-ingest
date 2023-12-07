@@ -8,34 +8,10 @@ import typing as ty
 import hashlib
 import attrs
 import click.types
-import pydicom
 from fileformats.core import FileSet
+from .dicom import DicomField  # noqa
 
 logger = logging.getLogger("xnat-ingest")
-
-
-class DicomField:
-
-    name = "dicom_field"
-
-    def __init__(self, keyword_or_tag):
-        # Get the tag associated with the keyword
-        try:
-            self.tag = pydicom.datadict.tag_for_keyword(keyword_or_tag)
-        except ValueError:
-            try:
-                self.keyword = pydicom.datadict.dictionary_description(keyword_or_tag)
-            except ValueError:
-                raise ValueError(
-                    f'Could not parse "{keyword_or_tag}" as a DICOM keyword or tag'
-                )
-            else:
-                self.tag = keyword_or_tag
-        else:
-            self.keyword = keyword_or_tag
-
-    def __str__(self):
-        return f"'{self.keyword}' field ({','.join(self.tag)})"
 
 
 class CliType(click.types.ParamType):

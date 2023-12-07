@@ -25,6 +25,7 @@ from arcana.core.data.tree import DataTree
 from arcana.core.exceptions import ArcanaDataMatchError
 from .exceptions import DicomParseError, StagingError
 from .utils import add_exc_note, transform_paths
+from .dicom import dcmedit_path
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -119,8 +120,10 @@ class ImagingSession:
                 for resource_name, fileset in scan.resources.items():
                     if (
                         always_include == "all"
-                        or always_include == "dicom" and resource_name == "DICOM"
-                        or always_include == "associated" and resource_name != "DICOM"
+                        or always_include == "dicom"
+                        and resource_name == "DICOM"
+                        or always_include == "associated"
+                        and resource_name != "DICOM"
                     ):
                         uploaded.add((scan.id, resource_name))
                         yield scan.id, scan.type, resource_name, fileset
@@ -139,7 +142,9 @@ class ImagingSession:
                     logger.info(
                         "%s/%s resource is already uploaded as 'always_include' is set to "
                         "%s and doesn't need to be explicitly specified",
-                        scan.id, resource_name, always_include
+                        scan.id,
+                        resource_name,
+                        always_include,
                     )
                     continue
                 fileset = column.datatype(scan.resources[resource_name])
@@ -217,7 +222,22 @@ class ImagingSession:
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info("Loading DICOM series from %s", str(dicoms_path))
         dicom_sessions = defaultdict(list)
-        for series in from_paths(dicom_fspaths, DicomSeries, ignore=".*"):
+        for series in from_paths(
+            dicom_fspaths,
+            DicomSeries,
+            ignore=".*",
+            selected_keys=[
+                "SeriesNumber",
+                "SeriesDescription",
+                "StudyInstanceUID",
+                "SOPInstanceUID",  # used in ordering the contents of the dicom series
+                project_field.keyword,
+                subject_field.keyword,
+                session_field.keyword,
+            ],
+        ):
+            # Restrict the metadata fields that are loaded (others are ignored),
+            # for performance reasons
             dicom_sessions[series["StudyInstanceUID"]].append(series)
 
         # Construct sessions from sorted series
@@ -357,7 +377,7 @@ class ImagingSession:
         ImagingSession
             a deidentified session with updated paths
         """
-        if not self._dcmedit_path:
+        if not dcmedit_path:
             logger.warning(
                 "Did not find `dcmedit` tool from the MRtrix package on the system path, "
                 "de-identification will be performed by pydicom instead and may be slower"
@@ -482,44 +502,16 @@ class ImagingSession:
     def deidentify_dicom(
         self, dicom_file: Path, new_path: Path, delete_original: bool = False
     ) -> Path:
-        if self._dcmedit_path:
-            # Get year of birth
-            # yob = (
-            #     sp.check_output(
-            #         [self._dcminfo_path, "-tag", "0010", "0030", str(dicom_file)]
-            #     )
-            #     .decode("utf-8")
-            #     .split(" ")[-4:]
-            # )
+        if dcmedit_path:
             # Copy to new path
             shutil.copyfile(dicom_file, new_path)
             # Replace date of birth date with 1st of Jan
             args = [
-                self._dcmedit_path,
+                dcmedit_path,
                 "-anonymise",
                 str(new_path),
             ]
             sp.check_call(args)
-            # sp.check_call(
-            #     [
-            #         self._dcmedit_path,
-            #         "-tag",
-            #         "0010",
-            #         "0030",
-            #         f"0101{yob}",
-            #         str(new_path),
-            #     ]
-            # )
-            # # Clear remaining identifable fields
-            # sp.check_call(
-            #     (
-            #         [self._dcmedit_path]
-            #         + list(
-            #             chain(*(("-tag",) + t + ("",) for t in self.FIELDS_TO_CLEAR))
-            #         )
-            #         + [str(new_path)]
-            #     )
-            # )
         else:
             dcm = pydicom.dcmread(dicom_file)
             dcm.PatientBirthDate = ""  # dcm.PatientBirthDate[:4] + "0101"
@@ -534,20 +526,6 @@ class ImagingSession:
         if delete_original:
             os.unlink(dicom_file)
         return new_path
-
-    @cached_property
-    def _dcmedit_path(self) -> str:
-        try:
-            return sp.check_output("which dcmedit", shell=True).decode("utf-8").strip()
-        except sp.CalledProcessError:
-            return None
-
-    @cached_property
-    def _dcminfo_path(self) -> str:
-        try:
-            return sp.check_output("which dcminfo", shell=True).decode("utf-8").strip()
-        except sp.CalledProcessError:
-            return None
 
     FIELDS_TO_CLEAR = [
         ("0008", "0014"),  # Instance Creator UID

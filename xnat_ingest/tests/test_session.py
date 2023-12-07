@@ -25,6 +25,7 @@ from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
     get_files as get_raw_data_files,
 )
 from xnat_ingest.session import ImagingSession, ImagingScan, DummySpace
+from xnat_ingest.utils import AssociatedFiles
 
 
 FIRST_NAME = "GivenName"
@@ -125,7 +126,7 @@ def test_session_select_resources(
 
     staged_session = imaging_session.stage(
         staging_dir,
-        associated_files=(
+        associated_files=AssociatedFiles(
             str(assoc_dir) + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*"
         ),
