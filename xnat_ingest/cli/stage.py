@@ -1,4 +1,5 @@
 from pathlib import Path
+import typing as ty
 import traceback
 import click
 from tqdm import tqdm
@@ -144,8 +145,8 @@ def stage(
     project_id: str | None,
     delete: bool,
     log_level: str,
-    log_file: Path,
-    log_emails: LogEmail,
+    log_file: LogFile | None,
+    log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     raise_errors: bool,
 ):

@@ -90,8 +90,18 @@ class AssociatedFiles(CliType):
 
 
 def set_logger_handling(
-    log_level: str, log_emails: LogEmail, log_file: LogFile, mail_server: MailServer
+    log_level: str, log_emails: ty.List[LogEmail] | None, log_file: LogFile | None, mail_server: MailServer
 ):
+
+    levels = [log_level]
+    if log_emails:
+        levels.extend(le.loglevel for le in log_emails)
+    if log_file:
+        levels.append(log_file.loglevel)
+
+    min_log_level = min(getattr(logging, ll.upper()) for ll in levels)
+    logger.setLevel(min_log_level)
+
     # Configure the email logger
     if log_emails:
         if not mail_server:
