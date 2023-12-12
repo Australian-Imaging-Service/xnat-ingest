@@ -516,6 +516,7 @@ class ImagingSession:
             # Replace date of birth date with 1st of Jan
             args = [
                 dcmedit_path,
+                "-quiet",
                 "-anonymise",
                 str(new_path),
             ]
