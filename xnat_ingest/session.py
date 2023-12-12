@@ -384,18 +384,19 @@ class ImagingSession:
             )
         staged_scans = []
         staged_metadata = {}
-        for scan in self.scans.values():
+        for scan in tqdm(self.scans.values(), f"Staging DICOM sessions to {dest_dir}"):
             staged_resources = {}
             for resource_name, fileset in scan.resources.items():
                 scan_dir = dest_dir / scan.id / resource_name
                 scan_dir.mkdir(parents=True, exist_ok=True)
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
-                    for dicom_file in fileset.fspaths:
+                    for dicom in fileset.contents:
                         staged_dicom_paths.append(
                             self.deidentify_dicom(
-                                dicom_file,
-                                scan_dir / dicom_file.name,
+                                dicom,
+                                scan_dir
+                                / (dicom.metadata["SOPInstanceUID"] + dicom.actual_ext),
                                 delete_original=delete_original,
                             )
                         )
@@ -426,7 +427,10 @@ class ImagingSession:
             staged_associated_fspaths = []
             anonymised_dir = dest_dir / ".anonymised"
             anonymised_dir.mkdir()
-            for old, new in zip(associated_fspaths, transformed_fspaths):
+            for old, new in tqdm(
+                zip(associated_fspaths, transformed_fspaths),
+                "Anonymising associated file names",
+            ):
                 dest_path = anonymised_dir / new.name
                 if Dicom.matches(old):
                     self.deidentify_dicom(
@@ -441,7 +445,9 @@ class ImagingSession:
             # Identify scan id, type and resource names from deidentified file paths
             assoc_scans = {}
             assoc_re = re.compile(associated_files.identity_pattern)
-            for fspath in staged_associated_fspaths:
+            for fspath in tqdm(
+                staged_associated_fspaths, "sorting files into resources"
+            ):
                 match = assoc_re.match(str(fspath))
                 if not match:
                     raise RuntimeError(
@@ -465,7 +471,9 @@ class ImagingSession:
                             f"'{prev_scan_type}' for scan ID '{scan_id}'"
                         )
                 assoc_resources[resource].append(fspath)
-            for scan_id, (scan_type, scan_resources_dict) in assoc_scans.items():
+            for scan_id, (scan_type, scan_resources_dict) in tqdm(
+                assoc_scans.items(), "moving associated files to staging directory"
+            ):
                 scan_resources = {}
                 for resource_name, fspaths in scan_resources_dict.items():
                     if resource_name in self.scans.get(scan_id, []):
