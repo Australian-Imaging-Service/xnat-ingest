@@ -392,11 +392,12 @@ class ImagingSession:
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
                     for dicom in fileset.contents:
+                        dicom_ext = dicom.decomposed_fspaths()[0][-1]
                         staged_dicom_paths.append(
                             self.deidentify_dicom(
                                 dicom,
                                 scan_dir
-                                / (dicom.metadata["SOPInstanceUID"] + dicom.actual_ext),
+                                / (dicom.metadata["SOPInstanceUID"] + dicom_ext),
                                 delete_original=delete_original,
                             )
                         )
