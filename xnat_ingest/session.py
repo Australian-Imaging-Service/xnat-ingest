@@ -215,7 +215,13 @@ class ImagingSession:
             DICOM files within the session
         """
         if isinstance(dicoms_path, Path) or "*" not in dicoms_path:
-            dicom_fspaths = list(Path(dicoms_path).iterdir())
+            dicoms_path = Path(dicoms_path)
+            if not dicoms_path.exists():
+                raise ValueError(f"Provided DICOMs path '{dicoms_path}' does not exist")
+            if dicoms_path.is_dir():
+                dicom_fspaths = list(Path(dicoms_path).iterdir())
+            else:
+                dicom_fspaths = [dicoms_path]
         else:
             dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
 
