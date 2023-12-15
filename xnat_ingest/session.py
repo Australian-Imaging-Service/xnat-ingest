@@ -352,6 +352,7 @@ class ImagingSession:
         dest_dir: Path,
         associated_files: ty.Tuple[str, str],
         delete_original: bool = False,
+        deidentify: bool = True
     ) -> "ImagingSession":
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
@@ -371,6 +372,10 @@ class ImagingSession:
             Used to extract the scan ID & type/resource from the associated filename. Should
             be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
             '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
+        delete_original : bool
+            delete original files after they have been staged, false by default
+        deidentify : bool
+            deidentify the scans in the staging process, true by default
 
         Returns
         -------
@@ -392,15 +397,17 @@ class ImagingSession:
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
                     for dicom in fileset.contents:
-                        dicom_ext = dicom.decomposed_fspaths()[0][-1]
-                        staged_dicom_paths.append(
-                            self.deidentify_dicom(
+                        if deidentify:
+                            dicom_ext = dicom.decomposed_fspaths()[0][-1]
+                            staged_fspath = self.deidentify_dicom(
                                 dicom,
                                 scan_dir
                                 / (dicom.metadata["SOPInstanceUID"] + dicom_ext),
                                 delete_original=delete_original,
                             )
-                        )
+                        else:
+                            staged_fspath = dicom.copy(scan_dir)
+                        staged_dicom_paths.append(staged_fspath)
                     staged_resource = DicomSeries(staged_dicom_paths)
                     # Add to the combined metadata dictionary
                     staged_metadata.update(staged_resource.metadata)
@@ -418,30 +425,41 @@ class ImagingSession:
             # Select files using the constructed glob pattern
             associated_fspaths = [Path(p) for p in glob(str(assoc_glob))]
 
-            # Transform the names of the paths to remove any identiable information
-            transformed_fspaths = transform_paths(
-                associated_fspaths,
-                associated_files.glob,
-                self.metadata,
-                staged_metadata,
+            logger.info(
+                "Found %s associated file paths matching '%s'",
+                len(associated_fspaths),
+                assoc_glob,
             )
-            staged_associated_fspaths = []
-            anonymised_dir = dest_dir / ".anonymised"
-            anonymised_dir.mkdir()
-            for old, new in tqdm(
-                zip(associated_fspaths, transformed_fspaths),
-                "Anonymising associated file names",
-            ):
-                dest_path = anonymised_dir / new.name
-                if Dicom.matches(old):
-                    self.deidentify_dicom(
-                        old, dest_path, delete_original=delete_original
-                    )
-                elif delete_original:
-                    old.rename(dest_path)
-                else:
-                    shutil.copyfile(old, dest_path)
-                staged_associated_fspaths.append(dest_path)
+
+            tmpdir = dest_dir / ".tmp"
+            tmpdir.mkdir()
+
+            if deidentify:
+                # Transform the names of the paths to remove any identiable information
+                transformed_fspaths = transform_paths(
+                    associated_fspaths,
+                    associated_files.glob,
+                    self.metadata,
+                    staged_metadata,
+                )
+                staged_associated_fspaths = []
+
+                for old, new in tqdm(
+                    zip(associated_fspaths, transformed_fspaths),
+                    "Anonymising associated file names",
+                ):
+                    dest_path = tmpdir / new.name
+                    if Dicom.matches(old):
+                        self.deidentify_dicom(
+                            old, dest_path, delete_original=delete_original
+                        )
+                    elif delete_original:
+                        old.rename(dest_path)
+                    else:
+                        shutil.copyfile(old, dest_path)
+                    staged_associated_fspaths.append(dest_path)
+            else:
+                staged_associated_fspaths = associated_fspaths
 
             # Identify scan id, type and resource names from deidentified file paths
             assoc_scans = {}
@@ -497,7 +515,7 @@ class ImagingSession:
                         resources=scan_resources,
                     )
                 )
-            os.rmdir(anonymised_dir)
+            os.rmdir(tmpdir)  # Should be empty
         # Remove all references scans in original session as they have been deleted
         if delete_original:
             self.scans = {}

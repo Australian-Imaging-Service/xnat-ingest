@@ -135,6 +135,12 @@ are uploaded to XNAT
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
+@click.option(
+    "--deidentify/--dont-deidentify",
+    default=False,
+    type=bool,
+    help="whether to deidentify the file names and DICOM metadata before staging"
+)
 def stage(
     dicoms_path: str,
     staging_dir: Path,
@@ -149,6 +155,7 @@ def stage(
     log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     raise_errors: bool,
+    deidentify: bool,
 ):
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
@@ -183,7 +190,8 @@ def stage(
             # Deidentify files and save them to the staging directory
             staged_session = session.stage(
                 session_staging_dir, associated_files=associated_files,
-                delete_original=delete
+                delete_original=delete,
+                deidentify=deidentify,
             )
             staged_session.save(session_staging_dir)
         except Exception as e:
