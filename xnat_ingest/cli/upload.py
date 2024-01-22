@@ -1,9 +1,11 @@
 from pathlib import Path
 import shutil
 import traceback
+import typing as ty
 import tempfile
 import click
 from tqdm import tqdm
+import boto3
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
@@ -25,8 +27,8 @@ from ..utils import (
     help="""uploads all sessions found in the staging directory (as prepared by the
 `stage` sub-command) to XNAT.
 
-STAGING_DIR is the directory that the files for each session are collated to before they
-are uploaded to XNAT
+STAGED is either a directory that the files for each session are collated to before they
+are uploaded to XNAT or an S3 bucket to download the files from.
 
 SERVER is address of the XNAT server to upload the scans up to. Can alternatively provided
 by setting the "XNAT_INGEST_HOST" environment variable.
@@ -36,7 +38,7 @@ USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env.
 PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
 """,
 )
-@click.argument("staging_dir", type=click.Path(path_type=Path))
+@click.argument("staged", type=str)
 @click.argument("server", type=str, envvar="XNAT_INGEST_HOST")
 @click.argument("user", type=str, envvar="XNAT_INGEST_USER")
 @click.argument("password", type=str, envvar="XNAT_INGEST_PASS")
@@ -106,8 +108,16 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
+@click.option(
+    "--aws-creds",
+    type=ty.Tuple[str, str],
+    metavar="<access-key> <secret-key>",
+    default=None,
+    nargs=2,
+    help="AWS credentials to use for access of data stored S3 of DICOMs",
+)
 def upload(
-    staging_dir: Path,
+    staged: str,
     server: str,
     user: str,
     password: str,
@@ -118,6 +128,7 @@ def upload(
     mail_server: MailServer,
     always_include: str,
     raise_errors: bool,
+    aws_creds: ty.Tuple[str, str],
 ):
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
@@ -126,10 +137,29 @@ def upload(
         server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
     )
 
+    if aws_creds:
+        # List sessions stored in s3 bucket
+        s3 = boto3.resource("s3", aws_access_key_id=aws_creds[0], aws_secret_access_key=aws_creds[1])
+        bucket_name, prefix = staged.split("/", 1)
+        bucket = s3.Bucket(bucket_name)
+        staged = Path(tempfile.mkdtemp())
+        for obj in bucket.objects.filter(Prefix=prefix):
+            if obj.key.endswith("/"):
+                continue
+            session_dir = staged / obj.key.split("/", 1)[0]
+            session_dir.mkdir(parents=True, exist_ok=True)
+            with open(session_dir / obj.key.split("/")[-1], "wb") as f:
+                bucket.download_fileobj(obj.key, f)
+    else:
+        def list_staged_sessions(staging_dir):
+            for session_dir in staging_dir.iterdir():
+                if session_dir.is_dir():
+                    yield session_dir
+
     with xnat_repo.connection:
         for session_staging_dir in tqdm(
-            list(staging_dir.iterdir()),
-            f"Processing staged sessions found in '{str(staging_dir)}' directory",
+            list(list_staged_sessions(staged)),
+            f"Processing staged sessions found in '{staged}'",
         ):
             session = ImagingSession.load(session_staging_dir)
             try:
