@@ -66,11 +66,14 @@ are uploaded to XNAT
     envvar="XNAT_INGEST_ASSOCIATED",
     metavar="<glob> <id-pattern>",
     help=(
-        "The \"glob\" arg is a glob pattern by which to detect associated files to be attached to the DICOM "
-        "sessions. Can contain string templates corresponding to "
-        "DICOM metadata fields, which are substituted before the glob is called. For "
-        'example, "/path/to/non-dicoms/{PatientName.given_name}_{PatientName.family_name}/*)" '
-        "will find all files under the subdirectory within '/path/to/non-dicoms/' that matches "
+        "The \"glob\" arg is a glob pattern by which to detect associated files to be "
+        "attached to the DICOM sessions. Note that when this pattern corresponds to a "
+        "relative path it is considered to be relative to the parent directory containing "
+        "the DICOMs for the session NOT the current working directory Can contain string "
+        "templates corresponding to DICOM metadata fields, which are substituted before "
+        "the glob is called. For example, "
+        '"./associated/{PatientName.given_name}_{PatientName.family_name}/*)\" '
+        "will find all files under the subdirectory within '/path/to/dicoms/associated' that matches "
         "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
         "if a relative path is provided.\n"
         "The \"id-pattern\" arg is a regular expression that is used to extract the scan ID & "

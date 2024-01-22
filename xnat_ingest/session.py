@@ -368,8 +368,10 @@ class ImagingSession:
         dest_dir : Path
             destination directory to save the deidentified files
         associated_files : ty.Tuple[str, str]
-            Pattern used to select the non-dicom files to include in the session. The
-            pattern can contain string template placeholders corresponding to DICOM
+            Glob pattern used to select the non-dicom files to include in the session. Note
+            that the pattern is relative to the parent directory containing the DICOM files
+            NOT the current working directory.
+            The glob pattern can contain string template placeholders corresponding to DICOM
             metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
             are substituted before the string is used to glob the non-DICOM files. In
             order to deidentify the filenames, the pattern must explicitly reference all
