@@ -381,20 +381,21 @@ class ImagingSession:
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
                 resource_dir = save_dir / f"{scan.id}-{scan.type}" / resource_name
-                if fileset.parent.is_relative_to(resource_dir):
+                # If data is not already in the save directory, copy it there
+                if not fileset.parent.is_relative_to(resource_dir):
                     resource_dir.mkdir(parents=True, exist_ok=True)
                     fileset_copy = fileset.copy(
                         resource_dir, mode=fileset.CopyMode.hardlink_or_copy
                     )
                     self.scans[scan.id].resources[resource_name] = fileset_copy
-                    resources_dict[resource_name] = {
-                        "datatype": to_mime(fileset, official=False),
-                        "fspaths": [
-                            # Ensure it is a relative path using POSIX forward slashes
-                            str(p.relative_to(save_dir)).replace("\\", "/")
-                            for p in fileset_copy.fspaths
-                        ],
-                    }
+                resources_dict[resource_name] = {
+                    "datatype": to_mime(fileset, official=False),
+                    "fspaths": [
+                        # Ensure it is a relative path using POSIX forward slashes
+                        str(p.relative_to(save_dir)).replace("\\", "/")
+                        for p in fileset_copy.fspaths
+                    ],
+                }
             dct["scans"][scan.id] = {
                 "type": scan.type,
                 "resources": resources_dict,
