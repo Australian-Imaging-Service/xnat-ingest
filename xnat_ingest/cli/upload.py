@@ -174,7 +174,7 @@ def upload(
                 session_objs[session_ids].append((path_parts[3:-1], obj))
 
             session_objs = {
-                (ids, objs)
+                ids: objs
                 for ids, objs in session_objs.items()
                 if not xnat_session_exists(*ids)
             }
@@ -190,7 +190,10 @@ def upload(
                     session_tmp_dir = tmp_download_dir.joinpath(*ids)
                     session_tmp_dir.mkdir(parents=True, exist_ok=True)
                     for relpath, obj in objs:
-                        with open(session_tmp_dir.joinpath(relpath), "wb") as f:
+                        obj_path = session_tmp_dir.joinpath(*relpath)
+                        obj_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(obj_path, "wb") as f:
+                            logger.debug("Downloading %s to %s", obj, obj_path)
                             bucket.download_fileobj(obj.key, f)
                     yield session_tmp_dir
                     shutil.rmtree(
@@ -357,5 +360,3 @@ def upload(
                     continue
                 else:
                     raise
-
-    shutil.rmtree(tmp_download_dir)
