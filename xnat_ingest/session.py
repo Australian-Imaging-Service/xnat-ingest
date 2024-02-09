@@ -379,7 +379,7 @@ class ImagingSession:
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
                 resource_dir = save_dir / f"{scan.id}-{scan.type}" / resource_name
-                if fileset.parent != resource_dir:
+                if fileset.parent.is_relative_to(resource_dir):
                     resource_dir.mkdir(parents=True, exist_ok=True)
                     fileset_copy = fileset.copy(
                         resource_dir, mode=fileset.CopyMode.hardlink_or_copy
