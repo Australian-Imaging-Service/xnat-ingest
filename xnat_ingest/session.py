@@ -271,7 +271,7 @@ class ImagingSession:
                         f"Multiple values for '{field}' tag found within scans in session: "
                         f"{session_dicom_series}"
                     )
-                id_ = cls.id_escape_re("", id_)
+                id_ = cls.id_escape_re.sub("", id_)
                 return id_
 
             scans = []
