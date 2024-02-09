@@ -193,7 +193,7 @@ def stage(
             # Deidentify files and save them to the staging directory
             staged_session = session.stage(
                 session_staging_dir, associated_files=associated_files,
-                delete_original=delete,
+                remove_original=delete,
                 deidentify=deidentify,
             )
             staged_session.save(session_staging_dir)
@@ -206,9 +206,3 @@ def stage(
                 continue
             else:
                 raise
-        else:
-            if delete:
-                session.delete()
-                logger.info("Staged and deleted %s session", session.name)
-            else:
-                logger.info("Staged %s session to %s", session.name, str(session_staging_dir))

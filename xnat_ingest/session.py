@@ -372,32 +372,23 @@ class ImagingSession:
         save_dir: Path
             the path to save the session metadata into (NB: the data is typically also
             stored in the directory structure of the session, but this is not necessary)
-
-        Returns
-        -------
-        saved: ImagingSession
-            the saved session with the updated file-system paths
         """
         dct = attrs.asdict(self, recurse=False)
         dct["scans"] = {}
-        scans_dir = save_dir / "scans"
-        if scans_dir.exists():
-            shutil.rmtree(scans_dir)
-        scans_dir.mkdir()
-        saved = deepcopy(self)
         for scan in self.scans.values():
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
-                resource_dir = scans_dir / f"{scan.id}-{scan.type}" / resource_name
-                resource_dir.mkdir(parents=True)
-                fileset_copy = fileset.copy(
-                    resource_dir, mode=fileset.CopyMode.hardlink_or_copy
-                )
-                resources_dict[resource_name] = {
-                    "datatype": to_mime(fileset, official=False),
-                    "fspaths": [str(p) for p in fileset_copy.fspaths],
-                }
-                saved.scans[scan.id].resources[resource_name] = fileset_copy
+                resource_dir = save_dir / f"{scan.id}-{scan.type}" / resource_name
+                if fileset.parent != resource_dir:
+                    resource_dir.mkdir(parents=True, exist_ok=True)
+                    fileset_copy = fileset.copy(
+                        resource_dir, mode=fileset.CopyMode.hardlink_or_copy
+                    )
+                    resources_dict[resource_name] = {
+                        "datatype": to_mime(fileset, official=False),
+                        "fspaths": [str(p) for p in fileset_copy.fspaths],
+                    }
+                    self.scans[scan.id].resources[resource_name] = fileset_copy
             dct["scans"][scan.id] = {
                 "type": scan.type,
                 "resources": resources_dict,
@@ -408,7 +399,6 @@ class ImagingSession:
                 dct,
                 f,
             )
-        return saved
 
     def stage(
         self,
@@ -457,7 +447,7 @@ class ImagingSession:
         for scan in tqdm(self.scans.values(), f"Staging DICOM sessions to {dest_dir}"):
             staged_resources = {}
             for resource_name, fileset in scan.resources.items():
-                scan_dir = dest_dir / scan.id / resource_name
+                scan_dir = dest_dir / f"{scan.id}-{scan.type}" / resource_name
                 scan_dir.mkdir(parents=True, exist_ok=True)
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
