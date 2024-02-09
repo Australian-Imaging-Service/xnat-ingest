@@ -200,7 +200,9 @@ def upload(
                         session_tmp_dir
                     )  # Delete the tmp session after the upload
 
+            logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, staged)
             sessions = iter_staged_sessions()
+            logger.debug("Created sessions iterator")
         else:
             sessions = []
             for project_dir in Path(staged).iterdir():
@@ -211,6 +213,7 @@ def upload(
                         ):
                             sessions.append(session_dir)
             num_sessions = len(sessions)
+            logger.info("Found %d sessions in staging directory '%s'", num_sessions, staged)
 
         for session_staging_dir in tqdm(
             sessions,
