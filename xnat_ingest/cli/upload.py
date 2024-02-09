@@ -171,7 +171,7 @@ def upload(
                     continue
                 path_parts = obj.key.split("/")
                 session_ids = tuple(path_parts[:3])
-                session_objs[session_ids].append((path_parts[3:-1], obj))
+                session_objs[session_ids].append((path_parts[3:], obj))
 
             session_objs = {
                 ids: objs
@@ -192,8 +192,8 @@ def upload(
                     for relpath, obj in objs:
                         obj_path = session_tmp_dir.joinpath(*relpath)
                         obj_path.parent.mkdir(parents=True, exist_ok=True)
+                        logger.debug("Downloading %s to %s", obj, obj_path)
                         with open(obj_path, "wb") as f:
-                            logger.debug("Downloading %s to %s", obj, obj_path)
                             bucket.download_fileobj(obj.key, f)
                     yield session_tmp_dir
                     shutil.rmtree(
