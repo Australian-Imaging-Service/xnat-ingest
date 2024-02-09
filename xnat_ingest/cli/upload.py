@@ -178,7 +178,7 @@ def upload(
             for obj in all_objects:
                 if obj.key.endswith("/"):
                     continue
-                path_parts = obj.key.split("/")
+                path_parts = obj.key[len(prefix):].split("/")
                 session_ids = tuple(path_parts[:3])
                 session_objs[session_ids].append((path_parts[3:], obj))
 
