@@ -330,7 +330,9 @@ class ImagingSession:
                         id=scan_id,
                         type=scan_dict["type"],
                         resources={
-                            n: from_mime(d["datatype"])(d["fspaths"])
+                            n: from_mime(d["datatype"])(
+                                save_dir.joinpath(*p.split("/")) for p in d["fspaths"]
+                            )
                             for n, d in scan_dict["resources"].items()
                         },
                     )
@@ -384,11 +386,15 @@ class ImagingSession:
                     fileset_copy = fileset.copy(
                         resource_dir, mode=fileset.CopyMode.hardlink_or_copy
                     )
+                    self.scans[scan.id].resources[resource_name] = fileset_copy
                     resources_dict[resource_name] = {
                         "datatype": to_mime(fileset, official=False),
-                        "fspaths": [str(p) for p in fileset_copy.fspaths],
+                        "fspaths": [
+                            # Ensure it is a relative path using POSIX forward slashes
+                            str(p.relative_to(save_dir)).replace("\\", "/")
+                            for p in fileset_copy.fspaths
+                        ],
                     }
-                    self.scans[scan.id].resources[resource_name] = fileset_copy
             dct["scans"][scan.id] = {
                 "type": scan.type,
                 "resources": resources_dict,
