@@ -204,7 +204,7 @@ def upload(
                     session_tmp_dir.mkdir(parents=True, exist_ok=True)
                     for relpath, obj in tqdm(
                         objs,
-                        desc=f"Downloading scans in {ids} session from S3 bucket"
+                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket"
                     ):
                         obj_path = session_tmp_dir.joinpath(*relpath)
                         obj_path.parent.mkdir(parents=True, exist_ok=True)
