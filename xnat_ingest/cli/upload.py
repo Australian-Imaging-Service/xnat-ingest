@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 import traceback
 import typing as ty
+from collections import defaultdict
 import tempfile
 import click
 from tqdm import tqdm
@@ -110,8 +111,9 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--aws-creds",
-    type=ty.Tuple[str, str],
+    type=str,
     metavar="<access-key> <secret-key>",
+    envvar="XNAT_INGEST_AWS_CREDS",
     default=None,
     nargs=2,
     help="AWS credentials to use for access of data stored S3 of DICOMs",
@@ -137,29 +139,80 @@ def upload(
         server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
     )
 
-    if aws_creds:
-        # List sessions stored in s3 bucket
-        s3 = boto3.resource("s3", aws_access_key_id=aws_creds[0], aws_secret_access_key=aws_creds[1])
-        bucket_name, prefix = staged.split("/", 1)
-        bucket = s3.Bucket(bucket_name)
-        staged = Path(tempfile.mkdtemp())
-        for obj in bucket.objects.filter(Prefix=prefix):
-            if obj.key.endswith("/"):
-                continue
-            session_dir = staged / obj.key.split("/", 1)[0]
-            session_dir.mkdir(parents=True, exist_ok=True)
-            with open(session_dir / obj.key.split("/")[-1], "wb") as f:
-                bucket.download_fileobj(obj.key, f)
-    else:
-        def list_staged_sessions(staging_dir):
-            for session_dir in staging_dir.iterdir():
-                if session_dir.is_dir():
-                    yield session_dir
-
     with xnat_repo.connection:
+
+        def xnat_session_exists(project_id, subject_id, session_id):
+            try:
+                xnat_repo.connection.projects[project_id].subjects[
+                    subject_id
+                ].experiments[session_id]
+            except KeyError:
+                return False
+            else:
+                logger.info(
+                    "Skipping session '%s-%s-%s' as it already exists on XNAT",
+                    project_id,
+                    subject_id,
+                    session_id,
+                )
+                return True
+
+        if staged.startswith("s3://"):
+            # List sessions stored in s3 bucket
+            s3 = boto3.resource(
+                "s3", aws_access_key_id=aws_creds[0], aws_secret_access_key=aws_creds[1]
+            )
+            bucket_name, prefix = staged[5:].split("/", 1)
+            bucket = s3.Bucket(bucket_name)
+            all_objects = bucket.objects.filter(Prefix=prefix)
+            session_objs = defaultdict(list)
+            for obj in all_objects:
+                if obj.key.endswith("/"):
+                    continue
+                path_parts = obj.key.split("/")
+                session_ids = tuple(path_parts[:3])
+                session_objs[session_ids].append((path_parts[3:-1], obj))
+
+            session_objs = {
+                (ids, objs)
+                for ids, objs in session_objs.items()
+                if not xnat_session_exists(*ids)
+            }
+
+            num_sessions = len(session_objs)
+
+            tmp_download_dir = Path(tempfile.mkdtemp())
+
+            def iter_staged_sessions():
+                for ids, objs in session_objs.items():
+                    # Just in case the manifest file is not included in the list of objects
+                    # we recreate the project/subject/sesssion directory structure
+                    session_tmp_dir = tmp_download_dir.joinpath(*ids)
+                    session_tmp_dir.mkdir(parents=True, exist_ok=True)
+                    for relpath, obj in objs:
+                        with open(session_tmp_dir.joinpath(relpath), "wb") as f:
+                            bucket.download_fileobj(obj.key, f)
+                    yield session_tmp_dir
+                    shutil.rmtree(
+                        session_tmp_dir
+                    )  # Delete the tmp session after the upload
+
+            sessions = iter_staged_sessions()
+        else:
+            sessions = []
+            for project_dir in Path(staged).iterdir():
+                for subject_dir in project_dir.iterdir():
+                    for session_dir in subject_dir.iterdir():
+                        if not xnat_session_exists(
+                            project_dir.name, subject_dir.name, session_dir.name
+                        ):
+                            sessions.append(session_dir)
+            num_sessions = len(sessions)
+
         for session_staging_dir in tqdm(
-            list(list_staged_sessions(staged)),
-            f"Processing staged sessions found in '{staged}'",
+            sessions,
+            total=num_sessions,
+            desc=f"Processing staged sessions found in '{staged}'",
         ):
             session = ImagingSession.load(session_staging_dir)
             try:
@@ -304,3 +357,5 @@ def upload(
                     continue
                 else:
                     raise
+
+    shutil.rmtree(tmp_download_dir)

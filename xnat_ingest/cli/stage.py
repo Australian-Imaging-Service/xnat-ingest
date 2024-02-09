@@ -181,7 +181,7 @@ def stage(
 
     for session in tqdm(sessions, f"Staging DICOM sessions found in '{dicoms_path}'"):
         try:
-            session_staging_dir = staging_dir / session.name
+            session_staging_dir = staging_dir.joinpath(session.staging_relpath)
             if session_staging_dir.exists():
                 logger.info(
                     "Skipping %s session as staging directory %s already exists",
@@ -189,7 +189,7 @@ def stage(
                     str(session_staging_dir),
                 )
                 continue
-            session_staging_dir.mkdir(exist_ok=True)
+            session_staging_dir.mkdir(exist_ok=True, parents=True)
             # Deidentify files and save them to the staging directory
             staged_session = session.stage(
                 session_staging_dir, associated_files=associated_files,
@@ -206,3 +206,9 @@ def stage(
                 continue
             else:
                 raise
+        else:
+            if delete:
+                session.delete()
+                logger.info("Staged and deleted %s session", session.name)
+            else:
+                logger.info("Staged %s session to %s", session.name, str(session_staging_dir))

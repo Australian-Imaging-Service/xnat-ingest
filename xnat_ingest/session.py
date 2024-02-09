@@ -4,6 +4,7 @@ from glob import glob
 import logging
 import os.path
 import subprocess as sp
+from copy import deepcopy
 from functools import cached_property
 import shutil
 import yaml
@@ -62,12 +63,18 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
 
+    id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
+
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
 
     @property
     def name(self):
         return f"{self.project_id}-{self.subject_id}-{self.session_id}"
+
+    @property
+    def staging_relpath(self):
+        return [self.project_id, self.subject_id, self.session_id]
 
     @cached_property
     def modalities(self) -> ty.Set[str]:
@@ -264,7 +271,7 @@ class ImagingSession:
                         f"Multiple values for '{field}' tag found within scans in session: "
                         f"{session_dicom_series}"
                     )
-                id_ = id_.replace(" ", "_")
+                id_ = cls.id_escape_re("", id_)
                 return id_
 
             scans = []
@@ -289,62 +296,111 @@ class ImagingSession:
         return sessions
 
     @classmethod
-    def load(cls, save_dir: Path):
+    def load(cls, save_dir: Path) -> "ImagingSession":
         """Override IDs extracted from DICOM metadata with manually specified IDs loaded
         from a YAML
 
         Parameters
         ----------
-        yaml_file : Path
-            name of the file to load the manually specified IDs from (YAML format)
+        save_dir : Path
+            the path to the directory where the session is saved
+
+        Returns
+        -------
+        ImagingSession
+            the loaded session
         """
         yaml_file = save_dir / cls.SAVE_FILENAME
-        try:
-            with open(yaml_file) as f:
-                dct = yaml.load(f, Loader=yaml.SafeLoader)
-        except Exception as e:
-            add_exc_note(
-                e,
-                f"Loading saved session from {yaml_file}, please check that it "
-                "is a valid YAML file",
-            )
-            raise e
-        scans = []
-        for scan_id, scan_dict in dct["scans"].items():
-            scans.append(
-                ImagingScan(
-                    id=scan_id,
-                    type=scan_dict["type"],
-                    resources={
-                        n: from_mime(d["datatype"])(d["fspaths"])
-                        for n, d in scan_dict["resources"].items()
-                    },
+        if yaml_file.exists():
+            # Load session from YAML file metadata
+            try:
+                with open(yaml_file) as f:
+                    dct = yaml.load(f, Loader=yaml.SafeLoader)
+            except Exception as e:
+                add_exc_note(
+                    e,
+                    f"Loading saved session from {yaml_file}, please check that it "
+                    "is a valid YAML file",
                 )
+                raise e
+            scans = []
+            for scan_id, scan_dict in dct["scans"].items():
+                scans.append(
+                    ImagingScan(
+                        id=scan_id,
+                        type=scan_dict["type"],
+                        resources={
+                            n: from_mime(d["datatype"])(d["fspaths"])
+                            for n, d in scan_dict["resources"].items()
+                        },
+                    )
+                )
+            dct["scans"] = scans
+            session = cls(**dct)
+        else:
+            # Load session based on directory structure
+            scans = []
+            for scan_dir in save_dir.iterdir():
+                scan_id, scan_type = scan_dir.name.split("-")
+                scan_resources = {}
+                for resource_dir in scan_dir.iterdir():
+                    scan_resources[resource_dir.name] = FileSet(resource_dir.iterdir())
+                scans.append(
+                    ImagingScan(
+                        id=scan_id,
+                        type=scan_type,
+                        resources=scan_resources,
+                    )
+                )
+            project_id = save_dir.parent.parent.name
+            subject_id = save_dir.parent.name
+            session_id = save_dir.name
+            session = cls(
+                scans=scans,
+                project_id=project_id,
+                subject_id=subject_id,
+                session_id=session_id,
             )
-        dct["scans"] = scans
-        return cls(**dct)
+        return session
 
-    def save(self, save_dir: Path):
+    def save(self, save_dir: Path) -> "ImagingSession":
         """Save the project/subject/session IDs loaded from the session to a YAML file,
         so they can be manually overridden.
 
         Parameters
         ----------
-        yaml_file : Path
-            name of the file to load the manually specified IDs from (YAML format)
+        save_dir: Path
+            the path to save the session metadata into (NB: the data is typically also
+            stored in the directory structure of the session, but this is not necessary)
+
+        Returns
+        -------
+        saved: ImagingSession
+            the saved session with the updated file-system paths
         """
         dct = attrs.asdict(self, recurse=False)
         dct["scans"] = {}
+        scans_dir = save_dir / "scans"
+        if scans_dir.exists():
+            shutil.rmtree(scans_dir)
+        scans_dir.mkdir()
+        saved = deepcopy(self)
         for scan in self.scans.values():
+            resources_dict = {}
+            for resource_name, fileset in scan.resources.items():
+                resource_dir = scans_dir / f"{scan.id}-{scan.type}" / resource_name
+                resource_dir.mkdir(parents=True)
+                fileset_copy = fileset.copy(
+                    resource_dir, mode=fileset.CopyMode.hardlink_or_copy
+                )
+                resources_dict[resource_name] = {
+                    "datatype": to_mime(fileset, official=False),
+                    "fspaths": [str(p) for p in fileset_copy.fspaths],
+                }
+                saved.scans[scan.id].resources[resource_name] = fileset_copy
             dct["scans"][scan.id] = {
                 "type": scan.type,
-                "resources": {
-                    n: {
-                        "datatype": to_mime(f, official=False),
-                        "fspaths": [str(p) for p in f.fspaths],
-                    }
-                    for n, f in scan.resources.items()
-                },
+                "resources": resources_dict,
             }
         yaml_file = save_dir / self.SAVE_FILENAME
         with open(yaml_file, "w") as f:
@@ -352,13 +408,14 @@ class ImagingSession:
                 dct,
                 f,
             )
+        return saved
 
     def stage(
         self,
         dest_dir: Path,
         associated_files: ty.Tuple[str, str],
-        delete_original: bool = False,
-        deidentify: bool = True
+        remove_original: bool = False,
+        deidentify: bool = True,
     ) -> "ImagingSession":
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
@@ -380,7 +437,7 @@ class ImagingSession:
             Used to extract the scan ID & type/resource from the associated filename. Should
             be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
             '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
-        delete_original : bool
+        remove_original : bool
             delete original files after they have been staged, false by default
         deidentify : bool
             deidentify the scans in the staging process, true by default
@@ -411,8 +468,10 @@ class ImagingSession:
                                 dicom,
                                 scan_dir
                                 / (dicom.metadata["SOPInstanceUID"] + dicom_ext),
-                                delete_original=delete_original,
+                                remove_original=remove_original,
                             )
+                        elif remove_original:
+                            staged_fspath = dicom.move(scan_dir)
                         else:
                             staged_fspath = dicom.copy(scan_dir)
                         staged_dicom_paths.append(staged_fspath)
@@ -459,9 +518,9 @@ class ImagingSession:
                     dest_path = tmpdir / new.name
                     if Dicom.matches(old):
                         self.deidentify_dicom(
-                            old, dest_path, delete_original=delete_original
+                            old, dest_path, remove_original=remove_original
                         )
-                    elif delete_original:
+                    elif remove_original:
                         old.rename(dest_path)
                     else:
                         shutil.copyfile(old, dest_path)
@@ -525,7 +584,7 @@ class ImagingSession:
                 )
             os.rmdir(tmpdir)  # Should be empty
         # Remove all references scans in original session as they have been deleted
-        if delete_original:
+        if remove_original:
             self.scans = {}
         return type(self)(
             scans=staged_scans,
@@ -535,7 +594,7 @@ class ImagingSession:
         )
 
     def deidentify_dicom(
-        self, dicom_file: Path, new_path: Path, delete_original: bool = False
+        self, dicom_file: Path, new_path: Path, remove_original: bool = False
     ) -> Path:
         if dcmedit_path:
             # Copy to new path
@@ -559,7 +618,7 @@ class ImagingSession:
                 else:
                     elem.value = ""
             dcm.save_as(new_path)
-        if delete_original:
+        if remove_original:
             os.unlink(dicom_file)
         return new_path
 
