@@ -110,13 +110,21 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
 @click.option(
-    "--aws-creds",
+    "--store-credentials",
     type=str,
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_AWS_CREDS",
+    envvar="XNAT_INGEST_STORE_CREDENTIALS",
     default=None,
     nargs=2,
-    help="AWS credentials to use for access of data stored S3 of DICOMs",
+    help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
+)
+@click.option(
+    "--work-dir",
+    type=Path,
+    default=None,
+    envvar="XNAT_INGEST_WORKDIR",
+    help="The directory to use for temporary downloads (i.e. from s3)",
+    
 )
 def upload(
     staged: str,
@@ -130,7 +138,8 @@ def upload(
     mail_server: MailServer,
     always_include: str,
     raise_errors: bool,
-    aws_creds: ty.Tuple[str, str],
+    store_credentials: ty.Tuple[str, str],
+    work_dir: ty.Optional[Path],
 ):
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
@@ -160,7 +169,7 @@ def upload(
         if staged.startswith("s3://"):
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
-                "s3", aws_access_key_id=aws_creds[0], aws_secret_access_key=aws_creds[1]
+                "s3", aws_access_key_id=store_credentials[0], aws_secret_access_key=store_credentials[1]
             )
             bucket_name, prefix = staged[5:].split("/", 1)
             bucket = s3.Bucket(bucket_name)
@@ -181,7 +190,11 @@ def upload(
 
             num_sessions = len(session_objs)
 
-            tmp_download_dir = Path(tempfile.mkdtemp())
+            if work_dir:
+                tmp_download_dir = work_dir / "xnat-ingest-download"
+                tmp_download_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                tmp_download_dir = Path(tempfile.mkdtemp())
 
             def iter_staged_sessions():
                 for ids, objs in session_objs.items():

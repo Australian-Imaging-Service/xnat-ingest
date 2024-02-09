@@ -9,7 +9,7 @@ runner = CliRunner()
 result = runner.invoke(
     upload,
     [
-        "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/staging",
+        "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGE-TEST",
     ],
     env={
         "XNAT_INGEST_HOST": "https://xnat.sydney.edu.au",
