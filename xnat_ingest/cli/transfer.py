@@ -142,7 +142,7 @@ an SSH server.
 @click.options(
     "--clean-up-older-than",
     type=int,
-    default=30,
+    default=0,
     help="The number of days to keep files in the remote store for",
 )
 def transfer(
@@ -173,14 +173,17 @@ def transfer(
     if xnat_login is not None:
         server, user, password = xnat_login
         xnat_repo = Xnat(
-            server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
+            server=server,
+            user=user,
+            password=password,
+            cache_dir=Path(tempfile.mkdtemp()),
         )
     else:
         xnat_repo = None
 
     for project in tqdm(
         list(staging_dir.iterdir()),
-        f"Transferring projects to remote store {remote_store}"
+        f"Transferring projects to remote store {remote_store}",
     ):
         if xnat_repo:
             with xnat_repo.connection:
@@ -190,38 +193,36 @@ def transfer(
                     logger.error(
                         "Project %s does not exist on XNAT. Please rename the directory "
                         "to match the project ID on XNAT",
-                        project.name
+                        project.name,
                     )
                     continue
         logger.info("Transferring project %s", project.name)
         if store_type == "s3":
             sp.check_call(
-                [
-                    "aws",
-                    "s3",
-                    "sync",
-                    str(project),
-                    remote_store + "/" + project.name
-                ]
+                ["aws", "s3", "sync", str(project), remote_store + "/" + project.name]
             )
         elif store_type == "ssh":
-            sp.check_call(
-                [
-                    "rsync",
-                    str(project),
-                    remote_store + "/" + project.name
-                ]
+            sp.check_call(["rsync", str(project), remote_store + "/" + project.name])
+        else:
+            assert False
+
+    if clean_up_older_than:
+        logger.info(
+            "Cleaning up files in %s older than %d days",
+            remote_store,
+            clean_up_older_than,
+        )
+        if store_type == "s3":
+            remove_old_files_on_s3(
+                remote_store=remote_store, threshold=clean_up_older_than
+            )
+        elif store_type == "ssh":
+            remove_old_files_on_ssh(
+                remote_store=remote_store, threshold=clean_up_older_than
             )
         else:
             assert False
 
-    if store_type == "s3":
-        remove_old_files_on_s3(remote_store=remote_store, threshold=clean_up_older_than)
-    elif store_type == "ssh":
-        remove_old_files_on_ssh(remote_store=remote_store, threshold=clean_up_older_than)
-    else:
-        assert False
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     transfer()
