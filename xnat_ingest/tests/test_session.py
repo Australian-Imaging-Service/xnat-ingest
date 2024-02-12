@@ -160,8 +160,25 @@ def test_session_select_resources(
 
 
 def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
-    imaging_session.save(tmp_path)
-    reloaded = ImagingSession.load(tmp_path)
 
-    assert reloaded is not imaging_session
-    assert reloaded == imaging_session
+    save_dir = tmp_path / imaging_session.project_id / imaging_session.subject_id / imaging_session.session_id
+    save_dir.mkdir(parents=True)
+
+    saved = imaging_session.save(save_dir)
+    reloaded = ImagingSession.load(save_dir)
+
+    assert reloaded is not saved
+    assert reloaded == saved
+
+    reloaded.save(save_dir)
+    rereloaded = ImagingSession.load(save_dir)
+
+    assert rereloaded == saved
+
+    loaded_no_manifest = ImagingSession.load(save_dir, ignore_manifest=True)
+
+    for scan in loaded_no_manifest.scans.values():
+        for key, resource in list(scan.resources.items()):
+            if key == "DICOM":
+                scan.resources[key] = DicomSeries(resource)
+    assert loaded_no_manifest == saved

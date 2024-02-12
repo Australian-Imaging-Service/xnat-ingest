@@ -6,6 +6,7 @@ import os.path
 import subprocess as sp
 from functools import cached_property
 import shutil
+from copy import deepcopy
 import yaml
 from tqdm import tqdm
 import attrs
@@ -295,7 +296,7 @@ class ImagingSession:
         return sessions
 
     @classmethod
-    def load(cls, save_dir: Path) -> "ImagingSession":
+    def load(cls, save_dir: Path, ignore_manifest: bool = False) -> "ImagingSession":
         """Override IDs extracted from DICOM metadata with manually specified IDs loaded
         from a YAML
 
@@ -310,7 +311,7 @@ class ImagingSession:
             the loaded session
         """
         yaml_file = save_dir / cls.SAVE_FILENAME
-        if yaml_file.exists():
+        if yaml_file.exists() and not ignore_manifest:
             # Load session from YAML file metadata
             try:
                 with open(yaml_file) as f:
@@ -342,6 +343,8 @@ class ImagingSession:
             # Load session based on directory structure
             scans = []
             for scan_dir in save_dir.iterdir():
+                if not scan_dir.is_dir():
+                    continue
                 scan_id, scan_type = scan_dir.name.split("-")
                 scan_resources = {}
                 for resource_dir in scan_dir.iterdir():
@@ -373,9 +376,15 @@ class ImagingSession:
         save_dir: Path
             the path to save the session metadata into (NB: the data is typically also
             stored in the directory structure of the session, but this is not necessary)
+
+        Returns
+        -------
+        saved : ImagingSession
+            a copy of the session with updated paths
         """
         dct = attrs.asdict(self, recurse=False)
         dct["scans"] = {}
+        saved = deepcopy(self)
         for scan in self.scans.values():
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
@@ -386,7 +395,7 @@ class ImagingSession:
                     fileset = fileset.copy(
                         resource_dir, mode=fileset.CopyMode.hardlink_or_copy
                     )
-                    self.scans[scan.id].resources[resource_name] = fileset
+                    saved.scans[scan.id].resources[resource_name] = fileset
                 resources_dict[resource_name] = {
                     "datatype": to_mime(fileset, official=False),
                     "fspaths": [
@@ -405,6 +414,7 @@ class ImagingSession:
                 dct,
                 f,
             )
+        return saved
 
     def stage(
         self,
