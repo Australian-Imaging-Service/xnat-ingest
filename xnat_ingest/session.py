@@ -390,6 +390,12 @@ class ImagingSession:
             for resource_name, fileset in scan.resources.items():
                 resource_dir = save_dir / f"{scan.id}-{scan.type}" / resource_name
                 # If data is not already in the save directory, copy it there
+                logger.debug(
+                    "Checking whether fileset paths %s already inside "
+                    "the save directory %s",
+                    str(fileset.parent),
+                    resource_dir,
+                )
                 if not fileset.parent.is_relative_to(resource_dir.absolute()):
                     resource_dir.mkdir(parents=True, exist_ok=True)
                     fileset = fileset.copy(
