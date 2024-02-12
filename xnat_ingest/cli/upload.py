@@ -124,7 +124,6 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     default=None,
     envvar="XNAT_INGEST_WORKDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
-    
 )
 def upload(
     staged: str,
