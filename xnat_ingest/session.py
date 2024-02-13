@@ -4,6 +4,7 @@ from glob import glob
 import logging
 import os.path
 import subprocess as sp
+from pprint import pprint
 from functools import cached_property
 import shutil
 from copy import deepcopy
@@ -601,6 +602,7 @@ class ImagingSession:
                             f"'{prev_scan_type}' for scan ID '{scan_id}'"
                         )
                 assoc_resources[resource].append(fspath)
+            pprint(assoc_scans)
             for scan_id, (scan_type, scan_resources_dict) in tqdm(
                 assoc_scans.items(), "moving associated files to staging directory"
             ):
