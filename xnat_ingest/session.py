@@ -90,9 +90,9 @@ class ImagingSession:
         return (scan["DICOM"] for scan in self.scans.values() if "DICOM" in scan)
 
     @property
-    def dicom_dir(self) -> Path:
+    def dicom_dirs(self) -> ty.List[Path]:
         "A common parent directory for all the top-level paths in the file-set"
-        return Path(os.path.commonpath(p.parent for p in self.dicoms))  # type: ignore
+        return [p.parent for p in self.dicoms]  # type: ignore
 
     def select_resources(
         self,
@@ -530,9 +530,11 @@ class ImagingSession:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
-            assoc_glob = self.dicom_dir / associated_files.glob.format(**self.metadata)
-            # Select files using the constructed glob pattern
-            associated_fspaths = [Path(p) for p in glob(str(assoc_glob))]
+            associated_fspaths = []
+            for dicom_dir in self.dicom_dirs:
+                assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
+                # Select files using the constructed glob pattern
+                associated_fspaths.extend(Path(p) for p in glob(str(assoc_glob)))
 
             logger.info(
                 "Found %s associated file paths matching '%s'",
