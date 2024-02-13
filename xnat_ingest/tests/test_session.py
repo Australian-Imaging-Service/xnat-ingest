@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from fileformats.core import from_mime
+from fileformats.core import from_mime, FileSet
 from fileformats.medimage import (
     DicomSeries,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
@@ -161,24 +161,30 @@ def test_session_select_resources(
 
 def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
 
-    save_dir = tmp_path / imaging_session.project_id / imaging_session.subject_id / imaging_session.session_id
-    save_dir.mkdir(parents=True)
+    # Save imaging sessions to a temporary directory
+    saved = imaging_session.save(tmp_path)
+    assert saved is not imaging_session
+    
 
-    saved = imaging_session.save(save_dir)
-    reloaded = ImagingSession.load(save_dir)
+    # Calculate where the session should have been saved to
+    session_dir = tmp_path.joinpath(*imaging_session.staging_relpath)
+    reloaded = ImagingSession.load(session_dir)
 
-    assert reloaded is not saved
+    # Check that reloaded session matches saved session, should match the original just
+    # the paths should be different
     assert reloaded == saved
 
-    reloaded.save(save_dir)
-    rereloaded = ImagingSession.load(save_dir)
-
+    # Save again to the same location (files shouldn't be overwritten)
+    reloaded.save(tmp_path)
+    rereloaded = ImagingSession.load(session_dir)
     assert rereloaded == saved
 
-    loaded_no_manifest = ImagingSession.load(save_dir, ignore_manifest=True)
-
+    # Load from saved directory, this time only using directory structure instead of
+    # manifest. Should be the same with the exception of the detected fileformats
+    loaded_no_manifest = ImagingSession.load(session_dir, ignore_manifest=True)
     for scan in loaded_no_manifest.scans.values():
         for key, resource in list(scan.resources.items()):
             if key == "DICOM":
+                assert isinstance(resource, FileSet)
                 scan.resources[key] = DicomSeries(resource)
     assert loaded_no_manifest == saved

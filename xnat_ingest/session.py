@@ -27,6 +27,8 @@ from arcana.core.exceptions import ArcanaDataMatchError
 from .exceptions import DicomParseError, StagingError
 from .utils import add_exc_note, transform_paths
 from .dicom import dcmedit_path
+import random
+import string
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -272,6 +274,10 @@ class ImagingSession:
                         f"{session_dicom_series}"
                     )
                 id_ = cls.id_escape_re.sub("", id_)
+                if not id_:
+                    id_ = "UNKNOWN" + "".join(
+                        random.choices(string.ascii_letters + string.digits, k=8)
+                    )
                 return id_
 
             scans = []
@@ -296,21 +302,30 @@ class ImagingSession:
         return sessions
 
     @classmethod
-    def load(cls, save_dir: Path, ignore_manifest: bool = False) -> "ImagingSession":
-        """Override IDs extracted from DICOM metadata with manually specified IDs loaded
-        from a YAML
+    def load(cls, session_dir: Path, ignore_manifest: bool = False) -> "ImagingSession":
+        """Loads a session from a directory. Assumes that the name of the directory is
+        the name of the session dir and the parent directory is the subject ID and the
+        grandparent directory is the project ID. The scan information is loaded from a YAML
+        along with the scan type, resources and fileformats. If the YAML file is not found
+        or `ignore_manifest` is set to True, the session is loaded based on the directory
+        structure.
 
         Parameters
         ----------
-        save_dir : Path
+        session_dir : Path
             the path to the directory where the session is saved
+        ignore_manifest: bool
+            load the session based on the directory structure instead of the YAML file
 
         Returns
         -------
         ImagingSession
             the loaded session
         """
-        yaml_file = save_dir / cls.SAVE_FILENAME
+        project_id = session_dir.parent.parent.name
+        subject_id = session_dir.parent.name
+        session_id = session_dir.name
+        yaml_file = session_dir / cls.MANIFEST_FILENAME
         if yaml_file.exists() and not ignore_manifest:
             # Load session from YAML file metadata
             try:
@@ -331,18 +346,24 @@ class ImagingSession:
                         type=scan_dict["type"],
                         resources={
                             n: from_mime(d["datatype"])(
-                                save_dir.joinpath(*p.split("/")) for p in d["fspaths"]
+                                session_dir.joinpath(*p.split("/"))
+                                for p in d["fspaths"]
                             )
                             for n, d in scan_dict["resources"].items()
                         },
                     )
                 )
             dct["scans"] = scans
-            session = cls(**dct)
+            session = cls(
+                project_id=project_id,
+                subject_id=subject_id,
+                session_id=session_id,
+                **dct,
+            )
         else:
             # Load session based on directory structure
             scans = []
-            for scan_dir in save_dir.iterdir():
+            for scan_dir in session_dir.iterdir():
                 if not scan_dir.is_dir():
                     continue
                 scan_id, scan_type = scan_dir.name.split("-")
@@ -356,9 +377,6 @@ class ImagingSession:
                         resources=scan_resources,
                     )
                 )
-            project_id = save_dir.parent.parent.name
-            subject_id = save_dir.parent.name
-            session_id = save_dir.name
             session = cls(
                 scans=scans,
                 project_id=project_id,
@@ -367,7 +385,7 @@ class ImagingSession:
             )
         return session
 
-    def save(self, save_dir: Path) -> "ImagingSession":
+    def save(self, save_dir: Path, just_manifest: bool = False) -> "ImagingSession":
         """Save the project/subject/session IDs loaded from the session to a YAML file,
         so they can be manually overridden.
 
@@ -376,48 +394,54 @@ class ImagingSession:
         save_dir: Path
             the path to save the session metadata into (NB: the data is typically also
             stored in the directory structure of the session, but this is not necessary)
+        just_manifest : bool, optional
+            just save the manifest file, not the data, false by default
 
         Returns
         -------
         saved : ImagingSession
             a copy of the session with updated paths
         """
-        dct = attrs.asdict(self, recurse=False)
-        dct["scans"] = {}
+        scans = {}
         saved = deepcopy(self)
+        session_dir = save_dir / self.project_id / self.subject_id / self.session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
         for scan in self.scans.values():
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
-                resource_dir = save_dir / f"{scan.id}-{scan.type}" / resource_name
-                # If data is not already in the save directory, copy it there
-                logger.debug(
-                    "Checking whether fileset paths %s already inside "
-                    "the save directory %s",
-                    str(fileset.parent),
-                    resource_dir,
+                resource_dir = (
+                    session_dir / f"{scan.id}-{scan.type}" / resource_name
                 )
-                if not fileset.parent.is_relative_to(resource_dir.absolute()):
-                    resource_dir.mkdir(parents=True, exist_ok=True)
-                    fileset = fileset.copy(
-                        resource_dir, mode=fileset.CopyMode.hardlink_or_copy
+                if not just_manifest:
+                    # If data is not already in the save directory, copy it there
+                    logger.debug(
+                        "Checking whether fileset paths %s already inside "
+                        "the save directory %s",
+                        str(fileset.parent),
+                        resource_dir,
                     )
-                    saved.scans[scan.id].resources[resource_name] = fileset
+                    if not fileset.parent.is_relative_to(resource_dir.absolute()):
+                        resource_dir.mkdir(parents=True, exist_ok=True)
+                        fileset = fileset.copy(
+                            resource_dir, mode=fileset.CopyMode.hardlink_or_copy
+                        )
+                        saved.scans[scan.id].resources[resource_name] = fileset
                 resources_dict[resource_name] = {
                     "datatype": to_mime(fileset, official=False),
                     "fspaths": [
                         # Ensure it is a relative path using POSIX forward slashes
-                        str(p.relative_to(save_dir)).replace("\\", "/")
+                        str(p.relative_to(session_dir)).replace("\\", "/")
                         for p in fileset.fspaths
                     ],
                 }
-            dct["scans"][scan.id] = {
+            scans[scan.id] = {
                 "type": scan.type,
                 "resources": resources_dict,
             }
-        yaml_file = save_dir / self.SAVE_FILENAME
+        yaml_file = session_dir / self.MANIFEST_FILENAME
         with open(yaml_file, "w") as f:
             yaml.dump(
-                dct,
+                {"scans": scans},
                 f,
             )
         return saved
@@ -425,7 +449,7 @@ class ImagingSession:
     def stage(
         self,
         dest_dir: Path,
-        associated_files: ty.Tuple[str, str],
+        associated_files: ty.Optional[ty.Tuple[str, str]] = None,
         remove_original: bool = False,
         deidentify: bool = True,
     ) -> "ImagingSession":
@@ -435,8 +459,10 @@ class ImagingSession:
         Parameters
         ----------
         dest_dir : Path
-            destination directory to save the deidentified files
-        associated_files : ty.Tuple[str, str]
+            destination directory to save the deidentified files. The session will be saved
+            to a directory with the project, subject and session IDs as subdirectories of
+            this directory, along with the scans manifest
+        associated_files : ty.Tuple[str, str], optional
             Glob pattern used to select the non-dicom files to include in the session. Note
             that the pattern is relative to the parent directory containing the DICOM files
             NOT the current working directory.
@@ -444,14 +470,14 @@ class ImagingSession:
             metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
             are substituted before the string is used to glob the non-DICOM files. In
             order to deidentify the filenames, the pattern must explicitly reference all
-            identifiable fields in string template placeholders.
+            identifiable fields in string template placeholders. By default, None
 
             Used to extract the scan ID & type/resource from the associated filename. Should
             be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
             '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
-        remove_original : bool
+        remove_original : bool, optional
             delete original files after they have been staged, false by default
-        deidentify : bool
+        deidentify : bool, optional
             deidentify the scans in the staging process, true by default
 
         Returns
@@ -466,10 +492,14 @@ class ImagingSession:
             )
         staged_scans = []
         staged_metadata = {}
-        for scan in tqdm(self.scans.values(), f"Staging DICOM sessions to {dest_dir}"):
+        session_dir = dest_dir / self.project_id / self.subject_id / self.session_id
+        session_dir.mkdir(parents=True)
+        for scan in tqdm(
+            self.scans.values(), f"Staging DICOM sessions to {session_dir}"
+        ):
             staged_resources = {}
             for resource_name, fileset in scan.resources.items():
-                scan_dir = dest_dir / f"{scan.id}-{scan.type}" / resource_name
+                scan_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
                 scan_dir.mkdir(parents=True, exist_ok=True)
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
@@ -510,7 +540,7 @@ class ImagingSession:
                 assoc_glob,
             )
 
-            tmpdir = dest_dir / ".tmp"
+            tmpdir = session_dir / ".tmp"
             tmpdir.mkdir()
 
             if deidentify:
@@ -579,7 +609,7 @@ class ImagingSession:
                             f"Conflict between existing resource and associated files "
                             f"to stage {scan_id}:{resource_name}"
                         )
-                    resource_dir = dest_dir / scan_id / resource_name
+                    resource_dir = session_dir / scan_id / resource_name
                     resource_dir.mkdir(parents=True)
                     resource_fspaths = []
                     for fspath in fspaths:
@@ -595,15 +625,17 @@ class ImagingSession:
                     )
                 )
             os.rmdir(tmpdir)  # Should be empty
-        # Remove all references scans in original session as they have been deleted
-        if remove_original:
-            self.scans = {}
-        return type(self)(
-            scans=staged_scans,
+        staged = type(self)(
             project_id=self.project_id,
             subject_id=self.subject_id,
             session_id=self.session_id,
+            scans=staged_scans,
         )
+        staged.save(dest_dir, just_manifest=True)
+        # If original scans have been moved clear the scans dictionary
+        if remove_original:
+            self.scans = {}
+        return staged
 
     def deidentify_dicom(
         self, dicom_file: Path, new_path: Path, remove_original: bool = False
@@ -706,7 +738,7 @@ class ImagingSession:
         ("5200", "9229"),  # Shared Functional Groups SQ
     ]
 
-    SAVE_FILENAME = "saved-session.yaml"
+    MANIFEST_FILENAME = "MANIFEST.yaml"
 
 
 @attrs.define
