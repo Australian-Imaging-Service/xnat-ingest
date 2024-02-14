@@ -125,6 +125,14 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     envvar="XNAT_INGEST_WORKDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
+@click.option(
+    "--use-manifest/--dont-use-manifest",
+    default=None,
+    envvar="XNAT_INGEST_REQUIRE_MANIFEST",
+    help=("Whether to use the manifest file in the staged sessions to load the "
+          "directory structure. By default it is used if present and ignore if not there"),
+    type=bool,
+)
 def upload(
     staged: str,
     server: str,
@@ -139,6 +147,7 @@ def upload(
     raise_errors: bool,
     store_credentials: ty.Tuple[str, str],
     work_dir: ty.Optional[Path],
+    use_manifest: bool,
 ):
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
@@ -235,7 +244,7 @@ def upload(
             total=num_sessions,
             desc=f"Processing staged sessions found in '{staged}'",
         ):
-            session = ImagingSession.load(session_staging_dir)
+            session = ImagingSession.load(session_staging_dir, use_manifest=use_manifest)
             try:
                 if "MR" in session.modalities:
                     SessionClass = xnat_repo.connection.classes.MrSessionData

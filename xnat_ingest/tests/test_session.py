@@ -181,7 +181,7 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
 
     # Load from saved directory, this time only using directory structure instead of
     # manifest. Should be the same with the exception of the detected fileformats
-    loaded_no_manifest = ImagingSession.load(session_dir, ignore_manifest=True)
+    loaded_no_manifest = ImagingSession.load(session_dir, use_manifest=False)
     for scan in loaded_no_manifest.scans.values():
         for key, resource in list(scan.resources.items()):
             if key == "DICOM":

@@ -4,7 +4,6 @@ from glob import glob
 import logging
 import os.path
 import subprocess as sp
-from pprint import pprint
 from functools import cached_property
 import shutil
 from copy import deepcopy
@@ -233,7 +232,7 @@ class ImagingSession:
             else:
                 dicom_fspaths = [dicoms_path]
         else:
-            dicom_fspaths = [Path(p) for p in glob(dicoms_path)]
+            dicom_fspaths = [Path(p) for p in glob(dicoms_path, recursive=True)]
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info("Loading DICOM series from %s", str(dicoms_path))
@@ -303,20 +302,23 @@ class ImagingSession:
         return sessions
 
     @classmethod
-    def load(cls, session_dir: Path, ignore_manifest: bool = False) -> "ImagingSession":
+    def load(cls, session_dir: Path, use_manifest: ty.Optional[bool] = None) -> "ImagingSession":
         """Loads a session from a directory. Assumes that the name of the directory is
         the name of the session dir and the parent directory is the subject ID and the
         grandparent directory is the project ID. The scan information is loaded from a YAML
         along with the scan type, resources and fileformats. If the YAML file is not found
-        or `ignore_manifest` is set to True, the session is loaded based on the directory
+        or `use_manifest` is set to True, the session is loaded based on the directory
         structure.
 
         Parameters
         ----------
         session_dir : Path
             the path to the directory where the session is saved
-        ignore_manifest: bool
-            load the session based on the directory structure instead of the YAML file
+        use_manifest: bool, optional
+            determines whether to load the session based on YAML manifest or to infer
+            it from the directory structure. If True the manifest is expected and an error
+            will be raised if it isn't present, if False the manifest is ignored and if
+            None the manifest is used if present, otherwise the directory structure is used.
 
         Returns
         -------
@@ -327,7 +329,7 @@ class ImagingSession:
         subject_id = session_dir.parent.name
         session_id = session_dir.name
         yaml_file = session_dir / cls.MANIFEST_FILENAME
-        if yaml_file.exists() and not ignore_manifest:
+        if yaml_file.exists() and use_manifest is not False:
             # Load session from YAML file metadata
             try:
                 with open(yaml_file) as f:
@@ -361,7 +363,7 @@ class ImagingSession:
                 session_id=session_id,
                 **dct,
             )
-        else:
+        elif use_manifest is not True:
             # Load session based on directory structure
             scans = []
             for scan_dir in session_dir.iterdir():
@@ -383,6 +385,12 @@ class ImagingSession:
                 project_id=project_id,
                 subject_id=subject_id,
                 session_id=session_id,
+            )
+        else:
+            raise FileNotFoundError(
+                f"Did not find manifest file '{yaml_file}' in session directory "
+                f"{session_dir}. If you want to fallback to load the session based on "
+                "the directory structure instead, set `use_manifest` to None."
             )
         return session
 
@@ -537,7 +545,7 @@ class ImagingSession:
             for dicom_dir in self.dicom_dirs:
                 assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
                 # Select files using the constructed glob pattern
-                associated_fspaths.update(Path(p) for p in glob(str(assoc_glob)))
+                associated_fspaths.update(Path(p) for p in glob(str(assoc_glob), recursive=True))
 
             logger.info(
                 "Found %s associated file paths matching '%s'",
@@ -568,8 +576,10 @@ class ImagingSession:
                             old, dest_path, remove_original=remove_original
                         )
                     elif remove_original:
+                        logger.debug("Moving %s to %s", old, dest_path)
                         old.rename(dest_path)
                     else:
+                        logger.debug("Copying %s to %s", old, dest_path)
                         shutil.copyfile(old, dest_path)
                     staged_associated_fspaths.append(dest_path)
             else:
@@ -604,7 +614,6 @@ class ImagingSession:
                             f"'{prev_scan_type}' for scan ID '{scan_id}'"
                         )
                 assoc_resources[resource].append(fspath)
-            pprint(assoc_scans)
             for scan_id, (scan_type, scan_resources_dict) in tqdm(
                 assoc_scans.items(), "moving associated files to staging directory"
             ):
