@@ -405,14 +405,14 @@ class ImagingSession:
         """
         scans = {}
         saved = deepcopy(self)
-        session_dir = save_dir / self.project_id / self.subject_id / self.session_id
+        session_dir = (
+            save_dir / self.project_id / self.subject_id / self.session_id
+        ).absolute()
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in self.scans.values():
             resources_dict = {}
             for resource_name, fileset in scan.resources.items():
-                resource_dir = (
-                    session_dir / f"{scan.id}-{scan.type}" / resource_name
-                )
+                resource_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
                 if not just_manifest:
                     # If data is not already in the save directory, copy it there
                     logger.debug(
@@ -421,7 +421,9 @@ class ImagingSession:
                         str(fileset.parent),
                         resource_dir,
                     )
-                    if not fileset.parent.is_relative_to(resource_dir.absolute()):
+                    if not fileset.parent.absolute().is_relative_to(
+                        resource_dir.absolute()
+                    ):
                         resource_dir.mkdir(parents=True, exist_ok=True)
                         fileset = fileset.copy(
                             resource_dir, mode=fileset.CopyMode.hardlink_or_copy
@@ -431,7 +433,7 @@ class ImagingSession:
                     "datatype": to_mime(fileset, official=False),
                     "fspaths": [
                         # Ensure it is a relative path using POSIX forward slashes
-                        str(p.relative_to(session_dir)).replace("\\", "/")
+                        str(p.absolute().relative_to(session_dir)).replace("\\", "/")
                         for p in fileset.fspaths
                     ],
                 }
