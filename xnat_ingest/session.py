@@ -531,11 +531,11 @@ class ImagingSession:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
-            associated_fspaths = []
+            associated_fspaths = set()
             for dicom_dir in self.dicom_dirs:
                 assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
                 # Select files using the constructed glob pattern
-                associated_fspaths.extend(Path(p) for p in glob(str(assoc_glob)))
+                associated_fspaths.update(Path(p) for p in glob(str(assoc_glob)))
 
             logger.info(
                 "Found %s associated file paths matching '%s'",
