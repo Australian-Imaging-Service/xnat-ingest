@@ -81,7 +81,7 @@ an SSH server.
 @click.argument("staging_dir", type=str)
 @click.argument("remote_store", type=str, envvar="XNAT_INGEST_REMOTE_STORE")
 @click.option(
-    "--credentials",
+    "--store-credentials",
     type=str,
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_STORE_CREDENTIALS",
