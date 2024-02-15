@@ -95,12 +95,16 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--always-include",
     "-i",
-    default=None,
-    type=click.Choice(("all", "dicom", "associated"), case_sensitive=False),
+    default=(),
+    type=str,
+    multiple=True,
     envvar="XNAT_INGEST_ALWAYSINCLUDE",
     help=(
-        "Whether to include scans in the upload regardless of whether they are "
-        "specified in a column or not"
+        "Scan types to always include in the upload, regardless of whether they are"
+        "specified in a column or not. Specified using the scan types IANA mime-type or "
+        "fileformats \"mime-like\" (see https://arcanaframework.github.io/fileformats/), "
+        "e.g. 'application/json', 'medimage/dicom-series', "
+        "'image/jpeg'). Use 'core/file-set' to include all file-types in the session"
     ),
 )
 @click.option(
@@ -145,7 +149,7 @@ def upload(
     log_file: Path,
     log_emails: LogEmail,
     mail_server: MailServer,
-    always_include: str,
+    always_include: ty.Sequence[str],
     raise_errors: bool,
     store_credentials: ty.Tuple[str, str],
     work_dir: ty.Optional[Path],
@@ -275,6 +279,18 @@ def upload(
 
                 # Create corresponding session on XNAT
                 xproject = xnat_repo.connection.projects[session.project_id]
+
+                # Access Arcana dataset associated with project
+                try:
+                    dataset = Dataset.load(session.project_id, xnat_repo)
+                except Exception as e:
+                    logger.warning(
+                        e,
+                        f"Did not load dataset definition from {session.project_id} project "
+                        f"on {server}. Only the scan types specified in --always-include",
+                    )
+                    dataset = None
+
                 xsubject = xnat_repo.connection.classes.SubjectData(
                     label=session.subject_id, parent=xproject
                 )
@@ -296,19 +312,6 @@ def upload(
                 session_path = (
                     f"{session.project_id}:{session.subject_id}:{session.visit_id}"
                 )
-
-                # Access Arcana dataset associated with project
-                try:
-                    dataset = Dataset.load(session.project_id, xnat_repo)
-                except Exception as e:
-                    add_exc_note(
-                        e,
-                        f"Did not load dataset definition from {session.project_id} project "
-                        f"on {server}. Please set one up using the Arcana command line tool "
-                        "in order to check presence of required scans and associated "
-                        "files (e.g. raw-data exports)",
-                    )
-                    raise e
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:

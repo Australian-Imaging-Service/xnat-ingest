@@ -104,8 +104,8 @@ class ImagingSession:
 
     def select_resources(
         self,
-        dataset: Dataset,
-        always_include: ty.Optional[str] = None,
+        dataset: ty.Optional[Dataset],
+        always_include: ty.Sequence[str] = (),
     ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -113,10 +113,10 @@ class ImagingSession:
         ----------
         dataset : Dataset
             Arcana dataset definition
-        always_include : str, optional
-            whether to scans regardless of whether they are explicitly
-            specified by a column in the dataset or not. Valid options are
-            'all', 'dicoms', 'associated'
+        always_include : sequence[str]
+            mime-types or "mime-like" (see https://arcanaframework.github.io/fileformats/)
+            of file-format to always include in the upload, regardless of whether they are
+            specified in the dataset or not
 
         Yields
         ------
@@ -132,16 +132,11 @@ class ImagingSession:
         store = MockDataStore(self)
 
         uploaded = set()
-        if always_include:
+        for mime_like in always_include:
+            fileformat = from_mime(mime_like)
             for scan in self.scans.values():
                 for resource_name, fileset in scan.resources.items():
-                    if (
-                        always_include == "all"
-                        or always_include == "dicom"
-                        and resource_name == "DICOM"
-                        or always_include == "associated"
-                        and resource_name != "DICOM"
-                    ):
+                    if isinstance(fileset, fileformat):
                         uploaded.add((scan.id, resource_name))
                         yield scan.id, scan.type, resource_name, fileset
         for column in dataset.columns.values():
