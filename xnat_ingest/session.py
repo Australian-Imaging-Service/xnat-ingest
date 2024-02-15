@@ -129,6 +129,11 @@ class ImagingSession:
         scan : FileSet
             a fileset to upload
         """
+        if not dataset and not always_include:
+            raise ValueError(
+                "Either 'dataset' or 'always_include' must be specified to select "
+                f"appropriate resources to upload from {self.name} session"
+            )
         store = MockDataStore(self)
 
         uploaded = set()
@@ -139,29 +144,30 @@ class ImagingSession:
                     if isinstance(fileset, fileformat):
                         uploaded.add((scan.id, resource_name))
                         yield scan.id, scan.type, resource_name, fileset
-        for column in dataset.columns.values():
-            try:
-                entry = column.match_entry(store.row)
-            except ArcanaDataMatchError as e:
-                raise StagingError(
-                    f"Did not find matching entry for {column} column in {dataset} from "
-                    f"{self.name} session"
-                ) from e
-            else:
-                scan_id, resource_name = entry.uri
-                scan = self.scans[scan_id]
-                if (scan.id, resource_name) in uploaded:
-                    logger.info(
-                        "%s/%s resource is already uploaded as 'always_include' is set to "
-                        "%s and doesn't need to be explicitly specified",
-                        scan.id,
-                        resource_name,
-                        always_include,
-                    )
-                    continue
-                fileset = column.datatype(scan.resources[resource_name])
-                uploaded.add((scan.id, resource_name))
-            yield scan_id, scan.type, entry.uri[1], column.datatype(entry.item)
+        if dataset is not None:
+            for column in dataset.columns.values():
+                try:
+                    entry = column.match_entry(store.row)
+                except ArcanaDataMatchError as e:
+                    raise StagingError(
+                        f"Did not find matching entry for {column} column in {dataset} from "
+                        f"{self.name} session"
+                    ) from e
+                else:
+                    scan_id, resource_name = entry.uri
+                    scan = self.scans[scan_id]
+                    if (scan.id, resource_name) in uploaded:
+                        logger.info(
+                            "%s/%s resource is already uploaded as 'always_include' is set to "
+                            "%s and doesn't need to be explicitly specified",
+                            scan.id,
+                            resource_name,
+                            always_include,
+                        )
+                        continue
+                    fileset = column.datatype(scan.resources[resource_name])
+                    uploaded.add((scan.id, resource_name))
+                yield scan_id, scan.type, entry.uri[1], column.datatype(entry.item)
 
     @cached_property
     def metadata(self):
@@ -308,7 +314,9 @@ class ImagingSession:
         return sessions
 
     @classmethod
-    def load(cls, session_dir: Path, use_manifest: ty.Optional[bool] = None) -> "ImagingSession":
+    def load(
+        cls, session_dir: Path, use_manifest: ty.Optional[bool] = None
+    ) -> "ImagingSession":
         """Loads a session from a directory. Assumes that the name of the directory is
         the name of the session dir and the parent directory is the subject ID and the
         grandparent directory is the project ID. The scan information is loaded from a YAML
@@ -551,7 +559,9 @@ class ImagingSession:
             for dicom_dir in self.dicom_dirs:
                 assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
                 # Select files using the constructed glob pattern
-                associated_fspaths.update(Path(p) for p in glob(str(assoc_glob), recursive=True))
+                associated_fspaths.update(
+                    Path(p) for p in glob(str(assoc_glob), recursive=True)
+                )
 
             logger.info(
                 "Found %s associated file paths matching '%s'",
