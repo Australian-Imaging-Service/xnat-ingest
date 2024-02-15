@@ -266,6 +266,7 @@ def transfer(
                             "aws",
                             "s3",
                             "sync",
+                            "--quiet",
                             str(session_dir),
                             remote_path,
                         ]
@@ -274,7 +275,7 @@ def transfer(
                     logger.debug(
                         "Transferring %s to %s via SSH", session_dir, remote_store
                     )
-                    sp.check_call(["rsync", str(session_dir), remote_path])
+                    sp.check_call(["rsync", "--quiet", str(session_dir), remote_path])
                 else:
                     assert False
                 if delete:
