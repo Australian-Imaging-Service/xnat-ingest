@@ -282,10 +282,13 @@ class ImagingSession:
 
             scans = []
             for dicom_series in session_dicom_series:
+                series_description = dicom_series["SeriesDescription"]
+                if isinstance(series_description, list):
+                    series_description = series_description[0]
                 scans.append(
                     ImagingScan(
                         id=str(dicom_series["SeriesNumber"]),
-                        type=str(dicom_series["SeriesDescription"]),
+                        type=str(series_description),
                         resources={"DICOM": dicom_series},
                     )
                 )
