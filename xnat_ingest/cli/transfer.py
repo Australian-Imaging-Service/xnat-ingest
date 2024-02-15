@@ -90,6 +90,13 @@ an SSH server.
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
 )
 @click.option(
+    "--log-level",
+    default="info",
+    type=str,
+    envvar="XNAT_INGEST_LOGLEVEL",
+    help=("The level of the logging printed to stdout"),
+)
+@click.option(
     "--log-file",
     default=None,
     type=LogFile(),
@@ -149,6 +156,7 @@ an SSH server.
 @click.option(
     "--clean-up-older-than",
     type=int,
+    metavar="<days>",
     default=0,
     help="The number of days to keep files in the remote store for",
 )
