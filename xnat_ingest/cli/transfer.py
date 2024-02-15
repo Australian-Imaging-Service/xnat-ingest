@@ -146,7 +146,7 @@ an SSH server.
     help="The XNAT server to upload to plus the user and password to use",
     envvar="XNAT_INGEST_XNAT_LOGIN",
 )
-@click.options(
+@click.option(
     "--clean-up-older-than",
     type=int,
     default=0,
