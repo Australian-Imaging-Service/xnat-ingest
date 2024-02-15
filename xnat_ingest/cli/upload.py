@@ -187,12 +187,13 @@ def upload(
             )
             bucket_name, prefix = staged[5:].split("/", 1)
             bucket = s3.Bucket(bucket_name)
-            prefix = prefix.rstrip("/") + "/"  # Ensure prefix ends with '/'
+            if not prefix.endswith("/"):
+                prefix += "/"
             all_objects = bucket.objects.filter(Prefix=prefix)
             session_objs = defaultdict(list)
             for obj in all_objects:
                 if obj.key.endswith("/"):
-                    continue
+                    continue  # skip directories
                 path_parts = obj.key[len(prefix) :].split("/")
                 session_ids = tuple(path_parts[:3])
                 session_objs[session_ids].append((path_parts[3:], obj))
