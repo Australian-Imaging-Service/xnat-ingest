@@ -2,6 +2,7 @@ import subprocess as sp
 import typing as ty
 from pathlib import Path
 import tempfile
+import shutil
 import click
 from tqdm import tqdm
 from arcana.xnat import Xnat
@@ -125,6 +126,12 @@ an SSH server.
     ),
 )
 @click.option(
+    "--delete/--dont-delete",
+    default=False,
+    envvar="XNAT_INGEST_DELETE",
+    help="Whether to delete the session directories after they have been uploaded or not",
+)
+@click.option(
     "--raise-errors/--dont-raise-errors",
     default=False,
     type=bool,
@@ -153,6 +160,7 @@ def transfer(
     log_level: str,
     log_emails: ty.List[ty.Tuple[str, str, str]],
     mail_server: ty.Tuple[str, str, str, str],
+    delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[ty.Tuple[str, str, str]],
     clean_up_older_than: int,
@@ -181,30 +189,85 @@ def transfer(
     else:
         xnat_repo = None
 
-    for project in tqdm(
+    for project_dir in tqdm(
         list(staging_dir.iterdir()),
         f"Transferring projects to remote store {remote_store}",
     ):
+        if project_dir.name.startswith("UNKNOWN"):
+            logger.error(
+                "Project %s is not recognised and will not be transferred, please "
+                "rename manually and transfer again",
+                project_dir.name,
+            )
+            continue
         if xnat_repo:
             with xnat_repo.connection:
                 try:
-                    xnat_repo.connection.projects[project.name]
+                    xnat_repo.connection.projects[project_dir.name]
                 except KeyError:
                     logger.error(
                         "Project %s does not exist on XNAT. Please rename the directory "
                         "to match the project ID on XNAT",
-                        project.name,
+                        project_dir.name,
                     )
                     continue
-        logger.info("Transferring project %s", project.name)
-        if store_type == "s3":
-            sp.check_call(
-                ["aws", "s3", "sync", str(project), remote_store + "/" + project.name]
-            )
-        elif store_type == "ssh":
-            sp.check_call(["rsync", str(project), remote_store + "/" + project.name])
-        else:
-            assert False
+        for subject_dir in tqdm(
+            list(project_dir.iterdir()),
+            f"Transferring subjects for {project_dir.name} project",
+        ):
+            if subject_dir.name.startswith("UNKNOWN"):
+                logger.error(
+                    "Subject % in project %s is not recognised and will not be "
+                    "transferred, please rename manually and transfer again",
+                    subject_dir.name,
+                    project_dir.name,
+                )
+                continue
+            for session_dir in tqdm(
+                list(subject_dir.iterdir()),
+                f"Transferring sessions for {project_dir.name}:{subject_dir.name} subject",
+            ):
+                if session_dir.name.startswith("UNKNOWN"):
+                    logger.error(
+                        "Session % in subject %s in project %s is not recognised and "
+                        "will not be transferred, please rename manually and transfer again",
+                        session_dir.name,
+                        subject_dir.name,
+                        project_dir.name,
+                    )
+                    continue
+                remote_path = (
+                    remote_store
+                    + "/"
+                    + project_dir.name
+                    + "/"
+                    + subject_dir.name
+                    + "/"
+                    + session_dir.name
+                )
+                if store_type == "s3":
+                    logger.debug(
+                        "Transferring %s to S3 (%s)", session_dir, remote_store
+                    )
+                    sp.check_call(
+                        [
+                            "aws",
+                            "s3",
+                            "sync",
+                            str(session_dir),
+                            remote_path,
+                        ]
+                    )
+                elif store_type == "ssh":
+                    logger.debug(
+                        "Transferring %s to %s via SSH", session_dir, remote_store
+                    )
+                    sp.check_call(["rsync", str(session_dir), remote_path])
+                else:
+                    assert False
+                if delete:
+                    logger.info("Deleting %s after successful upload", session_dir)
+                    shutil.rmtree(session_dir)
 
     if clean_up_older_than:
         logger.info(
