@@ -14,7 +14,6 @@ from .base import cli
 from ..session import ImagingSession
 from ..utils import (
     logger,
-    add_exc_note,
     LogFile,
     LogEmail,
     MailServer,
@@ -102,7 +101,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     help=(
         "Scan types to always include in the upload, regardless of whether they are"
         "specified in a column or not. Specified using the scan types IANA mime-type or "
-        "fileformats \"mime-like\" (see https://arcanaframework.github.io/fileformats/), "
+        'fileformats "mime-like" (see https://arcanaframework.github.io/fileformats/), '
         "e.g. 'application/json', 'medimage/dicom-series', "
         "'image/jpeg'). Use 'all' to include all file-types in the session"
     ),
@@ -123,7 +122,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
 )
 @click.option(
-    "--work-dir",
+    "--temp-dir",
     type=Path,
     default=None,
     envvar="XNAT_INGEST_WORKDIR",
@@ -152,11 +151,14 @@ def upload(
     always_include: ty.Sequence[str],
     raise_errors: bool,
     store_credentials: ty.Tuple[str, str],
-    work_dir: ty.Optional[Path],
+    temp_dir: ty.Optional[Path],
     use_manifest: bool,
 ):
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
+
+    if temp_dir:
+        tempfile.tempdir = str(temp_dir)
 
     xnat_repo = Xnat(
         server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
@@ -210,8 +212,8 @@ def upload(
 
             num_sessions = len(session_objs)
 
-            if work_dir:
-                tmp_download_dir = work_dir / "xnat-ingest-download"
+            if temp_dir:
+                tmp_download_dir = temp_dir / "xnat-ingest-download"
                 tmp_download_dir.mkdir(parents=True, exist_ok=True)
             else:
                 tmp_download_dir = Path(tempfile.mkdtemp())
@@ -285,9 +287,11 @@ def upload(
                     dataset = Dataset.load(session.project_id, xnat_repo)
                 except Exception as e:
                     logger.warning(
+                        "Did not load dataset definition (%s) from %s project "
+                        "on %s. Only the scan types specified in --always-include",
                         e,
-                        f"Did not load dataset definition from {session.project_id} project "
-                        f"on {server}. Only the scan types specified in --always-include",
+                        session.project_id,
+                        server,
                     )
                     dataset = None
 
@@ -321,9 +325,11 @@ def upload(
                     )
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
-                    session.select_resources(
-                        dataset,
-                        always_include=always_include,
+                    list(
+                        session.select_resources(
+                            dataset,
+                            always_include=always_include,
+                        )
                     ),
                     f"Uploading scans found in {session.name}",
                 ):

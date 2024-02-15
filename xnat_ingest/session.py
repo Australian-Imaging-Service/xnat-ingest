@@ -14,6 +14,7 @@ from itertools import chain
 from collections import defaultdict
 from pathlib import Path
 import pydicom
+from fileformats.generic import File
 from fileformats.application import Dicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet, DataType, from_mime, to_mime
@@ -656,7 +657,8 @@ class ImagingSession:
                         else:
                             shutil.copyfile(fspath, dest_path)
                         resource_fspaths.append(dest_path)
-                    scan_resources[resource_name] = FileSet(resource_fspaths)
+                    format_type = File if len(fspaths) == 1 else FileSet
+                    scan_resources[resource_name] = format_type(resource_fspaths)
                 staged_scans.append(
                     ImagingScan(
                         id=scan_id,
