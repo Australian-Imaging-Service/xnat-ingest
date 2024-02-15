@@ -164,7 +164,6 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
     # Save imaging sessions to a temporary directory
     saved = imaging_session.save(tmp_path)
     assert saved is not imaging_session
-    
 
     # Calculate where the session should have been saved to
     session_dir = tmp_path.joinpath(*imaging_session.staging_relpath)

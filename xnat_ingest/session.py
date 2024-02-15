@@ -629,7 +629,13 @@ class ImagingSession:
                     resource_fspaths = []
                     for fspath in fspaths:
                         dest_path = resource_dir / fspath.name
-                        fspath.rename(dest_path)
+                        if remove_original or deidentify:
+                            # If deidentify is True then the files will have been copied
+                            # to a temp folder and we can just rename them to their
+                            # final destination
+                            fspath.rename(dest_path)
+                        else:
+                            shutil.copyfile(fspath, dest_path)
                         resource_fspaths.append(dest_path)
                     scan_resources[resource_name] = FileSet(resource_fspaths)
                 staged_scans.append(

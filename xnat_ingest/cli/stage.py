@@ -166,6 +166,8 @@ def stage(
 
     if associated_files:
         msg += f" with associated files selected from '{associated_files.glob}'"
+        if not associated_files.glob.startswith("/"):
+            msg += " (relative to the directories in which the DICOMs are found)"
 
     logger.info(msg)
 
