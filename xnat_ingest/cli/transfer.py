@@ -174,6 +174,10 @@ def transfer(
     clean_up_older_than: int,
 ):
 
+    staging_dir = Path(staging_dir)
+    if not staging_dir.exists():
+        raise ValueError(f"Staging directory '{staging_dir}' does not exist")
+
     set_logger_handling(log_level, log_file, log_emails, mail_server)
 
     if remote_store.startswith("s3://"):
