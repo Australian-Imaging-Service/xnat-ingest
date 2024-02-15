@@ -57,7 +57,7 @@ def test_stage_and_upload(
         os.unlink(log_file)
 
     # Delete any existing sessions from previous test runs
-    session_ids = []
+    visit_ids = []
     with xnat4tests.connect() as xnat_login:
         for i, c in enumerate("abc"):
             first_name = f"First{c.upper()}"
@@ -65,7 +65,7 @@ def test_stage_and_upload(
             PatientName = f"{first_name}^{last_name}"
             PatientID = f"subject{i}"
             AccessionNumber = f"98765432{i}"
-            session_ids.append(AccessionNumber)
+            visit_ids.append(AccessionNumber)
 
             StudyInstanceUID = (
                 f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
@@ -227,8 +227,8 @@ def test_stage_and_upload(
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[xnat_project]
-        for session_id in session_ids:
-            xsession = xproject.experiments[session_id]
+        for visit_id in visit_ids:
+            xsession = xproject.experiments[visit_id]
             scan_ids = sorted(xsession.scans)
 
             assert scan_ids == [

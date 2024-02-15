@@ -52,7 +52,7 @@ def imaging_session() -> ImagingSession:
     return ImagingSession(
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        visit_id="SESSIONID",
         scans=scans,
     )
 

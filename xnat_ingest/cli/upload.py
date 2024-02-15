@@ -129,8 +129,10 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--use-manifest/--dont-use-manifest",
     default=None,
     envvar="XNAT_INGEST_REQUIRE_MANIFEST",
-    help=("Whether to use the manifest file in the staged sessions to load the "
-          "directory structure. By default it is used if present and ignore if not there"),
+    help=(
+        "Whether to use the manifest file in the staged sessions to load the "
+        "directory structure. By default it is used if present and ignore if not there"
+    ),
     type=bool,
 )
 def upload(
@@ -158,11 +160,13 @@ def upload(
 
     with xnat_repo.connection:
 
-        def xnat_session_exists(project_id, subject_id, session_id):
+        def xnat_session_exists(project_id, subject_id, visit_id):
             try:
                 xnat_repo.connection.projects[project_id].subjects[
                     subject_id
-                ].experiments[session_id]
+                ].experiments[
+                    ImagingSession.make_session_id(project_id, subject_id, visit_id)
+                ]
             except KeyError:
                 return False
             else:
@@ -170,14 +174,16 @@ def upload(
                     "Skipping session '%s-%s-%s' as it already exists on XNAT",
                     project_id,
                     subject_id,
-                    session_id,
+                    visit_id,
                 )
                 return True
 
         if staged.startswith("s3://"):
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
-                "s3", aws_access_key_id=store_credentials[0], aws_secret_access_key=store_credentials[1]
+                "s3",
+                aws_access_key_id=store_credentials[0],
+                aws_secret_access_key=store_credentials[1],
             )
             bucket_name, prefix = staged[5:].split("/", 1)
             bucket = s3.Bucket(bucket_name)
@@ -186,7 +192,7 @@ def upload(
             for obj in all_objects:
                 if obj.key.endswith("/"):
                     continue
-                path_parts = obj.key[len(prefix):].split("/")
+                path_parts = obj.key[len(prefix) :].split("/")
                 session_ids = tuple(path_parts[:3])
                 session_objs[session_ids].append((path_parts[3:], obj))
 
@@ -212,7 +218,7 @@ def upload(
                     session_tmp_dir.mkdir(parents=True, exist_ok=True)
                     for relpath, obj in tqdm(
                         objs,
-                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket"
+                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
                     ):
                         obj_path = session_tmp_dir.joinpath(*relpath)
                         obj_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,14 +243,18 @@ def upload(
                         ):
                             sessions.append(session_dir)
             num_sessions = len(sessions)
-            logger.info("Found %d sessions in staging directory '%s'", num_sessions, staged)
+            logger.info(
+                "Found %d sessions in staging directory '%s'", num_sessions, staged
+            )
 
         for session_staging_dir in tqdm(
             sessions,
             total=num_sessions,
             desc=f"Processing staged sessions found in '{staged}'",
         ):
-            session = ImagingSession.load(session_staging_dir, use_manifest=use_manifest)
+            session = ImagingSession.load(
+                session_staging_dir, use_manifest=use_manifest
+            )
             try:
                 if "MR" in session.modalities:
                     SessionClass = xnat_repo.connection.classes.MrSessionData
@@ -282,7 +292,7 @@ def upload(
                         )
                     xsession = SessionClass(label=session.session_id, parent=xsubject)
                 session_path = (
-                    f"{session.project_id}:{session.subject_id}:{session.session_id}"
+                    f"{session.project_id}:{session.subject_id}:{session.visit_id}"
                 )
 
                 # Access Arcana dataset associated with project

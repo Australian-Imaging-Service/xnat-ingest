@@ -58,7 +58,7 @@ def scans_converter(
 class ImagingSession:
     project_id: str
     subject_id: str
-    session_id: str
+    visit_id: str
     scans: ty.Dict[str, ImagingScan] = attrs.field(
         factory=dict,
         converter=scans_converter,
@@ -72,11 +72,19 @@ class ImagingSession:
 
     @property
     def name(self):
-        return f"{self.project_id}-{self.subject_id}-{self.session_id}"
+        return f"{self.project_id}-{self.subject_id}-{self.visit_id}"
 
     @property
     def staging_relpath(self):
-        return [self.project_id, self.subject_id, self.session_id]
+        return [self.project_id, self.subject_id, self.visit_id]
+
+    @property
+    def session_id(self):
+        return self.make_session_id(self.project_id, self.subject_id, self.visit_id)
+
+    @classmethod
+    def make_session_id(cls, project_id, subject_id, visit_id):
+        return f"{subject_id}_{visit_id}"
 
     @cached_property
     def modalities(self) -> ty.Set[str]:
@@ -189,7 +197,7 @@ class ImagingSession:
         dicoms_path: str | Path,
         project_field: str = "StudyID",
         subject_field: str = "PatientID",
-        session_field: str = "AccessionNumber",
+        visit_field: str = "AccessionNumber",
         project_id: str | None = None,
     ) -> ty.List["ImagingSession"]:
         """Loads all imaging sessions from a list of DICOM files
@@ -205,7 +213,7 @@ class ImagingSession:
         subject_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
-        session_field : str
+        visit_field : str
             the name of the DICOM field that is to be interpreted as the corresponding
             XNAT project
         project_id : str
@@ -248,7 +256,7 @@ class ImagingSession:
                 "SOPInstanceUID",  # used in ordering the contents of the dicom series
                 project_field.keyword,
                 subject_field.keyword,
-                session_field.keyword,
+                visit_field.keyword,
             ],
         ):
             # Restrict the metadata fields that are loaded (others are ignored),
@@ -298,7 +306,7 @@ class ImagingSession:
                     scans=scans,
                     project_id=(project_id if project_id else get_id(project_field)),
                     subject_id=get_id(subject_field),
-                    session_id=get_id(session_field),
+                    visit_id=get_id(visit_field),
                 )
             )
 
@@ -330,7 +338,7 @@ class ImagingSession:
         """
         project_id = session_dir.parent.parent.name
         subject_id = session_dir.parent.name
-        session_id = session_dir.name
+        visit_id = session_dir.name
         yaml_file = session_dir / cls.MANIFEST_FILENAME
         if yaml_file.exists() and use_manifest is not False:
             # Load session from YAML file metadata
@@ -363,7 +371,7 @@ class ImagingSession:
             session = cls(
                 project_id=project_id,
                 subject_id=subject_id,
-                session_id=session_id,
+                visit_id=visit_id,
                 **dct,
             )
         elif use_manifest is not True:
@@ -387,7 +395,7 @@ class ImagingSession:
                 scans=scans,
                 project_id=project_id,
                 subject_id=subject_id,
-                session_id=session_id,
+                visit_id=visit_id,
             )
         else:
             raise FileNotFoundError(
@@ -417,7 +425,7 @@ class ImagingSession:
         scans = {}
         saved = deepcopy(self)
         session_dir = (
-            save_dir / self.project_id / self.subject_id / self.session_id
+            save_dir / self.project_id / self.subject_id / self.visit_id
         ).absolute()
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in self.scans.values():
@@ -506,7 +514,7 @@ class ImagingSession:
             )
         staged_scans = []
         staged_metadata = {}
-        session_dir = dest_dir / self.project_id / self.subject_id / self.session_id
+        session_dir = dest_dir / self.project_id / self.subject_id / self.visit_id
         session_dir.mkdir(parents=True)
         for scan in tqdm(
             self.scans.values(), f"Staging DICOM sessions to {session_dir}"
@@ -652,7 +660,7 @@ class ImagingSession:
         staged = type(self)(
             project_id=self.project_id,
             subject_id=self.subject_id,
-            session_id=self.session_id,
+            visit_id=self.visit_id,
             scans=staged_scans,
         )
         staged.save(dest_dir, just_manifest=True)

@@ -150,7 +150,7 @@ def stage(
     associated_files: AssociatedFiles,
     project_field: str,
     subject_field: str,
-    session_field: str,
+    visit_field: str,
     project_id: str | None,
     delete: bool,
     log_level: str,
@@ -175,7 +175,7 @@ def stage(
         dicoms_path=dicoms_path,
         project_field=project_field,
         subject_field=subject_field,
-        session_field=session_field,
+        visit_field=visit_field,
         project_id=project_id,
     )
 
