@@ -138,7 +138,10 @@ class ImagingSession:
 
         uploaded = set()
         for mime_like in always_include:
-            fileformat = from_mime(mime_like)
+            if mime_like == "all":
+                fileformat = FileSet
+            else:
+                fileformat = from_mime(mime_like)
             for scan in self.scans.values():
                 for resource_name, fileset in scan.resources.items():
                     if isinstance(fileset, fileformat):

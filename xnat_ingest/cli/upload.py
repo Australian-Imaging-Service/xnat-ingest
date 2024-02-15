@@ -104,7 +104,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
         "specified in a column or not. Specified using the scan types IANA mime-type or "
         "fileformats \"mime-like\" (see https://arcanaframework.github.io/fileformats/), "
         "e.g. 'application/json', 'medimage/dicom-series', "
-        "'image/jpeg'). Use 'core/file-set' to include all file-types in the session"
+        "'image/jpeg'). Use 'all' to include all file-types in the session"
     ),
 )
 @click.option(
