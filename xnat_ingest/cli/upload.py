@@ -4,6 +4,7 @@ import traceback
 import typing as ty
 from collections import defaultdict
 import tempfile
+from operator import itemgetter
 import click
 from tqdm import tqdm
 import boto3
@@ -184,6 +185,8 @@ def upload(
                 )
                 return True
 
+        project_ids = set()
+
         if staged.startswith("s3://"):
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
@@ -202,6 +205,7 @@ def upload(
                     continue  # skip directories
                 path_parts = obj.key[len(prefix) :].split("/")
                 session_ids = tuple(path_parts[:3])
+                project_ids.add(session_ids[0])
                 session_objs[session_ids].append((path_parts[3:], obj))
 
             session_objs = {
@@ -250,10 +254,29 @@ def upload(
                             project_dir.name, subject_dir.name, session_dir.name
                         ):
                             sessions.append(session_dir)
+                project_ids.add(project_dir.name)
             num_sessions = len(sessions)
             logger.info(
                 "Found %d sessions in staging directory '%s'", num_sessions, staged
             )
+
+        # Check for dataset definitions on XNAT if an always_include option is not
+        # provided
+        if not always_include:
+            missing_datasets = set()
+            for project_id in project_ids:
+                try:
+                    dataset = Dataset.load(project_id, xnat_repo)
+                except Exception:
+                    missing_datasets.add(project_id)
+                else:
+                    logger.debug("Found dataset definition for '%s' project", project_id)
+            if missing_datasets:
+                raise ValueError(
+                    "Either an '--always-include' option must be provided or dataset "
+                    "definitions must be present on XNAT for the following projects "
+                    f"({missing_datasets}) in order to upload the sessions"
+                )
 
         for session_staging_dir in tqdm(
             sessions,
@@ -325,12 +348,12 @@ def upload(
                     )
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
-                    list(
+                    sorted(
                         session.select_resources(
                             dataset,
                             always_include=always_include,
-                        )
-                    ),
+                        ),
+                        key=itemgetter(0)),
                     f"Uploading scans found in {session.name}",
                 ):
                     if scan.metadata:
