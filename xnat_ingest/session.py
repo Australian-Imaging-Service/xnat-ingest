@@ -91,7 +91,7 @@ class ImagingSession:
     def modalities(self) -> ty.Set[str]:
         modalities = self["Modality"]
         if not isinstance(modalities, str):
-            modalities = set(modalities)
+            modalities = set(tuple(m) if not isinstance(str) else m for m in modalities)
         return modalities
 
     @property
