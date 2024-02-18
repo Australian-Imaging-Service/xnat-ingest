@@ -270,7 +270,9 @@ def upload(
                 except Exception:
                     missing_datasets.add(project_id)
                 else:
-                    logger.debug("Found dataset definition for '%s' project", project_id)
+                    logger.debug(
+                        "Found dataset definition for '%s' project", project_id
+                    )
             if missing_datasets:
                 raise ValueError(
                     "Either an '--always-include' option must be provided or dataset "
@@ -353,7 +355,8 @@ def upload(
                             dataset,
                             always_include=always_include,
                         ),
-                        key=itemgetter(0)),
+                        key=itemgetter(0),
+                    ),
                     f"Uploading scans found in {session.name}",
                 ):
                     if scan.metadata:
@@ -375,8 +378,18 @@ def upload(
                     elif modality == "CT":
                         ScanClass = xnat_repo.connection.classes.CtScanData
                     else:
-                        raise RuntimeError(
-                            f"Unsupported image modality '{scan.modality}'"
+                        if SessionClass is xnat_repo.connection.classes.PetSessionData:
+                            ScanClass = xnat_repo.connection.classes.PetScanData
+                        elif SessionClass is xnat_repo.connection.classes.CtSessionData:
+                            ScanClass = xnat_repo.connection.classes.CtScanData
+                        else:
+                            ScanClass = xnat_repo.connection.classes.MrScanData
+                        logger.info(
+                            "Can't determine modality of %s scan, defaulting to same "
+                            "that matching session %s, %s",
+                            scan,
+                            SessionClass,
+                            ScanClass,
                         )
                     xscan = ScanClass(id=scan_id, type=scan_type, parent=xsession)
                     xresource = xscan.create_resource(resource_name)
