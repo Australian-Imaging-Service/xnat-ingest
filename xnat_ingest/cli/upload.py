@@ -7,6 +7,7 @@ import tempfile
 from operator import itemgetter
 import click
 from tqdm import tqdm
+from natsort import natsorted
 import boto3
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
@@ -350,7 +351,7 @@ def upload(
                     )
 
                 for scan_id, scan_type, resource_name, scan in tqdm(
-                    sorted(
+                    natsorted(
                         session.select_resources(
                             dataset,
                             always_include=always_include,

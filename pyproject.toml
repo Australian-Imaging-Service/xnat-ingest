@@ -13,6 +13,7 @@ dependencies = [
     "pydicom >=2.3.1",
     "tqdm >=4.64.1",
     "boto3",
+    "natsort",
     "paramiko",
     "xnat",
     "arcana",
