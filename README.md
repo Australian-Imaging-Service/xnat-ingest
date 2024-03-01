@@ -1,7 +1,7 @@
 
 # Xnat-ingest
 
-[![tests](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/tests.yml/ci-cd.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml)
+[![CI/CD](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/tests.yml/ci-cd.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest)
 
 De-identify and upload exported DICOM and associated data files to XNAT based on ID values
