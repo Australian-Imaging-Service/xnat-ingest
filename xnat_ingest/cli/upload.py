@@ -386,9 +386,10 @@ def upload(
                         else:
                             ScanClass = xnat_repo.connection.classes.MrScanData
                         logger.info(
-                            "Can't determine modality of %s scan, defaulting to same "
-                            "that matching session %s, %s",
-                            scan,
+                            "Can't determine modality of %s-%s scan, defaulting to the "
+                            "default for %s sessions, %s",
+                            scan_id,
+                            scan_type,
                             SessionClass,
                             ScanClass,
                         )
