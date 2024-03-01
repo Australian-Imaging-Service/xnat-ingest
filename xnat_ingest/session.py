@@ -274,7 +274,7 @@ class ImagingSession:
         for session_dicom_series in dicom_sessions.values():
 
             def get_id(field):
-                ids = set(s[field.keyword] for s in session_dicom_series)
+                ids = set(s.metadata[field.keyword] for s in session_dicom_series)
                 if len(ids) > 1:
                     raise DicomParseError(
                         f"Multiple values for '{field}' tag found across scans in session: "
