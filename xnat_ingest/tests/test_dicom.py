@@ -15,7 +15,7 @@ def dicom_series(scope="module") -> ImagingSession:
     return DicomSeries(get_pet_image().iterdir())
 
 
-def test_mrtrix_dicom_metadata(dicom_series):
+def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     keys = [
         "AccessionNumber",
         "PatientID",
@@ -27,10 +27,10 @@ def test_mrtrix_dicom_metadata(dicom_series):
     dicom_series.select_metadata(keys)
 
     assert sorted(dicom_series.metadata) == sorted(keys + ['SpecificCharacterSet'])
-    assert dicom_series["PatientName"] == "GivenName^FamilyName"
-    assert dicom_series["AccessionNumber"] == "987654321"
-    assert dicom_series["PatientID"] == 'Session Label'
-    assert dicom_series["StudyID"] == "PROJECT_ID"
-    assert not isinstance(dicom_series["StudyInstanceUID"], list)
-    assert isinstance(dicom_series["SOPInstanceUID"], list)
-    assert len(dicom_series["SOPInstanceUID"]) == len(list(dicom_series.contents))
+    assert dicom_series.metadata["PatientName"] == "GivenName^FamilyName"
+    assert dicom_series.metadata["AccessionNumber"] == "987654321"
+    assert dicom_series.metadata["PatientID"] == 'Session Label'
+    assert dicom_series.metadata["StudyID"] == "PROJECT_ID"
+    assert not isinstance(dicom_series.metadata["StudyInstanceUID"], list)
+    assert isinstance(dicom_series.metadata["SOPInstanceUID"], list)
+    assert len(dicom_series.metadata["SOPInstanceUID"]) == len(list(dicom_series.contents))

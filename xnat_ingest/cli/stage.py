@@ -44,7 +44,7 @@ are uploaded to XNAT
     help=("The keyword or tag of the DICOM field to extract the XNAT subject ID from "),
 )
 @click.option(
-    "--session-field",
+    "--visit-field",
     type=DicomField,
     default="AccessionNumber",
     envvar="XNAT_INGEST_SESSION",

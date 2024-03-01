@@ -46,8 +46,8 @@ def imaging_session() -> ImagingSession:
     ]
     scans = [
         ImagingScan(
-            id=str(d["SeriesNumber"]),
-            type=str(d["SeriesDescription"]),
+            id=str(d.metadata["SeriesNumber"]),
+            type=str(d.metadata["SeriesDescription"]),
             resources={"DICOM": d}) for d in dicoms]
     return ImagingSession(
         project_id="PROJECTID",

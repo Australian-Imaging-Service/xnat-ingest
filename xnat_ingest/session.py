@@ -89,7 +89,7 @@ class ImagingSession:
 
     @cached_property
     def modalities(self) -> ty.Set[str]:
-        modalities = self["Modality"]
+        modalities = self.metadata["Modality"]
         if not isinstance(modalities, str):
             modalities = set(tuple(m) if not isinstance(m, str) else m for m in modalities)
         return modalities
@@ -180,10 +180,10 @@ class ImagingSession:
         common_keys = [
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
         ]
-        collated = {k: all_dicoms[0][k] for k in common_keys}
+        collated = {k: all_dicoms[0].metadata[k] for k in common_keys}
         for i, series in enumerate(all_dicoms[1:], start=1):
             for key in common_keys:
-                val = series[key]
+                val = series.metadata[key]
                 if val != collated[key]:
                     # Check whether the value is the same as the values in the previous
                     # images in the series
@@ -266,7 +266,7 @@ class ImagingSession:
         ):
             # Restrict the metadata fields that are loaded (others are ignored),
             # for performance reasons
-            dicom_sessions[series["StudyInstanceUID"]].append(series)
+            dicom_sessions[series.metadata["StudyInstanceUID"]].append(series)
 
         # Construct sessions from sorted series
         logger.info("Searching for associated files ")
@@ -295,12 +295,12 @@ class ImagingSession:
 
             scans = []
             for dicom_series in session_dicom_series:
-                series_description = dicom_series["SeriesDescription"]
+                series_description = dicom_series.metadata["SeriesDescription"]
                 if isinstance(series_description, list):
                     series_description = series_description[0]
                 scans.append(
                     ImagingScan(
-                        id=str(dicom_series["SeriesNumber"]),
+                        id=str(dicom_series.metadata["SeriesNumber"]),
                         type=str(series_description),
                         resources={"DICOM": dicom_series},
                     )
