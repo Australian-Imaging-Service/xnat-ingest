@@ -99,10 +99,13 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Get Docker image tag from git tag
-      id: imagetag
+    - name: Get version from latest git tag and construct image tags
+      id: versions
       run: |
-        echo "IMAGE_TAG=$(git describe --tags --abbrev=0 | awk '{print tolower($0)}')" >> $GITHUB_OUTPUT
+        VERSION=$(git describe --tags --abbrev=0)
+        NAME_LOWERCASE=$(echo "${{ env.IMAGE_NAME }}" | awk '{print tolower($0)}')
+        echo "IMAGE_TAG=${{ env.REGISTRY }}/$NAME_LOWERCASE:$VERSION" |  >> $GITHUB_OUTPUT
+        echo "IMAGE_LATEST=${{ env.REGISTRY }}/$NAME_LOWERCASE:latest" |  >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v3
@@ -113,5 +116,5 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name == 'release' }}
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.imagetag.outputs.IMAGE_TAG }}
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          ${{ steps.versions.outputs.IMAGE_TAG }}
+          ${{ steps.versions.outputs.IMAGE_LATEST }}
