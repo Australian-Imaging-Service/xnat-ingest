@@ -92,8 +92,9 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Get Docker image tag from git tag
+      id: imagetag
       run: |
-        echo "DOCKER_IMAGE_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
+        echo "IMAGE_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v3
@@ -104,5 +105,5 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name == 'release' }}
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DOCKER_IMAGE_TAG }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.imagetag.outputs.IMAGE_TAG }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
