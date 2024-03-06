@@ -55,10 +55,10 @@ jobs:
         mrconvert --version        
 
     - name: Update build tools
-      run: python -m pip install --upgrade pip
+      run: python${{ matrix.python-version }} -m pip install --upgrade pip
 
     - name: Install Xnat-Ingest
-      run: python -m pip install .[test]
+      run: python${{ matrix.python-version }} -m pip install .[test]
 
     - name: Save XNAT username/password in ~/.netrc
       run: |
