@@ -103,18 +103,18 @@ jobs:
       id: versions
       run: |
         VERSION=$(git describe --tags --abbrev=0)
-        NAME_LOWERCASE=$(echo "${{ env.IMAGE_NAME }}" | awk '{print tolower($0)}')
-        echo "IMAGE_TAG=${{ env.REGISTRY }}/$NAME_LOWERCASE:$VERSION" |  >> $GITHUB_OUTPUT
-        echo "IMAGE_LATEST=${{ env.REGISTRY }}/$NAME_LOWERCASE:latest" |  >> $GITHUB_OUTPUT
+        IMAGE=${{ env.REGISTRY }}/$(echo "${{ env.IMAGE_NAME }}" | awk '{print tolower($0)}')
+        echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
+        echo "TAG=$IMAGE:$VERSION" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v3
       with:
-        cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-        cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+        cache-from: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache
+        cache-to: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache,mode=max
         context: .
         platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name == 'release' }}
         tags: |
-          ${{ steps.versions.outputs.IMAGE_TAG }}
-          ${{ steps.versions.outputs.IMAGE_LATEST }}
+          ${{ steps.versions.outputs.TAG }}
+          ${{ steps.versions.outputs.IMAGE }}:latest
