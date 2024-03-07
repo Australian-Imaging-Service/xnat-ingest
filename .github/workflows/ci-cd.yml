@@ -113,6 +113,7 @@ jobs:
         cache-from: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache
         cache-to: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache,mode=max
         context: .
+        platforms: linux/amd64,linux/arm64
         push: ${{ github.event_name == 'release' }}
         tags: |
           ${{ steps.versions.outputs.TAG }}

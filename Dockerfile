@@ -5,18 +5,8 @@ RUN apt-get update && apt-get install -y \
   python3-pip \
   wget \
   git \
+  mrtrix3 \
   && rm -rf /var/lib/apt/lists/*
-
-# Install Miniconda
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
-  bash Miniconda3-latest-Linux-x86_64.sh -b -p /opt/conda && \
-  rm Miniconda3-latest-Linux-x86_64.sh
-
-# Add Miniconda to PATH
-ENV PATH="/opt/conda/bin:${PATH}"
-
-# Install MRtrix3
-RUN  conda install -c mrtrix3 mrtrix3
 
 # Add application code
 ADD . /app
