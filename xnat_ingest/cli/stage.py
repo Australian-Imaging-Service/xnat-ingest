@@ -160,7 +160,7 @@ def stage(
     raise_errors: bool,
     deidentify: bool,
 ):
-    set_logger_handling(log_level, log_file, log_emails, mail_server)
+    set_logger_handling(log_level, log_emails, log_file, mail_server)
 
     msg = f"Loading DICOM sessions from '{dicoms_path}'"
 
