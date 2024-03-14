@@ -34,11 +34,16 @@ import string
 logger = logging.getLogger("xnat-ingest")
 
 
+def scan_type_converter(scan_type: str) -> str:
+    "Ensure there aren't any special characters that aren't valid file/dir paths"
+    return re.sub(r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+", "", scan_type)
+
+
 @attrs.define
 class ImagingScan:
     id: str
-    type: str
-    resources: ty.Dict[str, FileSet]
+    type: str = attrs.field(converter=scan_type_converter)
+    resources: ty.Dict[str, FileSet] = attrs.field()
 
     def __contains__(self, resource_name):
         return resource_name in self.resources
@@ -531,10 +536,7 @@ class ImagingSession:
             staged_resources = {}
             for resource_name, fileset in scan.resources.items():
                 # Ensure scan type is a valid directory name
-                scan_type = re.sub(
-                    r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+", "", scan.type
-                )
-                scan_dir = session_dir / f"{scan.id}-{scan_type}" / resource_name
+                scan_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
                 scan_dir.mkdir(parents=True, exist_ok=True)
                 if isinstance(fileset, DicomSeries):
                     staged_dicom_paths = []
