@@ -60,7 +60,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile(),
+    type=LogFile,
     nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
@@ -72,7 +72,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail(),
+    type=LogEmail,
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
@@ -84,7 +84,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--mail-server",
-    type=MailServer(),
+    type=MailServer,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
     envvar="XNAT_INGEST_MAILSERVER",

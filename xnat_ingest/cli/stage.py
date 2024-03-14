@@ -60,23 +60,23 @@ are uploaded to XNAT
 )
 @click.option(
     "--associated-files",
-    type=AssociatedFiles(),
+    type=AssociatedFiles,
     nargs=2,
     default=None,
     envvar="XNAT_INGEST_ASSOCIATED",
     metavar="<glob> <id-pattern>",
     help=(
-        "The \"glob\" arg is a glob pattern by which to detect associated files to be "
+        'The "glob" arg is a glob pattern by which to detect associated files to be '
         "attached to the DICOM sessions. Note that when this pattern corresponds to a "
         "relative path it is considered to be relative to the parent directory containing "
         "the DICOMs for the session NOT the current working directory Can contain string "
         "templates corresponding to DICOM metadata fields, which are substituted before "
         "the glob is called. For example, "
-        '"./associated/{PatientName.given_name}_{PatientName.family_name}/*)\" '
+        '"./associated/{PatientName.given_name}_{PatientName.family_name}/*)" '
         "will find all files under the subdirectory within '/path/to/dicoms/associated' that matches "
         "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
         "if a relative path is provided.\n"
-        "The \"id-pattern\" arg is a regular expression that is used to extract the scan ID & "
+        'The "id-pattern" arg is a regular expression that is used to extract the scan ID & '
         "type/resource from the associated filename. Should be a regular-expression "
         "(Python syntax) with named groups called 'id' and 'type', e.g. "
         r"--assoc-id-pattern '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
@@ -98,7 +98,7 @@ are uploaded to XNAT
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile(),
+    type=LogFile,
     nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
@@ -110,7 +110,7 @@ are uploaded to XNAT
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail(),
+    type=LogEmail,
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
@@ -122,7 +122,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--mail-server",
-    type=MailServer(),
+    type=MailServer,
     nargs=4,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
@@ -142,7 +142,7 @@ are uploaded to XNAT
     "--deidentify/--dont-deidentify",
     default=False,
     type=bool,
-    help="whether to deidentify the file names and DICOM metadata before staging"
+    help="whether to deidentify the file names and DICOM metadata before staging",
 )
 def stage(
     dicoms_path: str,
@@ -193,7 +193,8 @@ def stage(
                 continue
             # Identify theDeidentify files if necessary and save them to the staging directory
             session.stage(
-                staging_dir, associated_files=associated_files,
+                staging_dir,
+                associated_files=associated_files,
                 remove_original=delete,
                 deidentify=deidentify,
             )
