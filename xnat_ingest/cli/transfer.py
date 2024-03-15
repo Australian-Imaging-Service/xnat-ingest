@@ -14,54 +14,6 @@ from ..utils import (
     set_logger_handling,
 )
 from .base import cli
-import os
-import datetime
-import boto3
-import paramiko
-
-
-def remove_old_files_on_s3(remote_store: str, threshold: int):
-    # Parse S3 bucket and prefix from remote store
-    bucket_name, prefix = remote_store[5:].split("/", 1)
-
-    # Create S3 client
-    s3_client = boto3.client("s3")
-
-    # List objects in the bucket with the specified prefix
-    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-    now = datetime.datetime.now()
-
-    # Iterate over objects and delete files older than the threshold
-    for obj in response.get("Contents", []):
-        last_modified = obj["LastModified"]
-        age = (now - last_modified).days
-        if age > threshold:
-            s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
-
-
-def remove_old_files_on_ssh(remote_store: str, threshold: int):
-    # Parse SSH server and directory from remote store
-    server, directory = remote_store.split("@", 1)
-
-    # Create SSH client
-    ssh_client = paramiko.SSHClient()
-    ssh_client.load_system_host_keys()
-    ssh_client.connect(server)
-
-    # Execute find command to list files in the directory
-    stdin, stdout, stderr = ssh_client.exec_command(f"find {directory} -type f")
-
-    now = datetime.datetime.now()
-
-    # Iterate over files and delete files older than the threshold
-    for file_path in stdout.read().decode().splitlines():
-        last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
-        age = (now - last_modified).days
-        if age > threshold:
-            ssh_client.exec_command(f"rm {file_path}")
-
-    ssh_client.close()
 
 
 @cli.command(
@@ -78,13 +30,13 @@ interpreted as an S3 bucket, while a path starting with 'xxxx@xxxx:' is interpre
 an SSH server.
 """,
 )
-@click.argument("staging_dir", type=str)
-@click.argument("remote_store", type=str, envvar="XNAT_INGEST_REMOTE_STORE")
+@click.argument("staging_dir", type=str, envvar="XNAT_INGEST_STAGE_DIR")
+@click.argument("remote_store", type=str, envvar="XNAT_INGEST_TRANSFER_REMOTE_STORE")
 @click.option(
     "--store-credentials",
     type=click.Path(path_type=Path),
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_STORE_CREDENTIALS",
+    envvar="XNAT_INGEST_TRANSFER_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
@@ -93,7 +45,7 @@ an SSH server.
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_LOGLEVEL",
+    envvar="XNAT_INGEST_TRANSFER_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -102,7 +54,7 @@ an SSH server.
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_LOGFILE",
+    envvar="XNAT_INGEST_TRANSFER_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -115,7 +67,7 @@ an SSH server.
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_LOGEMAIL",
+    envvar="XNAT_INGEST_TRANSFER_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -126,7 +78,7 @@ an SSH server.
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_MAILSERVER",
+    envvar="XNAT_INGEST_TRANSFER_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -135,7 +87,7 @@ an SSH server.
 @click.option(
     "--delete/--dont-delete",
     default=False,
-    envvar="XNAT_INGEST_DELETE",
+    envvar="XNAT_INGEST_TRANSFER_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
@@ -151,14 +103,7 @@ an SSH server.
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
-    envvar="XNAT_INGEST_XNAT_LOGIN",
-)
-@click.option(
-    "--clean-up-older-than",
-    type=int,
-    metavar="<days>",
-    default=0,
-    help="The number of days to keep files in the remote store for",
+    envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
 )
 def transfer(
     staging_dir: Path,
@@ -171,7 +116,6 @@ def transfer(
     delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[ty.Tuple[str, str, str]],
-    clean_up_older_than: int,
 ):
 
     if not staging_dir.exists():
@@ -280,23 +224,6 @@ def transfer(
                 if delete:
                     logger.info("Deleting %s after successful upload", session_dir)
                     shutil.rmtree(session_dir)
-
-    if clean_up_older_than:
-        logger.info(
-            "Cleaning up files in %s older than %d days",
-            remote_store,
-            clean_up_older_than,
-        )
-        if store_type == "s3":
-            remove_old_files_on_s3(
-                remote_store=remote_store, threshold=clean_up_older_than
-            )
-        elif store_type == "ssh":
-            remove_old_files_on_ssh(
-                remote_store=remote_store, threshold=clean_up_older_than
-            )
-        else:
-            assert False
 
 
 if __name__ == "__main__":

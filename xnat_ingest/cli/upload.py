@@ -1,5 +1,7 @@
 from pathlib import Path
 import shutil
+import os
+import datetime
 import traceback
 import typing as ty
 from collections import defaultdict
@@ -9,6 +11,7 @@ import click
 from tqdm import tqdm
 from natsort import natsorted
 import boto3
+import paramiko
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
@@ -40,21 +43,21 @@ USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env.
 PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
 """,
 )
-@click.argument("staged", type=str)
-@click.argument("server", type=str, envvar="XNAT_INGEST_HOST")
-@click.argument("user", type=str, envvar="XNAT_INGEST_USER")
-@click.argument("password", type=str, envvar="XNAT_INGEST_PASS")
+@click.argument("staged", type=str, envvar="XNAT_INGEST_UPLOAD_STAGED")
+@click.argument("server", type=str, envvar="XNAT_INGEST_UPLOAD_HOST")
+@click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
+@click.argument("password", type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
     "--delete/--dont-delete",
     default=True,
-    envvar="XNAT_INGEST_DELETE",
+    envvar="XNAT_INGEST_UPLOAD_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_LOGLEVEL",
+    envvar="XNAT_INGEST_UPLOAD_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -63,7 +66,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_LOGFILE",
+    envvar="XNAT_INGEST_UPLOAD_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -76,7 +79,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_LOGEMAIL",
+    envvar="XNAT_INGEST_UPLOAD_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -87,7 +90,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_MAILSERVER",
+    envvar="XNAT_INGEST_UPLOAD_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -99,7 +102,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     default=(),
     type=str,
     multiple=True,
-    envvar="XNAT_INGEST_ALWAYSINCLUDE",
+    envvar="XNAT_INGEST_UPLOAD_ALWAYSINCLUDE",
     help=(
         "Scan types to always include in the upload, regardless of whether they are"
         "specified in a column or not. Specified using the scan types IANA mime-type or "
@@ -118,7 +121,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--store-credentials",
     type=str,
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_STORE_CREDENTIALS",
+    envvar="XNAT_INGEST_UPLOAD_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
@@ -127,18 +130,26 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XNAT_INGEST_WORKDIR",
+    envvar="XNAT_INGEST_UPLOAD_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
     "--use-manifest/--dont-use-manifest",
     default=None,
-    envvar="XNAT_INGEST_REQUIRE_MANIFEST",
+    envvar="XNAT_INGEST_UPLOAD_REQUIRE_MANIFEST",
     help=(
         "Whether to use the manifest file in the staged sessions to load the "
         "directory structure. By default it is used if present and ignore if not there"
     ),
     type=bool,
+)
+@click.option(
+    "--clean-up-older-than",
+    type=int,
+    metavar="<days>",
+    envvar="XNAT_INGEST_UPLOAD_CLEANUP_OLDER_THAN",
+    default=0,
+    help="The number of days to keep files in the remote store for",
 )
 def upload(
     staged: str,
@@ -155,6 +166,7 @@ def upload(
     store_credentials: ty.Tuple[str, str],
     temp_dir: ty.Optional[Path],
     use_manifest: bool,
+    clean_up_older_than: int,
 ):
 
     set_logger_handling(log_level, log_file, log_emails, mail_server)
@@ -446,3 +458,60 @@ def upload(
                     continue
                 else:
                     raise
+
+    if clean_up_older_than:
+        logger.info(
+            "Cleaning up files in %s older than %d days",
+            staged,
+            clean_up_older_than,
+        )
+        if staged.startswith("s3://"):
+            remove_old_files_on_s3(remote_store=staged, threshold=clean_up_older_than)
+        elif "@" in staged:
+            remove_old_files_on_ssh(remote_store=staged, threshold=clean_up_older_than)
+        else:
+            assert False
+
+
+def remove_old_files_on_s3(remote_store: str, threshold: int):
+    # Parse S3 bucket and prefix from remote store
+    bucket_name, prefix = remote_store[5:].split("/", 1)
+
+    # Create S3 client
+    s3_client = boto3.client("s3")
+
+    # List objects in the bucket with the specified prefix
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+
+    now = datetime.datetime.now()
+
+    # Iterate over objects and delete files older than the threshold
+    for obj in response.get("Contents", []):
+        last_modified = obj["LastModified"]
+        age = (now - last_modified).days
+        if age > threshold:
+            s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
+
+
+def remove_old_files_on_ssh(remote_store: str, threshold: int):
+    # Parse SSH server and directory from remote store
+    server, directory = remote_store.split("@", 1)
+
+    # Create SSH client
+    ssh_client = paramiko.SSHClient()
+    ssh_client.load_system_host_keys()
+    ssh_client.connect(server)
+
+    # Execute find command to list files in the directory
+    stdin, stdout, stderr = ssh_client.exec_command(f"find {directory} -type f")
+
+    now = datetime.datetime.now()
+
+    # Iterate over files and delete files older than the threshold
+    for file_path in stdout.read().decode().splitlines():
+        last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+        age = (now - last_modified).days
+        if age > threshold:
+            ssh_client.exec_command(f"rm {file_path}")
+
+    ssh_client.close()

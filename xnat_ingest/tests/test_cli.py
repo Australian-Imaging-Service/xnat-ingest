@@ -128,7 +128,8 @@ def test_stage_and_upload(
             for assoc_fspath in assoc_fspaths:
                 os.link(
                     assoc_fspath,
-                    associated_files_dir / f"{assoc_fspath.stem}-{i}{assoc_fspath.suffix}",
+                    associated_files_dir
+                    / f"{assoc_fspath.stem}-{i}{assoc_fspath.suffix}",
                 )
 
     # Create data store
@@ -200,7 +201,7 @@ def test_stage_and_upload(
             # "info",
             "--raise-errors",
             "--delete",
-        ]
+        ],
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
@@ -217,9 +218,9 @@ def test_stage_and_upload(
             "--raise-errors",
         ],
         env={
-            "XNAT_INGEST_HOST": xnat_server,
-            "XNAT_INGEST_USER": "admin",
-            "XNAT_INGEST_PASS": "admin",
+            "XNAT_INGEST_UPLOAD_HOST": xnat_server,
+            "XNAT_INGEST_UPLOAD_USER": "admin",
+            "XNAT_INGEST_UPLOAD_PASS": "admin",
         },
     )
 
