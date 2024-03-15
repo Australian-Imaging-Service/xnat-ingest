@@ -130,7 +130,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XNAT_INGEST_UPLOAD_WORKDIR",
+    envvar="XNAT_INGEST_UPLOAD_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
