@@ -26,7 +26,7 @@ from arcana.core.data.entry import DataEntry
 from arcana.core.data.tree import DataTree
 from arcana.core.exceptions import ArcanaDataMatchError
 from .exceptions import DicomParseError, StagingError
-from .utils import add_exc_note, transform_paths
+from .utils import add_exc_note, transform_paths, DicomField, AssociatedFiles
 from .dicom import dcmedit_path
 import random
 import string
@@ -34,11 +34,16 @@ import string
 logger = logging.getLogger("xnat-ingest")
 
 
+def scan_type_converter(scan_type: str) -> str:
+    "Ensure there aren't any special characters that aren't valid file/dir paths"
+    return re.sub(r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+", "", scan_type)
+
+
 @attrs.define
 class ImagingScan:
     id: str
-    type: str
-    resources: ty.Dict[str, FileSet]
+    type: str = attrs.field(converter=scan_type_converter)
+    resources: ty.Dict[str, FileSet] = attrs.field()
 
     def __contains__(self, resource_name):
         return resource_name in self.resources
@@ -91,7 +96,9 @@ class ImagingSession:
     def modalities(self) -> ty.Set[str]:
         modalities = self.metadata["Modality"]
         if not isinstance(modalities, str):
-            modalities = set(tuple(m) if not isinstance(m, str) else m for m in modalities)
+            modalities = set(
+                tuple(m) if not isinstance(m, str) else m for m in modalities
+            )
         return modalities
 
     @property
@@ -200,9 +207,9 @@ class ImagingSession:
     def from_dicoms(
         cls,
         dicoms_path: str | Path,
-        project_field: str = "StudyID",
-        subject_field: str = "PatientID",
-        visit_field: str = "AccessionNumber",
+        project_field: DicomField = DicomField("StudyID"),
+        subject_field: DicomField = DicomField("PatientID"),
+        visit_field: DicomField = DicomField("AccessionNumber"),
         project_id: str | None = None,
     ) -> ty.List["ImagingSession"]:
         """Loads all imaging sessions from a list of DICOM files
@@ -478,7 +485,7 @@ class ImagingSession:
     def stage(
         self,
         dest_dir: Path,
-        associated_files: ty.Optional[ty.Tuple[str, str]] = None,
+        associated_files: ty.Optional[AssociatedFiles] = None,
         remove_original: bool = False,
         deidentify: bool = True,
     ) -> "ImagingSession":
@@ -528,6 +535,7 @@ class ImagingSession:
         ):
             staged_resources = {}
             for resource_name, fileset in scan.resources.items():
+                # Ensure scan type is a valid directory name
                 scan_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
                 scan_dir.mkdir(parents=True, exist_ok=True)
                 if isinstance(fileset, DicomSeries):
@@ -559,7 +567,7 @@ class ImagingSession:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
-            associated_fspaths = set()
+            associated_fspaths: ty.Set[Path] = set()
             for dicom_dir in self.dicom_dirs:
                 assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
                 # Select files using the constructed glob pattern
@@ -579,7 +587,7 @@ class ImagingSession:
             if deidentify:
                 # Transform the names of the paths to remove any identiable information
                 transformed_fspaths = transform_paths(
-                    associated_fspaths,
+                    list(associated_fspaths),
                     associated_files.glob,
                     self.metadata,
                     staged_metadata,
@@ -603,7 +611,7 @@ class ImagingSession:
                         shutil.copyfile(old, dest_path)
                     staged_associated_fspaths.append(dest_path)
             else:
-                staged_associated_fspaths = associated_fspaths
+                staged_associated_fspaths = list(associated_fspaths)
 
             # Identify scan id, type and resource names from deidentified file paths
             assoc_scans = {}
@@ -624,7 +632,9 @@ class ImagingSession:
                 except IndexError:
                     scan_type = scan_id
                 if scan_id not in assoc_scans:
-                    assoc_resources = defaultdict(list)
+                    assoc_resources: ty.DefaultDict[str, ty.List[Path]] = defaultdict(
+                        list
+                    )
                     assoc_scans[scan_id] = (scan_type, assoc_resources)
                 else:
                     prev_scan_type, assoc_resources = assoc_scans[scan_id]

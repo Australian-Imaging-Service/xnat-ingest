@@ -11,44 +11,70 @@ import click.types
 from fileformats.core import FileSet
 from .dicom import DicomField  # noqa
 
+
 logger = logging.getLogger("xnat-ingest")
+
+
+class classproperty(object):
+    def __init__(self, f):
+        self.f = f
+
+    def __get__(self, obj, owner):
+        return self.f(owner)
 
 
 class CliType(click.types.ParamType):
 
     is_composite = True
 
+    def __init__(
+        self,
+        type_,
+        multiple=False,
+    ):
+        self.type = type_
+        self.multiple = multiple
+
     def convert(
         self, value: ty.Any, param: click.Parameter | None, ctx: click.Context | None
     ):
-        return type(self)(*value)
+        return self.type(*value)
 
     @property
     def arity(self):
-        return len(attrs.fields(type(self)))
+        return len(attrs.fields(self.type))
 
     @property
     def name(self):
         return type(self).__name__.lower()
 
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return cls(*envvar.split(","))
+    def split_envvar_value(self, envvar):
+        if self.multiple:
+            return [self.type(*entry.split(",")) for entry in envvar.split(";")]
+        else:
+            return self.type(*envvar.split(","))
 
 
-class MultiCliType(CliType):
+class CliTyped:
 
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(*entry.split(",")) for entry in envvar.split(";")]
+    @classproperty
+    def cli_type(cls):
+        return CliType(cls)
+
+
+class MultiCliTyped:
+
+    @classproperty
+    def cli_type(cls):
+        return CliType(cls, multiple=True)
 
 
 @attrs.define
-class LogEmail(CliType):
+class LogEmail(CliTyped):
 
-    address: str = None
-    loglevel: str = None
-    subject: str = None
+    address: str
+    loglevel: str
+    subject: str
 
     def __str__(self):
         return self.address
@@ -61,10 +87,10 @@ def path_or_none_converter(path: str | Path | None):
 
 
 @attrs.define
-class LogFile(MultiCliType):
+class LogFile(MultiCliTyped):
 
     path: Path = attrs.field(converter=path_or_none_converter, default=None)
-    loglevel: str = None
+    loglevel: ty.Optional[str] = None
 
     def __str__(self):
         return str(self.path)
@@ -74,29 +100,32 @@ class LogFile(MultiCliType):
 
 
 @attrs.define
-class MailServer(CliType):
+class MailServer(CliTyped):
 
-    host: str = None
-    sender_email: str = None
-    user: str = None
-    password: str = None
+    host: str
+    sender_email: str
+    user: str
+    password: str
 
 
 @attrs.define
-class AssociatedFiles(CliType):
+class AssociatedFiles(CliTyped):
 
-    glob: str = None
-    identity_pattern: str = None
+    glob: str
+    identity_pattern: str
 
 
 def set_logger_handling(
-    log_level: str, log_emails: ty.List[LogEmail] | None, log_file: LogFile | None, mail_server: MailServer
+    log_level: str,
+    log_emails: ty.List[LogEmail] | None,
+    log_file: LogFile | None,
+    mail_server: MailServer,
 ):
 
     levels = [log_level]
     if log_emails:
         levels.extend(le.loglevel for le in log_emails)
-    if log_file:
+    if log_file and log_file.loglevel:
         levels.append(log_file.loglevel)
 
     min_log_level = min(getattr(logging, ll.upper()) for ll in levels)
@@ -108,7 +137,7 @@ def set_logger_handling(
             raise ValueError(
                 "Mail server needs to be provided, either by `--mail-server` option or "
                 "XNAT_INGEST_MAILSERVER environment variable if logger emails "
-                "are provided: " + ", ".join(log_emails)
+                "are provided: " + ", ".join(str(le) for le in log_emails)
             )
         for log_email in log_emails:
             smtp_hdle = logging.handlers.SMTPHandler(
@@ -126,7 +155,8 @@ def set_logger_handling(
     if log_file:
         log_file.path.parent.mkdir(exist_ok=True)
         log_file_hdle = logging.FileHandler(log_file)
-        log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
+        if log_file.loglevel:
+            log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
         log_file_hdle.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
@@ -280,7 +310,7 @@ def transform_paths(
     while templ_attr_re.findall(expr):
         expr = templ_attr_re.sub(r"{\1.\2}", expr)
 
-    group_count = Counter()
+    group_count: Counter[str] = Counter()
 
     # Create regex groups for string template args
     def str_templ_to_regex_group(match) -> str:

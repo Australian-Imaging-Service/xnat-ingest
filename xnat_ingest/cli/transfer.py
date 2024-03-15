@@ -82,7 +82,7 @@ an SSH server.
 @click.argument("remote_store", type=str, envvar="XNAT_INGEST_REMOTE_STORE")
 @click.option(
     "--store-credentials",
-    type=str,
+    type=click.Path(path_type=Path),
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_STORE_CREDENTIALS",
     default=None,
@@ -99,7 +99,7 @@ an SSH server.
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile(),
+    type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
@@ -111,7 +111,7 @@ an SSH server.
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail(),
+    type=LogEmail.cli_type,
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
@@ -123,7 +123,7 @@ an SSH server.
 )
 @click.option(
     "--mail-server",
-    type=MailServer(),
+    type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
     envvar="XNAT_INGEST_MAILSERVER",
@@ -161,20 +161,19 @@ an SSH server.
     help="The number of days to keep files in the remote store for",
 )
 def transfer(
-    staging_dir: str,
+    staging_dir: Path,
     remote_store: str,
     credentials: ty.Tuple[str, str],
-    log_file: ty.Tuple[str, str],
+    log_file: LogFile,
     log_level: str,
-    log_emails: ty.List[ty.Tuple[str, str, str]],
-    mail_server: ty.Tuple[str, str, str, str],
+    log_emails: ty.List[LogEmail],
+    mail_server: ty.Tuple[MailServer],
     delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[ty.Tuple[str, str, str]],
     clean_up_older_than: int,
 ):
 
-    staging_dir = Path(staging_dir)
     if not staging_dir.exists():
         raise ValueError(f"Staging directory '{staging_dir}' does not exist")
 
