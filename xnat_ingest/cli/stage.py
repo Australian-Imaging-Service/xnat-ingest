@@ -27,8 +27,10 @@ STAGING_DIR is the directory that the files for each session are collated to bef
 are uploaded to XNAT
 """,
 )
-@click.argument("dicoms_path", type=str)
-@click.argument("staging_dir", type=click.Path(path_type=Path))
+@click.argument("dicoms_path", type=str, envvar="XNAT_INGEST_DICOMS_PATH")
+@click.argument(
+    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGING_DIR"
+)
 @click.option(
     "--project-field",
     type=DicomField,
@@ -142,6 +144,7 @@ are uploaded to XNAT
     "--deidentify/--dont-deidentify",
     default=False,
     type=bool,
+    envvar="XNAT_INGEST_DEIDENTIFY",
     help="whether to deidentify the file names and DICOM metadata before staging",
 )
 def stage(

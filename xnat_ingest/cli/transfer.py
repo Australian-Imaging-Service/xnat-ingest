@@ -14,54 +14,6 @@ from ..utils import (
     set_logger_handling,
 )
 from .base import cli
-import os
-import datetime
-import boto3
-import paramiko
-
-
-def remove_old_files_on_s3(remote_store: str, threshold: int):
-    # Parse S3 bucket and prefix from remote store
-    bucket_name, prefix = remote_store[5:].split("/", 1)
-
-    # Create S3 client
-    s3_client = boto3.client("s3")
-
-    # List objects in the bucket with the specified prefix
-    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-    now = datetime.datetime.now()
-
-    # Iterate over objects and delete files older than the threshold
-    for obj in response.get("Contents", []):
-        last_modified = obj["LastModified"]
-        age = (now - last_modified).days
-        if age > threshold:
-            s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
-
-
-def remove_old_files_on_ssh(remote_store: str, threshold: int):
-    # Parse SSH server and directory from remote store
-    server, directory = remote_store.split("@", 1)
-
-    # Create SSH client
-    ssh_client = paramiko.SSHClient()
-    ssh_client.load_system_host_keys()
-    ssh_client.connect(server)
-
-    # Execute find command to list files in the directory
-    stdin, stdout, stderr = ssh_client.exec_command(f"find {directory} -type f")
-
-    now = datetime.datetime.now()
-
-    # Iterate over files and delete files older than the threshold
-    for file_path in stdout.read().decode().splitlines():
-        last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
-        age = (now - last_modified).days
-        if age > threshold:
-            ssh_client.exec_command(f"rm {file_path}")
-
-    ssh_client.close()
 
 
 @cli.command(
@@ -153,13 +105,6 @@ an SSH server.
     help="The XNAT server to upload to plus the user and password to use",
     envvar="XNAT_INGEST_XNAT_LOGIN",
 )
-@click.option(
-    "--clean-up-older-than",
-    type=int,
-    metavar="<days>",
-    default=0,
-    help="The number of days to keep files in the remote store for",
-)
 def transfer(
     staging_dir: Path,
     remote_store: str,
@@ -171,7 +116,6 @@ def transfer(
     delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[ty.Tuple[str, str, str]],
-    clean_up_older_than: int,
 ):
 
     if not staging_dir.exists():
@@ -280,23 +224,6 @@ def transfer(
                 if delete:
                     logger.info("Deleting %s after successful upload", session_dir)
                     shutil.rmtree(session_dir)
-
-    if clean_up_older_than:
-        logger.info(
-            "Cleaning up files in %s older than %d days",
-            remote_store,
-            clean_up_older_than,
-        )
-        if store_type == "s3":
-            remove_old_files_on_s3(
-                remote_store=remote_store, threshold=clean_up_older_than
-            )
-        elif store_type == "ssh":
-            remove_old_files_on_ssh(
-                remote_store=remote_store, threshold=clean_up_older_than
-            )
-        else:
-            assert False
 
 
 if __name__ == "__main__":
