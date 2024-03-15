@@ -11,40 +11,66 @@ import click.types
 from fileformats.core import FileSet
 from .dicom import DicomField  # noqa
 
+
 logger = logging.getLogger("xnat-ingest")
+
+
+class classproperty(object):
+    def __init__(self, f):
+        self.f = f
+
+    def __get__(self, obj, owner):
+        return self.f(owner)
 
 
 class CliType(click.types.ParamType):
 
     is_composite = True
 
+    def __init__(
+        self,
+        type_,
+        multiple=False,
+    ):
+        self.type = type_
+        self.multiple = multiple
+
     def convert(
         self, value: ty.Any, param: click.Parameter | None, ctx: click.Context | None
     ):
-        return type(self)(*value)
+        return self.type(*value)
 
     @property
     def arity(self):
-        return len(attrs.fields(type(self)))
+        return len(attrs.fields(self.type))
 
     @property
     def name(self):
         return type(self).__name__.lower()
 
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return cls(*envvar.split(","))
+    def split_envvar_value(self, envvar):
+        if self.multiple:
+            return [self.type(*entry.split(",")) for entry in envvar.split(";")]
+        else:
+            return self.type(*envvar.split(","))
 
 
-class MultiCliType(CliType):
+class CliTyped:
 
-    @classmethod
-    def split_envvar_value(cls, envvar):
-        return [cls(*entry.split(",")) for entry in envvar.split(";")]
+    @classproperty
+    def cli_type(cls):
+        return CliType(cls)
+
+
+class MultiCliTyped:
+
+    @classproperty
+    def cli_type(cls):
+        return CliType(cls, multiple=True)
 
 
 @attrs.define
-class LogEmail(CliType):
+class LogEmail(CliTyped):
 
     address: str
     loglevel: str
@@ -61,7 +87,7 @@ def path_or_none_converter(path: str | Path | None):
 
 
 @attrs.define
-class LogFile(MultiCliType):
+class LogFile(MultiCliTyped):
 
     path: Path = attrs.field(converter=path_or_none_converter, default=None)
     loglevel: ty.Optional[str] = None
@@ -74,7 +100,7 @@ class LogFile(MultiCliType):
 
 
 @attrs.define
-class MailServer(CliType):
+class MailServer(CliTyped):
 
     host: str
     sender_email: str
@@ -83,7 +109,7 @@ class MailServer(CliType):
 
 
 @attrs.define
-class AssociatedFiles(CliType):
+class AssociatedFiles(CliTyped):
 
     glob: str
     identity_pattern: str

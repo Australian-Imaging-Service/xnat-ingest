@@ -99,7 +99,7 @@ an SSH server.
 @click.option(
     "--log-file",
     default=None,
-    type=LogFile,
+    type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_LOGFILE",
@@ -111,7 +111,7 @@ an SSH server.
 @click.option(
     "--log-email",
     "log_emails",
-    type=LogEmail,
+    type=LogEmail.cli_type,
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
@@ -123,7 +123,7 @@ an SSH server.
 )
 @click.option(
     "--mail-server",
-    type=MailServer,
+    type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
     envvar="XNAT_INGEST_MAILSERVER",
