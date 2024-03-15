@@ -218,9 +218,9 @@ def test_stage_and_upload(
             "--raise-errors",
         ],
         env={
-            "XNAT_INGEST_STAGE_HOST": xnat_server,
-            "XNAT_INGEST_STAGE_USER": "admin",
-            "XNAT_INGEST_STAGE_PASS": "admin",
+            "XNAT_INGEST_UPLOAD_HOST": xnat_server,
+            "XNAT_INGEST_UPLOAD_USER": "admin",
+            "XNAT_INGEST_UPLOAD_PASS": "admin",
         },
     )
 
