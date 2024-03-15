@@ -43,21 +43,21 @@ USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env.
 PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
 """,
 )
-@click.argument("staged", type=str)
-@click.argument("server", type=str, envvar="XNAT_INGEST_HOST")
-@click.argument("user", type=str, envvar="XNAT_INGEST_USER")
-@click.argument("password", type=str, envvar="XNAT_INGEST_PASS")
+@click.argument("staged", type=str, envvar="XNAT_INGEST_UPLOAD_STAGED")
+@click.argument("server", type=str, envvar="XNAT_INGEST_UPLOAD_HOST")
+@click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
+@click.argument("password", type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
     "--delete/--dont-delete",
     default=True,
-    envvar="XNAT_INGEST_DELETE",
+    envvar="XNAT_INGEST_UPLOAD_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_LOGLEVEL",
+    envvar="XNAT_INGEST_UPLOAD_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -66,7 +66,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_LOGFILE",
+    envvar="XNAT_INGEST_UPLOAD_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -79,7 +79,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_LOGEMAIL",
+    envvar="XNAT_INGEST_UPLOAD_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -90,7 +90,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_MAILSERVER",
+    envvar="XNAT_INGEST_UPLOAD_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -102,7 +102,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     default=(),
     type=str,
     multiple=True,
-    envvar="XNAT_INGEST_ALWAYSINCLUDE",
+    envvar="XNAT_INGEST_UPLOAD_ALWAYSINCLUDE",
     help=(
         "Scan types to always include in the upload, regardless of whether they are"
         "specified in a column or not. Specified using the scan types IANA mime-type or "
@@ -121,7 +121,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--store-credentials",
     type=str,
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_STORE_CREDENTIALS",
+    envvar="XNAT_INGEST_UPLOAD_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
@@ -130,13 +130,13 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XNAT_INGEST_WORKDIR",
+    envvar="XNAT_INGEST_UPLOAD_WORKDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
     "--use-manifest/--dont-use-manifest",
     default=None,
-    envvar="XNAT_INGEST_REQUIRE_MANIFEST",
+    envvar="XNAT_INGEST_UPLOAD_REQUIRE_MANIFEST",
     help=(
         "Whether to use the manifest file in the staged sessions to load the "
         "directory structure. By default it is used if present and ignore if not there"
@@ -147,6 +147,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--clean-up-older-than",
     type=int,
     metavar="<days>",
+    envvar="XNAT_INGEST_UPLOAD_CLEANUP_OLDER_THAN",
     default=0,
     help="The number of days to keep files in the remote store for",
 )

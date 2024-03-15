@@ -27,29 +27,29 @@ STAGING_DIR is the directory that the files for each session are collated to bef
 are uploaded to XNAT
 """,
 )
-@click.argument("dicoms_path", type=str, envvar="XNAT_INGEST_DICOMS_PATH")
+@click.argument("dicoms_path", type=str, envvar="XNAT_INGEST_STAGE_DICOMS_PATH")
 @click.argument(
-    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGING_DIR"
+    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
 )
 @click.option(
     "--project-field",
     type=DicomField,
     default="StudyID",
-    envvar="XNAT_INGEST_PROJECT",
+    envvar="XNAT_INGEST_STAGE_PROJECT",
     help=("The keyword or tag of the DICOM field to extract the XNAT project ID from "),
 )
 @click.option(
     "--subject-field",
     type=DicomField,
     default="PatientID",
-    envvar="XNAT_INGEST_SUBJECT",
+    envvar="XNAT_INGEST_STAGE_SUBJECT",
     help=("The keyword or tag of the DICOM field to extract the XNAT subject ID from "),
 )
 @click.option(
     "--visit-field",
     type=DicomField,
     default="AccessionNumber",
-    envvar="XNAT_INGEST_SESSION",
+    envvar="XNAT_INGEST_STAGE_SESSION",
     help=(
         "The keyword or tag of the DICOM field to extract the XNAT imaging session ID from "
     ),
@@ -65,7 +65,7 @@ are uploaded to XNAT
     type=AssociatedFiles.cli_type,
     nargs=2,
     default=None,
-    envvar="XNAT_INGEST_ASSOCIATED",
+    envvar="XNAT_INGEST_STAGE_ASSOCIATED",
     metavar="<glob> <id-pattern>",
     help=(
         'The "glob" arg is a glob pattern by which to detect associated files to be '
@@ -87,14 +87,14 @@ are uploaded to XNAT
 @click.option(
     "--delete/--dont-delete",
     default=False,
-    envvar="XNAT_INGEST_DELETE",
+    envvar="XNAT_INGEST_STAGE_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_LOGLEVEL",
+    envvar="XNAT_INGEST_STAGE_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -103,7 +103,7 @@ are uploaded to XNAT
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_LOGFILE",
+    envvar="XNAT_INGEST_STAGE_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -116,7 +116,7 @@ are uploaded to XNAT
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_LOGEMAIL",
+    envvar="XNAT_INGEST_STAGE_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -128,7 +128,7 @@ are uploaded to XNAT
     nargs=4,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_MAILSERVER",
+    envvar="XNAT_INGEST_STAGE_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -144,7 +144,7 @@ are uploaded to XNAT
     "--deidentify/--dont-deidentify",
     default=False,
     type=bool,
-    envvar="XNAT_INGEST_DEIDENTIFY",
+    envvar="XNAT_INGEST_STAGE_DEIDENTIFY",
     help="whether to deidentify the file names and DICOM metadata before staging",
 )
 def stage(

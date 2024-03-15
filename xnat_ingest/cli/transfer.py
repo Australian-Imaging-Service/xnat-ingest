@@ -30,13 +30,13 @@ interpreted as an S3 bucket, while a path starting with 'xxxx@xxxx:' is interpre
 an SSH server.
 """,
 )
-@click.argument("staging_dir", type=str)
-@click.argument("remote_store", type=str, envvar="XNAT_INGEST_REMOTE_STORE")
+@click.argument("staging_dir", type=str, envvar="XNAT_INGEST_STAGE_DIR")
+@click.argument("remote_store", type=str, envvar="XNAT_INGEST_TRANSFER_REMOTE_STORE")
 @click.option(
     "--store-credentials",
     type=click.Path(path_type=Path),
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_STORE_CREDENTIALS",
+    envvar="XNAT_INGEST_TRANSFER_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
@@ -45,7 +45,7 @@ an SSH server.
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_LOGLEVEL",
+    envvar="XNAT_INGEST_TRANSFER_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -54,7 +54,7 @@ an SSH server.
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_LOGFILE",
+    envvar="XNAT_INGEST_TRANSFER_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -67,7 +67,7 @@ an SSH server.
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_LOGEMAIL",
+    envvar="XNAT_INGEST_TRANSFER_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -78,7 +78,7 @@ an SSH server.
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_MAILSERVER",
+    envvar="XNAT_INGEST_TRANSFER_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -87,7 +87,7 @@ an SSH server.
 @click.option(
     "--delete/--dont-delete",
     default=False,
-    envvar="XNAT_INGEST_DELETE",
+    envvar="XNAT_INGEST_TRANSFER_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
@@ -103,7 +103,7 @@ an SSH server.
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
-    envvar="XNAT_INGEST_XNAT_LOGIN",
+    envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
 )
 def transfer(
     staging_dir: Path,
