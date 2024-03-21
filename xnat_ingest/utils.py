@@ -38,6 +38,8 @@ class CliType(click.types.ParamType):
     def convert(
         self, value: ty.Any, param: click.Parameter | None, ctx: click.Context | None
     ):
+        if isinstance(value, self.type):
+            return value
         return self.type(*value)
 
     @property
