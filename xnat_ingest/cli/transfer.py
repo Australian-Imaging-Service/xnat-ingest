@@ -10,6 +10,8 @@ from ..utils import (
     logger,
     LogFile,
     LogEmail,
+    StoreCredentials,
+    XnatLogin,
     MailServer,
     set_logger_handling,
 )
@@ -30,11 +32,13 @@ interpreted as an S3 bucket, while a path starting with 'xxxx@xxxx:' is interpre
 an SSH server.
 """,
 )
-@click.argument("staging_dir", type=str, envvar="XNAT_INGEST_STAGE_DIR")
+@click.argument(
+    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
+)
 @click.argument("remote_store", type=str, envvar="XNAT_INGEST_TRANSFER_REMOTE_STORE")
 @click.option(
     "--store-credentials",
-    type=click.Path(path_type=Path),
+    type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_TRANSFER_STORE_CREDENTIALS",
     default=None,
@@ -50,9 +54,11 @@ an SSH server.
 )
 @click.option(
     "--log-file",
+    "log_files",
     default=None,
     type=LogFile.cli_type,
     nargs=2,
+    multiple=True,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_TRANSFER_LOGFILE",
     help=(
@@ -99,7 +105,7 @@ an SSH server.
 @click.option(
     "--xnat-login",
     nargs=3,
-    type=str,
+    type=XnatLogin.cli_type,
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
@@ -108,20 +114,25 @@ an SSH server.
 def transfer(
     staging_dir: Path,
     remote_store: str,
-    credentials: ty.Tuple[str, str],
-    log_file: LogFile,
+    store_credentials: ty.Optional[StoreCredentials],
+    log_files: ty.List[LogFile],
     log_level: str,
     log_emails: ty.List[LogEmail],
-    mail_server: ty.Tuple[MailServer],
+    mail_server: MailServer,
     delete: bool,
     raise_errors: bool,
-    xnat_login: ty.Optional[ty.Tuple[str, str, str]],
+    xnat_login: ty.Optional[XnatLogin],
 ):
 
     if not staging_dir.exists():
         raise ValueError(f"Staging directory '{staging_dir}' does not exist")
 
-    set_logger_handling(log_level, log_file, log_emails, mail_server)
+    set_logger_handling(
+        log_level=log_level,
+        log_files=log_files,
+        log_emails=log_emails,
+        mail_server=mail_server,
+    )
 
     if remote_store.startswith("s3://"):
         store_type = "s3"
@@ -134,11 +145,10 @@ def transfer(
         )
 
     if xnat_login is not None:
-        server, user, password = xnat_login
         xnat_repo = Xnat(
-            server=server,
-            user=user,
-            password=password,
+            server=xnat_login.host,
+            user=xnat_login.user,
+            password=xnat_login.password,
             cache_dir=Path(tempfile.mkdtemp()),
         )
     else:
@@ -204,16 +214,31 @@ def transfer(
                     logger.debug(
                         "Transferring %s to S3 (%s)", session_dir, remote_store
                     )
-                    sp.check_call(
+                    aws_cmd = (
+                        sp.check_output("which aws", shell=True).strip().decode("utf-8")
+                    )
+                    if store_credentials is None:
+                        raise ValueError(
+                            "No store credentials provided for S3 bucket transfer"
+                        )
+                    process = sp.Popen(
                         [
-                            "aws",
+                            aws_cmd,
                             "s3",
                             "sync",
-                            "--quiet",
                             str(session_dir),
                             remote_path,
-                        ]
+                        ],
+                        env={
+                            "AWS_ACCESS_KEY_ID": store_credentials.access_key,
+                            "AWS_SECRET_ACCESS_KEY": store_credentials.access_secret,
+                        },
+                        stdout=sp.PIPE,
+                        stderr=sp.PIPE,
                     )
+                    stdout, stderr = process.communicate()
+                    if process.returncode != 0:
+                        raise RuntimeError("AWS sync failed: " + stderr.decode("utf-8"))
                 elif store_type == "ssh":
                     logger.debug(
                         "Transferring %s to %s via SSH", session_dir, remote_store

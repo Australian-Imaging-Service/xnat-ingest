@@ -25,6 +25,7 @@ from ..utils import (
     set_logger_handling,
     get_checksums,
     calculate_checksums,
+    StoreCredentials,
 )
 
 
@@ -62,10 +63,12 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--log-file",
+    "log_files",
     default=None,
     type=LogFile.cli_type,
     nargs=2,
     metavar="<path> <loglevel>",
+    multiple=True,
     envvar="XNAT_INGEST_UPLOAD_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
@@ -119,7 +122,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--store-credentials",
-    type=str,
+    type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_UPLOAD_STORE_CREDENTIALS",
     default=None,
@@ -158,8 +161,8 @@ def upload(
     password: str,
     delete: bool,
     log_level: str,
-    log_file: Path,
-    log_emails: LogEmail,
+    log_files: ty.List[LogFile],
+    log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     always_include: ty.Sequence[str],
     raise_errors: bool,
@@ -169,8 +172,12 @@ def upload(
     clean_up_older_than: int,
 ):
 
-    set_logger_handling(log_level, log_file, log_emails, mail_server)
-
+    set_logger_handling(
+        log_level=log_level,
+        log_emails=log_emails,
+        log_files=log_files,
+        mail_server=mail_server,
+    )
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
 
@@ -221,11 +228,12 @@ def upload(
                 project_ids.add(session_ids[0])
                 session_objs[session_ids].append((path_parts[3:], obj))
 
-            session_objs = {
-                ids: objs
-                for ids, objs in session_objs.items()
-                if not xnat_session_exists(*ids)
-            }
+            for ids, objs in list(session_objs.items()):
+                if xnat_session_exists(*ids):
+                    logger.info(
+                        "Skipping session '%s' as it already exists on XNAT", ids
+                    )
+                    del session_objs[ids]
 
             num_sessions = len(session_objs)
 

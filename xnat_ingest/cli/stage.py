@@ -99,8 +99,10 @@ are uploaded to XNAT
 )
 @click.option(
     "--log-file",
+    "log_files",
     default=None,
     type=LogFile.cli_type,
+    multiple=True,
     nargs=2,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_STAGE_LOGFILE",
@@ -151,19 +153,24 @@ def stage(
     dicoms_path: str,
     staging_dir: Path,
     associated_files: AssociatedFiles,
-    project_field: str,
-    subject_field: str,
-    visit_field: str,
+    project_field: DicomField,
+    subject_field: DicomField,
+    visit_field: DicomField,
     project_id: str | None,
     delete: bool,
     log_level: str,
-    log_file: LogFile | None,
+    log_files: ty.List[LogFile],
     log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     raise_errors: bool,
     deidentify: bool,
 ):
-    set_logger_handling(log_level, log_emails, log_file, mail_server)
+    set_logger_handling(
+        log_level=log_level,
+        log_emails=log_emails,
+        log_files=log_files,
+        mail_server=mail_server,
+    )
 
     msg = f"Loading DICOM sessions from '{dicoms_path}'"
 

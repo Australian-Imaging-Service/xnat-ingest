@@ -82,23 +82,20 @@ class LogEmail(CliTyped):
         return self.address
 
 
-def path_or_none_converter(path: str | Path | None):
-    if path is None:
-        return None
-    return Path(path)
-
-
 @attrs.define
 class LogFile(MultiCliTyped):
 
-    path: Path = attrs.field(converter=path_or_none_converter, default=None)
-    loglevel: ty.Optional[str] = None
+    path: Path = attrs.field(converter=Path)
+    loglevel: str
+
+    def __bool__(self):
+        return bool(self.path)
 
     def __str__(self):
         return str(self.path)
 
     def __fspath__(self):
-        return self.path
+        return str(self.path)
 
 
 @attrs.define
@@ -117,18 +114,31 @@ class AssociatedFiles(CliTyped):
     identity_pattern: str
 
 
+@attrs.define
+class XnatLogin(CliTyped):
+
+    host: str
+    user: str
+    password: str
+
+
+@attrs.define
+class StoreCredentials(CliTyped):
+
+    access_key: str
+    access_secret: str
+
+
 def set_logger_handling(
     log_level: str,
     log_emails: ty.List[LogEmail] | None,
-    log_file: LogFile | None,
+    log_files: ty.List[LogFile] | None,
     mail_server: MailServer,
 ):
 
     levels = [log_level]
-    if log_emails:
-        levels.extend(le.loglevel for le in log_emails)
-    if log_file and log_file.loglevel:
-        levels.append(log_file.loglevel)
+    levels.extend(le.loglevel for le in log_emails)
+    levels.extend(lf.loglevel for lf in log_files)
 
     min_log_level = min(getattr(logging, ll.upper()) for ll in levels)
     logger.setLevel(min_log_level)
@@ -154,7 +164,7 @@ def set_logger_handling(
             logger.addHandler(smtp_hdle)
 
     # Configure the file logger
-    if log_file:
+    for log_file in log_files:
         log_file.path.parent.mkdir(exist_ok=True)
         log_file_hdle = logging.FileHandler(log_file)
         if log_file.loglevel:
