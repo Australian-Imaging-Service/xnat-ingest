@@ -10,6 +10,8 @@ from ..utils import (
     logger,
     LogFile,
     LogEmail,
+    StoreCredentials,
+    XnatLogin,
     MailServer,
     set_logger_handling,
 )
@@ -30,11 +32,13 @@ interpreted as an S3 bucket, while a path starting with 'xxxx@xxxx:' is interpre
 an SSH server.
 """,
 )
-@click.argument("staging_dir", type=str, envvar="XNAT_INGEST_STAGE_DIR")
+@click.argument(
+    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
+)
 @click.argument("remote_store", type=str, envvar="XNAT_INGEST_TRANSFER_REMOTE_STORE")
 @click.option(
     "--store-credentials",
-    type=click.Path(path_type=Path),
+    type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_TRANSFER_STORE_CREDENTIALS",
     default=None,
@@ -50,9 +54,11 @@ an SSH server.
 )
 @click.option(
     "--log-file",
+    "log_files",
     default=None,
     type=LogFile.cli_type,
     nargs=2,
+    multiple=True,
     metavar="<path> <loglevel>",
     envvar="XNAT_INGEST_TRANSFER_LOGFILE",
     help=(
@@ -99,7 +105,7 @@ an SSH server.
 @click.option(
     "--xnat-login",
     nargs=3,
-    type=str,
+    type=XnatLogin.cli_type,
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
@@ -108,11 +114,11 @@ an SSH server.
 def transfer(
     staging_dir: Path,
     remote_store: str,
-    credentials: ty.Tuple[str, str],
-    log_file: LogFile,
+    store_credentials: ty.Tuple[str, str],
+    log_files: ty.List[LogFile],
     log_level: str,
     log_emails: ty.List[LogEmail],
-    mail_server: ty.Tuple[MailServer],
+    mail_server: MailServer,
     delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[ty.Tuple[str, str, str]],
@@ -121,7 +127,12 @@ def transfer(
     if not staging_dir.exists():
         raise ValueError(f"Staging directory '{staging_dir}' does not exist")
 
-    set_logger_handling(log_level, log_file, log_emails, mail_server)
+    set_logger_handling(
+        log_level=log_level,
+        log_files=log_files,
+        log_emails=log_emails,
+        mail_server=mail_server,
+    )
 
     if remote_store.startswith("s3://"):
         store_type = "s3"
