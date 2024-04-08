@@ -114,14 +114,14 @@ an SSH server.
 def transfer(
     staging_dir: Path,
     remote_store: str,
-    store_credentials: ty.Tuple[str, str],
+    store_credentials: ty.Optional[StoreCredentials],
     log_files: ty.List[LogFile],
     log_level: str,
     log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     delete: bool,
     raise_errors: bool,
-    xnat_login: ty.Optional[ty.Tuple[str, str, str]],
+    xnat_login: ty.Optional[XnatLogin],
 ):
 
     if not staging_dir.exists():
@@ -145,11 +145,10 @@ def transfer(
         )
 
     if xnat_login is not None:
-        server, user, password = xnat_login
         xnat_repo = Xnat(
-            server=server,
-            user=user,
-            password=password,
+            server=xnat_login.host,
+            user=xnat_login.user,
+            password=xnat_login.password,
             cache_dir=Path(tempfile.mkdtemp()),
         )
     else:
@@ -215,16 +214,31 @@ def transfer(
                     logger.debug(
                         "Transferring %s to S3 (%s)", session_dir, remote_store
                     )
-                    sp.check_call(
+                    aws_cmd = (
+                        sp.check_output("which aws", shell=True).strip().decode("utf-8")
+                    )
+                    if store_credentials is None:
+                        raise ValueError(
+                            "No store credentials provided for S3 bucket transfer"
+                        )
+                    process = sp.Popen(
                         [
-                            "aws",
+                            aws_cmd,
                             "s3",
                             "sync",
-                            "--quiet",
                             str(session_dir),
                             remote_path,
-                        ]
+                        ],
+                        env={
+                            "AWS_ACCESS_KEY_ID": store_credentials.access_key,
+                            "AWS_SECRET_ACCESS_KEY": store_credentials.access_secret,
+                        },
+                        stdout=sp.PIPE,
+                        stderr=sp.PIPE,
                     )
+                    stdout, stderr = process.communicate()
+                    if process.returncode != 0:
+                        raise RuntimeError("AWS sync failed: " + stderr.decode("utf-8"))
                 elif store_type == "ssh":
                     logger.debug(
                         "Transferring %s to %s via SSH", session_dir, remote_store
