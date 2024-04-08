@@ -25,6 +25,7 @@ from ..utils import (
     set_logger_handling,
     get_checksums,
     calculate_checksums,
+    StoreCredentials,
 )
 
 
@@ -121,7 +122,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--store-credentials",
-    type=str,
+    type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
     envvar="XNAT_INGEST_UPLOAD_STORE_CREDENTIALS",
     default=None,
