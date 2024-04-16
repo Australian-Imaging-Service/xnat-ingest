@@ -281,19 +281,28 @@ class ImagingSession:
         for session_dicom_series in dicom_sessions.values():
 
             def get_id(field):
-                ids = set(s.metadata[field.keyword] for s in session_dicom_series)
-                if len(ids) > 1:
-                    raise DicomParseError(
-                        f"Multiple values for '{field}' tag found across scans in session: "
-                        f"{session_dicom_series}"
+                ids = set(s.metadata.get(field.keyword) for s in session_dicom_series)
+                ids.discard(None)
+                if ids:
+                    if len(ids) > 1:
+                        raise DicomParseError(
+                            f"Multiple values for '{field}' tag found across scans in session: "
+                            f"{session_dicom_series}"
+                        )
+                    id_ = next(iter(ids))
+                    if isinstance(id_, list):
+                        raise DicomParseError(
+                            f"Multiple values for '{field}' tag found within scans in session: "
+                            f"{session_dicom_series}"
+                        )
+                    id_ = cls.id_escape_re.sub("", id_)
+                else:
+                    logger.warning(
+                        "Did not find %s field in DICOM series %s",
+                        field.keyword,
+                        session_dicom_series,
                     )
-                id_ = next(iter(ids))
-                if isinstance(id_, list):
-                    raise DicomParseError(
-                        f"Multiple values for '{field}' tag found within scans in session: "
-                        f"{session_dicom_series}"
-                    )
-                id_ = cls.id_escape_re.sub("", id_)
+                    id_ = None
                 if not id_:
                     id_ = "UNKNOWN" + "".join(
                         random.choices(string.ascii_letters + string.digits, k=8)
