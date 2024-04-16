@@ -194,7 +194,7 @@ def transfer(
             ):
                 if session_dir.name.startswith("UNKNOWN"):
                     logger.error(
-                        "Session % in subject %s in project %s is not recognised and "
+                        "Session %s in subject %s in project %s is not recognised and "
                         "will not be transferred, please rename manually and transfer again",
                         session_dir.name,
                         subject_dir.name,
