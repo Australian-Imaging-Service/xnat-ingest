@@ -403,7 +403,7 @@ class ImagingSession:
             for scan_dir in session_dir.iterdir():
                 if not scan_dir.is_dir():
                     continue
-                scan_id, scan_type = scan_dir.name.split("-")
+                scan_id, scan_type = scan_dir.name.split("-", 1)
                 scan_resources = {}
                 for resource_dir in scan_dir.iterdir():
                     scan_resources[resource_dir.name] = FileSet(resource_dir.iterdir())
