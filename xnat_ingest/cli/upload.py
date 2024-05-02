@@ -211,8 +211,8 @@ def upload(
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
                 "s3",
-                aws_access_key_id=store_credentials[0],
-                aws_secret_access_key=store_credentials[1],
+                aws_access_key_id=store_credentials.access_key,
+                aws_secret_access_key=store_credentials.access_secret,
             )
             bucket_name, prefix = staged[5:].split("/", 1)
             bucket = s3.Bucket(bucket_name)
