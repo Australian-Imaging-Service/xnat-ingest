@@ -183,7 +183,7 @@ class ImagingSession:
     @cached_property
     def metadata(self):
         all_dicoms = list(self.dicoms)
-        all_keys = [list(d.metadata.keys()) for d in all_dicoms]
+        all_keys = [list(d.metadata.keys()) for d in all_dicoms if d.metadata]
         common_keys = [
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
         ]
