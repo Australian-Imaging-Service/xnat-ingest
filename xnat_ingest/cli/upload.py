@@ -15,9 +15,9 @@ import paramiko
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
-from .base import cli
-from ..session import ImagingSession
-from ..utils import (
+from xnat_ingest.cli.base import cli
+from xnat_ingest.session import ImagingSession
+from xnat_ingest.utils import (
     logger,
     LogFile,
     LogEmail,
@@ -47,7 +47,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.argument("staged", type=str, envvar="XNAT_INGEST_UPLOAD_STAGED")
 @click.argument("server", type=str, envvar="XNAT_INGEST_UPLOAD_HOST")
 @click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
-@click.argument("password", type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
+@click.option("--password", default=None, type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
     "--delete/--dont-delete",
     default=True,
@@ -249,19 +249,19 @@ def upload(
                     # we recreate the project/subject/sesssion directory structure
                     session_tmp_dir = tmp_download_dir.joinpath(*ids)
                     session_tmp_dir.mkdir(parents=True, exist_ok=True)
-                    for relpath, obj in tqdm(
-                        objs,
-                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
-                    ):
-                        obj_path = session_tmp_dir.joinpath(*relpath)
-                        obj_path.parent.mkdir(parents=True, exist_ok=True)
-                        logger.debug("Downloading %s to %s", obj, obj_path)
-                        with open(obj_path, "wb") as f:
-                            bucket.download_fileobj(obj.key, f)
+                    # for relpath, obj in tqdm(
+                    #     objs,
+                    #     desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
+                    # ):
+                    #     obj_path = session_tmp_dir.joinpath(*relpath)
+                    #     obj_path.parent.mkdir(parents=True, exist_ok=True)
+                    #     logger.debug("Downloading %s to %s", obj, obj_path)
+                    #     with open(obj_path, "wb") as f:
+                    #         bucket.download_fileobj(obj.key, f)
                     yield session_tmp_dir
-                    shutil.rmtree(
-                        session_tmp_dir
-                    )  # Delete the tmp session after the upload
+                    # shutil.rmtree(
+                    #     session_tmp_dir
+                    # )  # Delete the tmp session after the upload
 
             logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, staged)
             sessions = iter_staged_sessions()
@@ -446,7 +446,6 @@ def upload(
                 xnat_repo.connection.put(
                     f"/data/experiments/{xsession.id}?triggerPipelines=true"
                 )
-
                 msg = f"Succesfully uploaded all files in '{session.name}'"
                 if delete:
                     msg += ", deleting originals..."
@@ -523,3 +522,7 @@ def remove_old_files_on_ssh(remote_store: str, threshold: int):
             ssh_client.exec_command(f"rm {file_path}")
 
     ssh_client.close()
+
+
+if __name__ == "__main__":
+    upload()
