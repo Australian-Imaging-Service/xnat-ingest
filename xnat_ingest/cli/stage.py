@@ -3,9 +3,9 @@ import typing as ty
 import traceback
 import click
 from tqdm import tqdm
-from .base import cli
-from ..session import ImagingSession
-from ..utils import (
+from xnat_ingest.cli.base import cli
+from xnat_ingest.session import ImagingSession
+from xnat_ingest.utils import (
     DicomField,
     AssociatedFiles,
     logger,
@@ -217,3 +217,7 @@ def stage(
                 continue
             else:
                 raise
+
+
+if __name__ == "__main__":
+    stage()
