@@ -355,6 +355,7 @@ def transform_paths(
         assert match
         prev_index = 0
         new_fspath = ""
+        match_end = 0
         for groupname, group in match.groupdict().items():
             fieldname, remaining = groupname.split("__", maxsplit=1)
             if "__" in remaining:
