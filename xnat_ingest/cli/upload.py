@@ -249,19 +249,19 @@ def upload(
                     # we recreate the project/subject/sesssion directory structure
                     session_tmp_dir = tmp_download_dir.joinpath(*ids)
                     session_tmp_dir.mkdir(parents=True, exist_ok=True)
-                    # for relpath, obj in tqdm(
-                    #     objs,
-                    #     desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
-                    # ):
-                    #     obj_path = session_tmp_dir.joinpath(*relpath)
-                    #     obj_path.parent.mkdir(parents=True, exist_ok=True)
-                    #     logger.debug("Downloading %s to %s", obj, obj_path)
-                    #     with open(obj_path, "wb") as f:
-                    #         bucket.download_fileobj(obj.key, f)
+                    for relpath, obj in tqdm(
+                        objs,
+                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
+                    ):
+                        obj_path = session_tmp_dir.joinpath(*relpath)
+                        obj_path.parent.mkdir(parents=True, exist_ok=True)
+                        logger.debug("Downloading %s to %s", obj, obj_path)
+                        with open(obj_path, "wb") as f:
+                            bucket.download_fileobj(obj.key, f)
                     yield session_tmp_dir
-                    # shutil.rmtree(
-                    #     session_tmp_dir
-                    # )  # Delete the tmp session after the upload
+                    shutil.rmtree(
+                        session_tmp_dir
+                    )  # Delete the tmp session after the upload
 
             logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, staged)
             sessions = iter_staged_sessions()
