@@ -15,9 +15,9 @@ import paramiko
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
-from .base import cli
-from ..session import ImagingSession
-from ..utils import (
+from xnat_ingest.cli.base import cli
+from xnat_ingest.session import ImagingSession
+from xnat_ingest.utils import (
     logger,
     LogFile,
     LogEmail,
@@ -47,7 +47,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.argument("staged", type=str, envvar="XNAT_INGEST_UPLOAD_STAGED")
 @click.argument("server", type=str, envvar="XNAT_INGEST_UPLOAD_HOST")
 @click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
-@click.argument("password", type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
+@click.option("--password", default=None, type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
     "--delete/--dont-delete",
     default=True,
@@ -211,8 +211,8 @@ def upload(
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
                 "s3",
-                aws_access_key_id=store_credentials[0],
-                aws_secret_access_key=store_credentials[1],
+                aws_access_key_id=store_credentials.access_key,
+                aws_secret_access_key=store_credentials.access_secret,
             )
             bucket_name, prefix = staged[5:].split("/", 1)
             bucket = s3.Bucket(bucket_name)
@@ -446,7 +446,6 @@ def upload(
                 xnat_repo.connection.put(
                     f"/data/experiments/{xsession.id}?triggerPipelines=true"
                 )
-
                 msg = f"Succesfully uploaded all files in '{session.name}'"
                 if delete:
                     msg += ", deleting originals..."
@@ -523,3 +522,7 @@ def remove_old_files_on_ssh(remote_store: str, threshold: int):
             ssh_client.exec_command(f"rm {file_path}")
 
     ssh_client.close()
+
+
+if __name__ == "__main__":
+    upload()

@@ -183,7 +183,7 @@ class ImagingSession:
     @cached_property
     def metadata(self):
         all_dicoms = list(self.dicoms)
-        all_keys = [list(d.metadata.keys()) for d in all_dicoms]
+        all_keys = [list(d.metadata.keys()) for d in all_dicoms if d.metadata]
         common_keys = [
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
         ]
@@ -403,7 +403,7 @@ class ImagingSession:
             for scan_dir in session_dir.iterdir():
                 if not scan_dir.is_dir():
                     continue
-                scan_id, scan_type = scan_dir.name.split("-")
+                scan_id, scan_type = scan_dir.name.split("-", 1)
                 scan_resources = {}
                 for resource_dir in scan_dir.iterdir():
                     scan_resources[resource_dir.name] = FileSet(resource_dir.iterdir())
@@ -597,7 +597,7 @@ class ImagingSession:
                 # Transform the names of the paths to remove any identiable information
                 transformed_fspaths = transform_paths(
                     list(associated_fspaths),
-                    associated_files.glob,
+                    f"{dicom_dir}/{associated_files.glob}",
                     self.metadata,
                     staged_metadata,
                 )
