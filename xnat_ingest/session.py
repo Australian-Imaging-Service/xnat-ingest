@@ -597,7 +597,7 @@ class ImagingSession:
                 # Transform the names of the paths to remove any identiable information
                 transformed_fspaths = transform_paths(
                     list(associated_fspaths),
-                    associated_files.glob,
+                    f"{dicom_dir}/{associated_files.glob}",
                     self.metadata,
                     staged_metadata,
                 )
