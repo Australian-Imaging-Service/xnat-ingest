@@ -111,6 +111,12 @@ an SSH server.
     help="The XNAT server to upload to plus the user and password to use",
     envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
 )
+@click.option(
+    "--require-manifest/--dont-require-manifest",
+    default=False,
+    help="Whether to require a manifest file to be present in the session directory",
+    envvar="XNAT_INGEST_TRANSFER_REQUIRE_MANIFEST",
+)
 def transfer(
     staging_dir: Path,
     remote_store: str,
@@ -122,6 +128,7 @@ def transfer(
     delete: bool,
     raise_errors: bool,
     xnat_login: ty.Optional[XnatLogin],
+    require_manifest: bool,
 ):
 
     if not staging_dir.exists():
@@ -201,6 +208,16 @@ def transfer(
                         project_dir.name,
                     )
                     continue
+                if require_manifest and not (session_dir / "MANIFEST.yaml").exists():
+                    logger.warning(
+                        "Session %s in subject %s in project %s does not contain a "
+                        "'MANIFEST.yaml' and is therefore considered be incomplete and "
+                        "will not be synced",
+                        session_dir.name,
+                        subject_dir.name,
+                        project_dir.name,
+                    )
+                    continue
                 remote_path = (
                     remote_store
                     + "/"
@@ -226,6 +243,7 @@ def transfer(
                             aws_cmd,
                             "s3",
                             "sync",
+                            "--quiet",
                             str(session_dir),
                             remote_path,
                         ],
