@@ -30,6 +30,7 @@ from .utils import add_exc_note, transform_paths, DicomField, AssociatedFiles
 from .dicom import dcmedit_path
 import random
 import string
+import platform
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -79,6 +80,14 @@ class ImagingSession:
     @property
     def name(self):
         return f"{self.project_id}-{self.subject_id}-{self.visit_id}"
+
+    @property
+    def invalid_ids(self):
+        return (
+            self.project_id.startswith("INVALID")
+            or self.subject_id.startswith("INVALID")
+            or self.visit_id.startswith("INVALID")
+        )
 
     @property
     def staging_relpath(self):
@@ -304,7 +313,7 @@ class ImagingSession:
                     )
                     id_ = None
                 if not id_:
-                    id_ = "UNKNOWN" + "".join(
+                    id_ = "INVALID-MISSING-ID-" + "".join(
                         random.choices(string.ascii_letters + string.digits, k=8)
                     )
                 return id_
@@ -497,6 +506,7 @@ class ImagingSession:
         associated_files: ty.Optional[AssociatedFiles] = None,
         remove_original: bool = False,
         deidentify: bool = True,
+        project_list: ty.Optional[ty.List[str]] = None,
     ) -> "ImagingSession":
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
@@ -507,6 +517,9 @@ class ImagingSession:
             destination directory to save the deidentified files. The session will be saved
             to a directory with the project, subject and session IDs as subdirectories of
             this directory, along with the scans manifest
+        work_dir : Path, optional
+            the directory the staged sessions are created in before they are moved into
+            the staging directory
         associated_files : ty.Tuple[str, str], optional
             Glob pattern used to select the non-dicom files to include in the session. Note
             that the pattern is relative to the parent directory containing the DICOM files
@@ -524,6 +537,9 @@ class ImagingSession:
             delete original files after they have been staged, false by default
         deidentify : bool, optional
             deidentify the scans in the staging process, true by default
+        project_list : list[str], optional
+            list of available projects in the store, used to check whether the project ID
+            is valid
 
         Returns
         -------
@@ -535,9 +551,14 @@ class ImagingSession:
                 "Did not find `dcmedit` tool from the MRtrix package on the system path, "
                 "de-identification will be performed by pydicom instead and may be slower"
             )
+
         staged_scans = []
         staged_metadata = {}
-        session_dir = dest_dir / self.project_id / self.subject_id / self.visit_id
+        if project_list is None or self.project_id in project_list:
+            project_dir = self.project_id
+        else:
+            project_dir = "INVALID-UNRECOGNISED-PROJECT-" + self.project_id
+        session_dir = dest_dir / project_dir / self.subject_id / self.visit_id
         session_dir.mkdir(parents=True)
         for scan in tqdm(
             self.scans.values(), f"Staging DICOM sessions to {session_dir}"
@@ -595,9 +616,18 @@ class ImagingSession:
 
             if deidentify:
                 # Transform the names of the paths to remove any identiable information
+                if associated_files.glob.startswith("/") or (
+                    platform.system() == "Windows"
+                    and re.match(r"[a-zA-Z]:\\", associated_files.glob)
+                ):
+                    assoc_glob_pattern = associated_files.glob
+                else:
+                    assoc_glob_pattern = (
+                        str(dicom_dir) + os.path.sep + associated_files.glob
+                    )
                 transformed_fspaths = transform_paths(
                     list(associated_fspaths),
-                    f"{dicom_dir}/{associated_files.glob}",
+                    assoc_glob_pattern,
                     self.metadata,
                     staged_metadata,
                 )

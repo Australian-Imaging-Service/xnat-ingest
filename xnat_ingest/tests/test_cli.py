@@ -201,6 +201,10 @@ def test_stage_and_upload(
             # "info",
             "--raise-errors",
             "--delete",
+            "--xnat-login",
+            "http://localhost:8080",
+            "admin",
+            "admin",
         ],
     )
 
