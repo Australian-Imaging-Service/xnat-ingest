@@ -49,7 +49,10 @@ def imaging_session() -> ImagingSession:
         ImagingScan(
             id=str(d.metadata["SeriesNumber"]),
             type=str(d.metadata["SeriesDescription"]),
-            resources={"DICOM": d}) for d in dicoms]
+            resources={"DICOM": d},
+        )
+        for d in dicoms
+    ]
     return ImagingSession(
         project_id="PROJECTID",
         subject_id="SUBJECTID",
@@ -110,7 +113,9 @@ def dataset(tmp_path: Path) -> Dataset:
     return dataset
 
 
-@pytest.mark.xfail(condition=platform.system() == "Linux", reason="Not working on ubuntu")
+@pytest.mark.xfail(
+    condition=platform.system() == "Linux", reason="Not working on ubuntu"
+)
 def test_session_select_resources(
     imaging_session: ImagingSession, dataset: Dataset, tmp_path: Path
 ):
@@ -118,9 +123,7 @@ def test_session_select_resources(
     assoc_dir = tmp_path / "assoc"
     assoc_dir.mkdir()
 
-    for fspath in get_raw_data_files(
-        first_name=FIRST_NAME, last_name=LAST_NAME
-    ):
+    for fspath in get_raw_data_files(first_name=FIRST_NAME, last_name=LAST_NAME):
         fspath.rename(assoc_dir / fspath.name)
 
     staging_dir = tmp_path / "staging"
@@ -130,7 +133,7 @@ def test_session_select_resources(
         staging_dir,
         associated_files=AssociatedFiles(
             str(assoc_dir) + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
-            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*"
+            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
         ),
     )
 
@@ -141,16 +144,14 @@ def test_session_select_resources(
     assert set(ids) == set(("1", "2", "4", "602", "603"))
     assert set(descs) == set(
         [
-            "AC CT 3.0  SWB HD_FoV",
+            "AC CT 30  SWB HD_FoV",
             "PET SWB 8MIN",
-            "Topogram 0.6 Tr60",
+            "Topogram 06 Tr60",
             "602",
             "603",
         ]
     )
-    assert set(resource_names) == set(
-        ("DICOM", "LISTMODE", "COUNTRATE", "EM_SINO")
-    )
+    assert set(resource_names) == set(("DICOM", "LISTMODE", "COUNTRATE", "EM_SINO"))
     assert set(type(s) for s in scans) == set(
         [
             DicomSeries,

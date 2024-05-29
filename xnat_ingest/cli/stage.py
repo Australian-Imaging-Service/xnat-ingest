@@ -2,9 +2,11 @@ from pathlib import Path
 import typing as ty
 import traceback
 import click
+import tempfile
 from tqdm import tqdm
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
+from arcana.xnat import Xnat
 from xnat_ingest.utils import (
     DicomField,
     AssociatedFiles,
@@ -12,6 +14,7 @@ from xnat_ingest.utils import (
     LogFile,
     LogEmail,
     MailServer,
+    XnatLogin,
     set_logger_handling,
 )
 
@@ -149,6 +152,15 @@ are uploaded to XNAT
     envvar="XNAT_INGEST_STAGE_DEIDENTIFY",
     help="whether to deidentify the file names and DICOM metadata before staging",
 )
+@click.option(
+    "--xnat-login",
+    nargs=3,
+    type=XnatLogin.cli_type,
+    default=None,
+    metavar="<host> <user> <password>",
+    help="The XNAT server to upload to plus the user and password to use",
+    envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
+)
 def stage(
     dicoms_path: str,
     staging_dir: Path,
@@ -164,6 +176,7 @@ def stage(
     mail_server: MailServer,
     raise_errors: bool,
     deidentify: bool,
+    xnat_login: XnatLogin,
 ):
     set_logger_handling(
         log_level=log_level,
@@ -171,6 +184,18 @@ def stage(
         log_files=log_files,
         mail_server=mail_server,
     )
+
+    if xnat_login:
+        xnat_repo = Xnat(
+            server=xnat_login.host,
+            user=xnat_login.user,
+            password=xnat_login.password,
+            cache_dir=Path(tempfile.mkdtemp()),
+        )
+        with xnat_repo.connection:
+            project_list = list(xnat_repo.connection.projects)
+    else:
+        project_list = None
 
     msg = f"Loading DICOM sessions from '{dicoms_path}'"
 
@@ -207,6 +232,7 @@ def stage(
                 associated_files=associated_files,
                 remove_original=delete,
                 deidentify=deidentify,
+                project_list=project_list,
             )
         except Exception as e:
             if not raise_errors:
