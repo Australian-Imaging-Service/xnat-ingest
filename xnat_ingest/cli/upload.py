@@ -154,6 +154,13 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     default=0,
     help="The number of days to keep files in the remote store for",
 )
+@click.option(
+    "--verify-ssl/--dont-verify-ssl",
+    type=bool,
+    default=False,
+    envvar="XNAT_INGEST_UPLOAD_VERIFY_SSL",
+    help="Whether to verify the SSL certificate of the XNAT server",
+)
 def upload(
     staged: str,
     server: str,
@@ -170,6 +177,7 @@ def upload(
     temp_dir: ty.Optional[Path],
     use_manifest: bool,
     clean_up_older_than: int,
+    verify_ssl: bool,
 ):
 
     set_logger_handling(
@@ -182,7 +190,11 @@ def upload(
         tempfile.tempdir = str(temp_dir)
 
     xnat_repo = Xnat(
-        server=server, user=user, password=password, cache_dir=Path(tempfile.mkdtemp())
+        server=server,
+        user=user,
+        password=password,
+        cache_dir=Path(tempfile.mkdtemp()),
+        verify_ssl=verify_ssl,
     )
 
     with xnat_repo.connection:
