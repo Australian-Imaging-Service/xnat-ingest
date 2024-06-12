@@ -17,7 +17,7 @@ dependencies = [
     "paramiko",
     "xnat",
     "arcana",
-    "arcana-xnat",
+    "arcana-xnat >=0.4.1",
 ]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]
@@ -47,7 +47,7 @@ dev = ["black", "pre-commit", "codespell", "flake8", "flake8-pyproject"]
 test = [
     "pytest >=6.2.5",
     "pytest-env>=0.6.2",
-    "pytest-cov>=2.12.1",    
+    "pytest-cov>=2.12.1",
     "xnat4tests >=0.3",
     "medimages4tests >=0.3.1",
     "PyYAML",

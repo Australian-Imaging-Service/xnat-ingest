@@ -103,6 +103,7 @@ jobs:
       id: versions
       run: |
         VERSION=$(git describe --tags --abbrev=0)
+        VERSION=${VERSION#v}
         IMAGE=${{ env.REGISTRY }}/$(echo "${{ env.IMAGE_NAME }}" | awk '{print tolower($0)}')
         echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
         echo "TAG=$IMAGE:$VERSION" >> $GITHUB_OUTPUT
