@@ -157,7 +157,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
-    default=False,
+    default=True,
     envvar="XNAT_INGEST_UPLOAD_VERIFY_SSL",
     help="Whether to verify the SSL certificate of the XNAT server",
 )
