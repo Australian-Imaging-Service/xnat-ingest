@@ -49,12 +49,6 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
 @click.option("--password", default=None, type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
-    "--delete/--dont-delete",
-    default=True,
-    envvar="XNAT_INGEST_UPLOAD_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not",
-)
-@click.option(
     "--log-level",
     default="info",
     type=str,
@@ -166,7 +160,6 @@ def upload(
     server: str,
     user: str,
     password: str,
-    delete: bool,
     log_level: str,
     log_files: ty.List[LogFile],
     log_emails: ty.List[LogEmail],
@@ -458,16 +451,7 @@ def upload(
                 xnat_repo.connection.put(
                     f"/data/experiments/{xsession.id}?triggerPipelines=true"
                 )
-                msg = f"Succesfully uploaded all files in '{session.name}'"
-                if delete:
-                    msg += ", deleting originals..."
-                logger.info(msg)
-                if delete:
-                    shutil.rmtree(session_staging_dir)
-                    logger.info(
-                        f"Deleted staging dir '{str(session_staging_dir)}' session data "
-                        "after successful upload"
-                    )
+                logger.info(f"Succesfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
                     logger.error(
