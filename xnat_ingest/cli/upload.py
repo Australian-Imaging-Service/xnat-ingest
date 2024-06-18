@@ -15,6 +15,7 @@ import paramiko
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
+from xnat.exceptions import XNATResponseError
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.utils import (
@@ -442,15 +443,28 @@ def upload(
                 logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
                 logger.info("Extracting metadata from DICOMs on XNAT..")
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
-                )
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?fixScanTypes=true"
-                )
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?triggerPipelines=true"
-                )
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
+                    )
+                except XNATResponseError as e:
+                    logger.warning(
+                        f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
+                    )
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?fixScanTypes=true"
+                    )
+                except XNATResponseError as e:
+                    logger.warning(f"Failed to fix scan types in '{session.name}': {e}")
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?triggerPipelines=true"
+                    )
+                except XNATResponseError as e:
+                    logger.warning(
+                        f"Failed to trigger pipelines in '{session.name}': {e}"
+                    )
                 logger.info(f"Succesfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
