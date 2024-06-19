@@ -179,7 +179,7 @@ def set_logger_handling(
         if log_file.loglevel:
             log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
         log_file_hdle.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
         for logr in loggers:
             logr.addHandler(log_file_hdle)
