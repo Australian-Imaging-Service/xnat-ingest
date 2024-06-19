@@ -84,6 +84,18 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     ),
 )
 @click.option(
+    "--add-logger",
+    type=str,
+    multiple=True,
+    default=(),
+    envvar="XNAT_INGEST_UPLOAD_LOGGERS",
+    help=(
+        "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
+        "But additional loggers can be included (e.g. 'xnat') can be "
+        "specified here"
+    ),
+)
+@click.option(
     "--mail-server",
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
@@ -166,6 +178,7 @@ def upload(
     log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     always_include: ty.Sequence[str],
+    add_logger: ty.List[str],
     raise_errors: bool,
     store_credentials: ty.Tuple[str, str],
     temp_dir: ty.Optional[Path],
@@ -179,6 +192,7 @@ def upload(
         log_emails=log_emails,
         log_files=log_files,
         mail_server=mail_server,
+        add_logger=add_logger,
     )
     if temp_dir:
         tempfile.tempdir = str(temp_dir)

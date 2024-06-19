@@ -128,6 +128,18 @@ are uploaded to XNAT
     ),
 )
 @click.option(
+    "--add-logger",
+    type=str,
+    multiple=True,
+    default=(),
+    envvar="XNAT_INGEST_UPLOAD_LOGGERS",
+    help=(
+        "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
+        "But additional loggers can be included (e.g. 'xnat') can be "
+        "specified here"
+    ),
+)
+@click.option(
     "--mail-server",
     type=MailServer.cli_type,
     nargs=4,
@@ -173,6 +185,7 @@ def stage(
     log_level: str,
     log_files: ty.List[LogFile],
     log_emails: ty.List[LogEmail],
+    add_logger: ty.List[str],
     mail_server: MailServer,
     raise_errors: bool,
     deidentify: bool,
@@ -183,6 +196,7 @@ def stage(
         log_emails=log_emails,
         log_files=log_files,
         mail_server=mail_server,
+        add_logger=add_logger,
     )
 
     if xnat_login:
