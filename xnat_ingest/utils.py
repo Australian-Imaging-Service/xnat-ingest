@@ -134,14 +134,22 @@ def set_logger_handling(
     log_emails: ty.List[LogEmail] | None,
     log_files: ty.List[LogFile] | None,
     mail_server: MailServer,
+    add_logger: ty.Sequence[str] = (),
 ):
+    loggers = [logger]
+    for log in add_logger:
+        loggers.append(logging.getLogger(log))
 
     levels = [log_level]
-    levels.extend(le.loglevel for le in log_emails)
-    levels.extend(lf.loglevel for lf in log_files)
+    if log_emails:
+        levels.extend(le.loglevel for le in log_emails)
+    if log_files:
+        levels.extend(lf.loglevel for lf in log_files)
 
     min_log_level = min(getattr(logging, ll.upper()) for ll in levels)
-    logger.setLevel(min_log_level)
+
+    for logr in loggers:
+        logr.setLevel(min_log_level)
 
     # Configure the email logger
     if log_emails:
@@ -161,7 +169,8 @@ def set_logger_handling(
                 secure=None,
             )
             smtp_hdle.setLevel(getattr(logging, log_email.loglevel.upper()))
-            logger.addHandler(smtp_hdle)
+            for logr in loggers:
+                logr.addHandler(smtp_hdle)
 
     # Configure the file logger
     for log_file in log_files:
@@ -172,14 +181,16 @@ def set_logger_handling(
         log_file_hdle.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
-        logger.addHandler(log_file_hdle)
+        for logr in loggers:
+            logr.addHandler(log_file_hdle)
 
     console_hdle = logging.StreamHandler(sys.stdout)
     console_hdle.setLevel(getattr(logging, log_level.upper()))
     console_hdle.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     )
-    logger.addHandler(console_hdle)
+    for logr in loggers:
+        logr.addHandler(console_hdle)
 
 
 def get_checksums(xresource) -> ty.Dict[str, str]:

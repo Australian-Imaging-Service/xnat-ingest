@@ -15,6 +15,7 @@ import paramiko
 from fileformats.generic import File
 from arcana.core.data.set import Dataset
 from arcana.xnat import Xnat
+from xnat.exceptions import XNATResponseError
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.utils import (
@@ -49,12 +50,6 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
 @click.option("--password", default=None, type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
 @click.option(
-    "--delete/--dont-delete",
-    default=True,
-    envvar="XNAT_INGEST_UPLOAD_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not",
-)
-@click.option(
     "--log-level",
     default="info",
     type=str,
@@ -86,6 +81,18 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
+    ),
+)
+@click.option(
+    "--add-logger",
+    type=str,
+    multiple=True,
+    default=(),
+    envvar="XNAT_INGEST_UPLOAD_LOGGERS",
+    help=(
+        "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
+        "But additional loggers can be included (e.g. 'xnat') can be "
+        "specified here"
     ),
 )
 @click.option(
@@ -157,7 +164,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
-    default=False,
+    default=True,
     envvar="XNAT_INGEST_UPLOAD_VERIFY_SSL",
     help="Whether to verify the SSL certificate of the XNAT server",
 )
@@ -166,12 +173,12 @@ def upload(
     server: str,
     user: str,
     password: str,
-    delete: bool,
     log_level: str,
     log_files: ty.List[LogFile],
     log_emails: ty.List[LogEmail],
     mail_server: MailServer,
     always_include: ty.Sequence[str],
+    add_logger: ty.List[str],
     raise_errors: bool,
     store_credentials: ty.Tuple[str, str],
     temp_dir: ty.Optional[Path],
@@ -185,6 +192,7 @@ def upload(
         log_emails=log_emails,
         log_files=log_files,
         mail_server=mail_server,
+        add_logger=add_logger,
     )
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
@@ -449,25 +457,29 @@ def upload(
                 logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
                 logger.info("Extracting metadata from DICOMs on XNAT..")
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
-                )
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?fixScanTypes=true"
-                )
-                xnat_repo.connection.put(
-                    f"/data/experiments/{xsession.id}?triggerPipelines=true"
-                )
-                msg = f"Succesfully uploaded all files in '{session.name}'"
-                if delete:
-                    msg += ", deleting originals..."
-                logger.info(msg)
-                if delete:
-                    shutil.rmtree(session_staging_dir)
-                    logger.info(
-                        f"Deleted staging dir '{str(session_staging_dir)}' session data "
-                        "after successful upload"
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
                     )
+                except XNATResponseError as e:
+                    logger.warning(
+                        f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
+                    )
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?fixScanTypes=true"
+                    )
+                except XNATResponseError as e:
+                    logger.warning(f"Failed to fix scan types in '{session.name}': {e}")
+                try:
+                    xnat_repo.connection.put(
+                        f"/data/experiments/{xsession.id}?triggerPipelines=true"
+                    )
+                except XNATResponseError as e:
+                    logger.warning(
+                        f"Failed to trigger pipelines in '{session.name}': {e}"
+                    )
+                logger.info(f"Succesfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
                     logger.error(
