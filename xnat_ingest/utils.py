@@ -187,7 +187,7 @@ def set_logger_handling(
     console_hdle = logging.StreamHandler(sys.stdout)
     console_hdle.setLevel(getattr(logging, log_level.upper()))
     console_hdle.setFormatter(
-        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
     for logr in loggers:
         logr.addHandler(console_hdle)
