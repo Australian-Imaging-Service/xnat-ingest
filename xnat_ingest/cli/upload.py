@@ -433,14 +433,23 @@ def upload(
                             SessionClass,
                             ScanClass,
                         )
+                    logger.debug("Creating scan %s in %s", scan_id, session_path)
                     xscan = ScanClass(id=scan_id, type=scan_type, parent=xsession)
+                    logger.debug(
+                        "Creating resource %s in %s in %s",
+                        resource_name,
+                        scan_id,
+                        session_path,
+                    )
                     xresource = xscan.create_resource(resource_name)
                     if isinstance(scan, File):
                         for fspath in scan.fspaths:
                             xresource.upload(str(fspath), fspath.name)
                     else:
                         xresource.upload_dir(scan.parent)
+                    logger.debug("retrieving checksums for %s", xresource)
                     remote_checksums = get_checksums(xresource)
+                    logger.debug("calculating checksums for %s", xresource)
                     calc_checksums = calculate_checksums(scan)
                     if remote_checksums != calc_checksums:
                         mismatching = [
