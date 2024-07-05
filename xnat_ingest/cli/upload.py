@@ -7,9 +7,11 @@ import typing as ty
 from collections import defaultdict
 import tempfile
 from operator import itemgetter
+import subprocess as sp
 import click
 from tqdm import tqdm
 from natsort import natsorted
+import xnat
 import boto3
 import paramiko
 from fileformats.generic import File
@@ -168,6 +170,17 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     envvar="XNAT_INGEST_UPLOAD_VERIFY_SSL",
     help="Whether to verify the SSL certificate of the XNAT server",
 )
+@click.option(
+    "--use-curl-jsession/--dont-use-curl-jsession",
+    type=bool,
+    default=False,
+    envvar="XNAT_INGEST_UPLOAD_USE_CURL_JSESSION",
+    help=(
+        "Whether to use CURL to create a JSESSION token to authenticate with XNAT. This is "
+        "used to work around a strange authentication issue when running within a Kubernetes "
+        "cluster and targeting the XNAT Tomcat directly"
+    ),
+)
 def upload(
     staged: str,
     server: str,
@@ -185,6 +198,7 @@ def upload(
     use_manifest: bool,
     clean_up_older_than: int,
     verify_ssl: bool,
+    use_curl_jsession: bool,
 ):
 
     set_logger_handling(
@@ -204,6 +218,22 @@ def upload(
         cache_dir=Path(tempfile.mkdtemp()),
         verify_ssl=verify_ssl,
     )
+
+    if use_curl_jsession:
+        jsession = sp.check_output(
+            [
+                "curl",
+                "-X",
+                "PUT",
+                "-d",
+                f"username={user}&password={password}",
+                f"{server}/data/services/auth",
+            ]
+        ).decode("utf-8")
+        xnat_repo.connection.depth = 1
+        xnat_repo.connection.session = xnat.connect(
+            server, user=user, jsession=jsession
+        )
 
     with xnat_repo.connection:
 
@@ -498,6 +528,9 @@ def upload(
                     continue
                 else:
                     raise
+
+    if use_curl_jsession:
+        xnat_repo.connection.exit()
 
     if clean_up_older_than:
         logger.info(
