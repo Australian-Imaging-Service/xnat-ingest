@@ -530,7 +530,7 @@ def upload(
                     raise
 
     if use_curl_jsession:
-        xnat_repo.exit()
+        xnat_repo.connection.exit()
 
     if clean_up_older_than:
         logger.info(
