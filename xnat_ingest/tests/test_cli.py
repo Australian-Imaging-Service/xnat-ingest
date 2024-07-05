@@ -224,6 +224,7 @@ def test_stage_and_upload(
             "--always-include",
             "medimage/dicom-series",
             "--raise-errors",
+            "--use-curl-jsession",
         ],
         env={
             "XNAT_INGEST_UPLOAD_HOST": xnat_server,
