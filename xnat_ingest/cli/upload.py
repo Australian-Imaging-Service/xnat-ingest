@@ -181,6 +181,17 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
         "cluster and targeting the XNAT Tomcat directly"
     ),
 )
+@click.option(
+    "--method",
+    type=click.Choice(["per_file", "tar_memory", "tgz_memory", "tar_file", "tgz_file"]),
+    default="tgz_file",
+    envvar="XNAT_INGEST_UPLOAD_METHOD",
+    help=(
+        "The method to use to upload the files to XNAT. Passed through to XNATPy and controls "
+        "whether directories are tarred and/or gzipped before they are uploaded, by default "
+        "'tgz_file' is used"
+    ),
+)
 def upload(
     staged: str,
     server: str,
@@ -199,6 +210,7 @@ def upload(
     clean_up_older_than: int,
     verify_ssl: bool,
     use_curl_jsession: bool,
+    method: str,
 ):
 
     set_logger_handling(
@@ -476,7 +488,7 @@ def upload(
                         for fspath in scan.fspaths:
                             xresource.upload(str(fspath), fspath.name)
                     else:
-                        xresource.upload_dir(scan.parent)
+                        xresource.upload_dir(scan.parent, method=method)
                     logger.debug("retrieving checksums for %s", xresource)
                     remote_checksums = get_checksums(xresource)
                     logger.debug("calculating checksums for %s", xresource)

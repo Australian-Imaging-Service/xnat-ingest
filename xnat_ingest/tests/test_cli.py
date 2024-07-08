@@ -224,6 +224,8 @@ def test_stage_and_upload(
             "--always-include",
             "medimage/dicom-series",
             "--raise-errors",
+            "--method",
+            "tar_file",
             "--use-curl-jsession",
         ],
         env={
