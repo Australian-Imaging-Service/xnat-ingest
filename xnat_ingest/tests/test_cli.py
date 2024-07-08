@@ -202,6 +202,8 @@ def test_stage_and_upload(
             "--add-logger",
             "xnat",
             "--raise-errors",
+            "--method",
+            "tar_file",
             "--delete",
             "--xnat-login",
             "http://localhost:8080",
