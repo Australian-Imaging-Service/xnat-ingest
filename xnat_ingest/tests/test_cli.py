@@ -202,8 +202,6 @@ def test_stage_and_upload(
             "--add-logger",
             "xnat",
             "--raise-errors",
-            "--method",
-            "tar_file",
             "--delete",
             "--xnat-login",
             "http://localhost:8080",
@@ -226,6 +224,8 @@ def test_stage_and_upload(
             "--always-include",
             "medimage/dicom-series",
             "--raise-errors",
+            "--method",
+            "tar_file",
             "--use-curl-jsession",
         ],
         env={
