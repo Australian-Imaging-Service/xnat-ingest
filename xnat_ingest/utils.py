@@ -303,6 +303,7 @@ def transform_paths(
     glob_pattern: str,
     old_values: dict[str, str],
     new_values: dict[str, str],
+    spaces_to_underscores: bool = False,
 ) -> list[Path]:
     """Applys the transforms FS paths matching `glob_pattern` by replacing the template values
     found in the `old_values` dict to the values in `new_values`. Used to strip any identifying
@@ -319,6 +320,8 @@ def transform_paths(
         the values used to parameterise the existing file paths
     new_values : dict[str, str]
         the new values to parameterise the transformed file paths
+    spaces_to_underscores: bool
+        whether to replace spaces with underscores in the transformed paths
 
     Returns
     -------
@@ -347,6 +350,8 @@ def transform_paths(
         if attr_name:
             groupname += "__" + attr_name
             old_val = getattr(old_val, attr_name)
+        if spaces_to_underscores:
+            old_val = old_val.replace(" ", "_")
         groupname += "__" + str(group_count[fieldname])
         group_str = f"(?P<{groupname}>{old_val})"
         group_count[fieldname] += 1

@@ -10,17 +10,22 @@ from fileformats.medimage import (
 )
 from arcana.core.data.set import Dataset
 from arcana.common import DirTree
+from medimages4tests.dummy.dicom.base import default_dicom_dir
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,
+    __file__ as pet_src_file,
 )
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
     get_image as get_ac_image,
+    __file__ as ac_src_file,
 )
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
     get_image as get_topogram_image,
+    __file__ as topogram_src_file,
 )
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
     get_image as get_statistics_image,
+    __file__ as statistics_src_file,
 )
 from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
     get_files as get_raw_data_files,
@@ -29,20 +34,37 @@ from xnat_ingest.session import ImagingSession, ImagingScan, DummySpace
 from xnat_ingest.utils import AssociatedFiles
 
 
-FIRST_NAME = "GivenName"
+FIRST_NAME = "Given Name"
 LAST_NAME = "FamilyName"
 
 
 @pytest.fixture
 def imaging_session() -> ImagingSession:
     PatientName = f"{FIRST_NAME}^{LAST_NAME}"
+    default_dicom_dir
     dicoms = [
         DicomSeries(d.iterdir())
         for d in (
-            get_pet_image(PatientName=PatientName),
-            get_ac_image(PatientName=PatientName),
-            get_topogram_image(PatientName=PatientName),
-            get_statistics_image(PatientName=PatientName),
+            get_pet_image(
+                out_dir=default_dicom_dir(pet_src_file).with_suffix(".with-spaces"),
+                PatientName=PatientName,
+            ),
+            get_ac_image(
+                out_dir=default_dicom_dir(ac_src_file).with_suffix(".with-spaces"),
+                PatientName=PatientName,
+            ),
+            get_topogram_image(
+                out_dir=default_dicom_dir(topogram_src_file).with_suffix(
+                    ".with-spaces"
+                ),
+                PatientName=PatientName,
+            ),
+            get_statistics_image(
+                out_dir=default_dicom_dir(statistics_src_file).with_suffix(
+                    ".with-spaces"
+                ),
+                PatientName=PatientName,
+            ),
         )
     ]
     scans = [
@@ -123,7 +145,9 @@ def test_session_select_resources(
     assoc_dir = tmp_path / "assoc"
     assoc_dir.mkdir()
 
-    for fspath in get_raw_data_files(first_name=FIRST_NAME, last_name=LAST_NAME):
+    for fspath in get_raw_data_files(
+        first_name=FIRST_NAME.replace(" ", "_"), last_name=LAST_NAME
+    ):
         fspath.rename(assoc_dir / fspath.name)
 
     staging_dir = tmp_path / "staging"
@@ -135,6 +159,7 @@ def test_session_select_resources(
             str(assoc_dir) + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
         ),
+        spaces_to_underscores=True,
     )
 
     resources = list(staged_session.select_resources(dataset))
