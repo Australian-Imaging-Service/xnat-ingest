@@ -84,7 +84,7 @@ are uploaded to XNAT
         'The "id-pattern" arg is a regular expression that is used to extract the scan ID & '
         "type/resource from the associated filename. Should be a regular-expression "
         "(Python syntax) with named groups called 'id' and 'type', e.g. "
-        r"--assoc-id-pattern '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
+        r"'[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
     ),
 )
 @click.option(
@@ -173,6 +173,13 @@ are uploaded to XNAT
     help="The XNAT server to upload to plus the user and password to use",
     envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
 )
+@click.option(
+    "--spaces-to-underscores/--no-spaces-to-underscores",
+    default=False,
+    help="Whether to replace spaces with underscores in the filenames of associated files",
+    envvar="XNAT_INGEST_STAGE_SPACES_TO_UNDERSCORES",
+    type=bool,
+)
 def stage(
     dicoms_path: str,
     staging_dir: Path,
@@ -190,6 +197,7 @@ def stage(
     raise_errors: bool,
     deidentify: bool,
     xnat_login: XnatLogin,
+    spaces_to_underscores: bool,
 ):
     set_logger_handling(
         log_level=log_level,
@@ -247,6 +255,7 @@ def stage(
                 remove_original=delete,
                 deidentify=deidentify,
                 project_list=project_list,
+                spaces_to_underscores=spaces_to_underscores,
             )
         except Exception as e:
             if not raise_errors:

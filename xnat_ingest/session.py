@@ -507,6 +507,7 @@ class ImagingSession:
         remove_original: bool = False,
         deidentify: bool = True,
         project_list: ty.Optional[ty.List[str]] = None,
+        spaces_to_underscores: bool = False,
     ) -> "ImagingSession":
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
@@ -540,6 +541,9 @@ class ImagingSession:
         project_list : list[str], optional
             list of available projects in the store, used to check whether the project ID
             is valid
+        spaces_to_underscores : bool, optional
+            when building associated file globs, convert spaces underscores in fields
+            extracted from source file metadata, false by default
 
         Returns
         -------
@@ -599,10 +603,14 @@ class ImagingSession:
             # with current session
             associated_fspaths: ty.Set[Path] = set()
             for dicom_dir in self.dicom_dirs:
-                assoc_glob = dicom_dir / associated_files.glob.format(**self.metadata)
+                assoc_glob = str(
+                    dicom_dir / associated_files.glob.format(**self.metadata)
+                )
+                if spaces_to_underscores:
+                    assoc_glob = assoc_glob.replace(" ", "_")
                 # Select files using the constructed glob pattern
                 associated_fspaths.update(
-                    Path(p) for p in glob(str(assoc_glob), recursive=True)
+                    Path(p) for p in glob(assoc_glob, recursive=True)
                 )
 
             logger.info(
@@ -630,6 +638,7 @@ class ImagingSession:
                     assoc_glob_pattern,
                     self.metadata,
                     staged_metadata,
+                    spaces_to_underscores=spaces_to_underscores,
                 )
                 staged_associated_fspaths = []
 
