@@ -1,5 +1,3 @@
-
-
 class UnsupportedModalityError(Exception):
     def __init__(self, msg):
         self.msg = msg
@@ -10,7 +8,7 @@ class StagingError(Exception):
         self.msg = msg
 
 
-class DicomParseError(StagingError):
+class ImagingSessionParseError(StagingError):
     def __init__(self, msg):
         self.msg = msg
 

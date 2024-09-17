@@ -6,7 +6,7 @@ import tempfile
 from tqdm import tqdm
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
-from arcana.xnat import Xnat
+from frametree.xnat import Xnat
 from xnat_ingest.utils import (
     DicomField,
     AssociatedFiles,
@@ -30,31 +30,76 @@ STAGING_DIR is the directory that the files for each session are collated to bef
 are uploaded to XNAT
 """,
 )
-@click.argument("dicoms_path", type=str, envvar="XNAT_INGEST_STAGE_DICOMS_PATH")
+@click.argument("files_path", type=str, envvar="XNAT_INGEST_STAGE_DICOMS_PATH")
 @click.argument(
     "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
 )
 @click.option(
+    "--datatype",
+    type=str,
+    metavar="<mime-type>",
+    multiple=True,
+    default="medimage/dicom-series",
+    envvar="XNAT_INGEST_STAGE_DATATYPE",
+    help="The datatype of the primary files to to upload",
+)
+@click.option(
     "--project-field",
-    type=DicomField,
+    type=str,
     default="StudyID",
     envvar="XNAT_INGEST_STAGE_PROJECT",
-    help=("The keyword or tag of the DICOM field to extract the XNAT project ID from "),
+    help=("The keyword of the metadata field to extract the XNAT project ID from "),
 )
 @click.option(
     "--subject-field",
-    type=DicomField,
+    type=str,
     default="PatientID",
     envvar="XNAT_INGEST_STAGE_SUBJECT",
-    help=("The keyword or tag of the DICOM field to extract the XNAT subject ID from "),
+    help=("The keyword of the metadata field to extract the XNAT subject ID from "),
 )
 @click.option(
     "--visit-field",
-    type=DicomField,
+    type=str,
     default="AccessionNumber",
+    envvar="XNAT_INGEST_STAGE_VISIT",
+    help=(
+        "The keyword of the metadata field to extract the XNAT imaging session ID from "
+    ),
+)
+@click.option(
+    "--session-field",
+    type=str,
+    default=None,
     envvar="XNAT_INGEST_STAGE_SESSION",
     help=(
-        "The keyword or tag of the DICOM field to extract the XNAT imaging session ID from "
+        "The keyword of the metadata field to extract the XNAT imaging session ID from "
+    ),
+)
+@click.option(
+    "--scan-id-field",
+    type=str,
+    default="SeriesNumber",
+    envvar="XNAT_INGEST_STAGE_SCAN_ID",
+    help=(
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from "
+    ),
+)
+@click.option(
+    "--scan-desc-field",
+    type=str,
+    default="SeriesDescription",
+    envvar="XNAT_INGEST_STAGE_SCAN_DESC",
+    help=(
+        "The keyword of the metadata field to extract the XNAT imaging scan description from "
+    ),
+)
+@click.option(
+    "--resource-field",
+    type=str,
+    default="ImageType",
+    envvar="XNAT_INGEST_STAGE_RESOURCE",
+    help=(
+        "The keyword of the metadata field to extract the XNAT imaging resource ID from "
     ),
 )
 @click.option(
@@ -68,6 +113,7 @@ are uploaded to XNAT
     type=AssociatedFiles.cli_type,
     nargs=2,
     default=None,
+    multiple=True,
     envvar="XNAT_INGEST_STAGE_ASSOCIATED",
     metavar="<glob> <id-pattern>",
     help=(
@@ -181,12 +227,17 @@ are uploaded to XNAT
     type=bool,
 )
 def stage(
-    dicoms_path: str,
+    files_path: str,
     staging_dir: Path,
+    datatype: str,
     associated_files: AssociatedFiles,
-    project_field: DicomField,
-    subject_field: DicomField,
-    visit_field: DicomField,
+    project_field: str,
+    subject_field: str,
+    visit_field: str,
+    session_field: str | None,
+    scan_id_field: str,
+    scan_desc_field: str,
+    resource_field: str,
     project_id: str | None,
     delete: bool,
     log_level: str,
@@ -219,7 +270,10 @@ def stage(
     else:
         project_list = None
 
-    msg = f"Loading DICOM sessions from '{dicoms_path}'"
+    if session_field is None and datatype == "medimage/dicom-series":
+        session_field = "StudyInstanceUID"
+
+    msg = f"Loading {datatype} sessions from '{files_path}'"
 
     if associated_files:
         msg += f" with associated files selected from '{associated_files.glob}'"
@@ -228,17 +282,21 @@ def stage(
 
     logger.info(msg)
 
-    sessions = ImagingSession.from_dicoms(
-        dicoms_path=dicoms_path,
+    sessions = ImagingSession.from_paths(
+        files_path=files_path,
         project_field=project_field,
         subject_field=subject_field,
         visit_field=visit_field,
+        session_field=session_field,
+        scan_id_field=scan_id_field,
+        scan_desc_field=scan_desc_field,
+        resource_field=resource_field,
         project_id=project_id,
     )
 
     logger.info("Staging sessions to '%s'", str(staging_dir))
 
-    for session in tqdm(sessions, f"Staging DICOM sessions found in '{dicoms_path}'"):
+    for session in tqdm(sessions, f"Staging DICOM sessions found in '{files_path}'"):
         try:
             session_staging_dir = staging_dir.joinpath(*session.staging_relpath)
             if session_staging_dir.exists():
