@@ -1,4 +1,3 @@
-import os
 from click.testing import CliRunner
 from xnat_ingest.cli import transfer
 from xnat_ingest.utils import show_cli_trace
