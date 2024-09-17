@@ -1,28 +1,28 @@
 import os
 import shutil
 from pathlib import Path
-from arcana.core.cli.dataset import (
+from frametree.core.cli import (  # type: ignore[import-untyped]
     define as dataset_define,
     add_source as dataset_add_source,
 )
-import xnat4tests
-from arcana.core.cli.store import add as store_add
+import xnat4tests  # type: ignore[import-untyped]
+from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from xnat_ingest.cli import stage, upload
 from xnat_ingest.utils import show_cli_trace
 from fileformats.medimage import DicomSeries
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_pet_image,
 )
-from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_ac_image,
 )
-from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_topogram_image,
 )
-from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_statistics_image,
 )
-from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_files as get_raw_data_files,
 )
 
@@ -136,8 +136,8 @@ def test_stage_and_upload(
     result = cli_runner(
         store_add,
         [
+            "xnat",
             "testxnat",
-            "xnat:Xnat",
             "--server",
             xnat_server,
             "--user",

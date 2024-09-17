@@ -11,13 +11,13 @@ import subprocess as sp
 import click
 from tqdm import tqdm
 from natsort import natsorted
-import xnat
+import xnat  # type: ignore[import-untyped]
 import boto3
 import paramiko
 from fileformats.generic import File
-from arcana.core.data.set import Dataset
-from arcana.xnat import Xnat
-from xnat.exceptions import XNATResponseError
+from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
+from frametree.xnat import Xnat  # type: ignore[import-untyped]
+from xnat.exceptions import XNATResponseError  # type: ignore[import-untyped]
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.utils import (
@@ -349,7 +349,7 @@ def upload(
             missing_datasets = set()
             for project_id in project_ids:
                 try:
-                    dataset = Dataset.load(project_id, xnat_repo)
+                    dataset = FrameSet.load(project_id, xnat_repo)
                 except Exception:
                     missing_datasets.add(project_id)
                 else:
@@ -392,7 +392,7 @@ def upload(
 
                 # Access Arcana dataset associated with project
                 try:
-                    dataset = Dataset.load(session.project_id, xnat_repo)
+                    dataset = FrameSet.load(session.project_id, xnat_repo)
                 except Exception as e:
                     logger.warning(
                         "Did not load dataset definition (%s) from %s project "

@@ -229,7 +229,7 @@ def stage(
     files_path: str,
     staging_dir: Path,
     datatype: str,
-    associated_files: AssociatedFiles,
+    associated_files: ty.List[AssociatedFiles],
     project_field: str,
     subject_field: str,
     visit_field: str,
@@ -274,10 +274,10 @@ def stage(
 
     msg = f"Loading {datatype} sessions from '{files_path}'"
 
-    if associated_files:
-        msg += f" with associated files selected from '{associated_files.glob}'"
-        if not associated_files.glob.startswith("/"):
-            msg += " (relative to the directories in which the DICOMs are found)"
+    for assoc_files in associated_files:
+        msg += f" with associated files selected from '{assoc_files.glob}'"
+        if not assoc_files.glob.startswith("/"):
+            msg += " (relative to the directories in which the primary files are found)"
 
     logger.info(msg)
 

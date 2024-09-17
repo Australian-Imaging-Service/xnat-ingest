@@ -8,29 +8,29 @@ from fileformats.medimage import (
     Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
 )
-from arcana.core.data.set import Dataset
-from arcana.common import DirTree
-from medimages4tests.dummy.dicom.base import default_dicom_dir
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
+from frametree.common import FileSystem  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.base import default_dicom_dir  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_pet_image,
     __file__ as pet_src_file,
 )
-from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_ac_image,
     __file__ as ac_src_file,
 )
-from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_topogram_image,
     __file__ as topogram_src_file,
 )
-from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_statistics_image,
     __file__ as statistics_src_file,
 )
-from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_files as get_raw_data_files,
 )
-from xnat_ingest.session import ImagingSession, ImagingScan, DummySpace
+from xnat_ingest.session import ImagingSession, ImagingScan, DummyAxes
 from xnat_ingest.utils import AssociatedFiles
 
 
@@ -84,7 +84,7 @@ def imaging_session() -> ImagingSession:
 
 
 @pytest.fixture
-def dataset(tmp_path: Path) -> Dataset:
+def dataset(tmp_path: Path) -> FrameSet:
     """For use in tests, this method creates a test dataset from the provided
     blueprint
 
@@ -104,12 +104,12 @@ def dataset(tmp_path: Path) -> Dataset:
         passed through to create_dataset
     """
     dataset_path = tmp_path / "a-dataset"
-    store = DirTree()
+    store = FileSystem()
     dataset = store.create_dataset(
         id=dataset_path,
         leaves=[],
         hierarchy=[],
-        space=DummySpace,
+        axes=DummyAxes,
     )
     for col_name, col_type, col_pattern in [
         ("pet", "medimage/dicom-series", "PET SWB 8MIN"),
@@ -139,7 +139,7 @@ def dataset(tmp_path: Path) -> Dataset:
     condition=platform.system() == "Linux", reason="Not working on ubuntu"
 )
 def test_session_select_resources(
-    imaging_session: ImagingSession, dataset: Dataset, tmp_path: Path
+    imaging_session: ImagingSession, dataset: FrameSet, tmp_path: Path
 ):
 
     assoc_dir = tmp_path / "assoc"

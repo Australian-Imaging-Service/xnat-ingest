@@ -941,9 +941,9 @@ class MockStore(Store):
     @property
     def row(self):
         return DataRow(
-            ids={DummySpace._: None},
-            dataset=FrameSet(id=None, store=self, hierarchy=[], space=DummySpace),
-            frequency=DummySpace._,
+            ids={DummyAxes._: None},
+            frameset=FrameSet(id=None, store=self, hierarchy=[], axes=DummyAxes),
+            frequency=DummyAxes._,
         )
 
     def populate_row(self, row: DataRow):
@@ -1011,7 +1011,7 @@ class MockStore(Store):
         id: str,
         leaves: ty.List[ty.Tuple[str, ...]],
         hierarchy: ty.List[str],
-        space: type,
+        axes: type,
         **kwargs,
     ):
         raise NotImplementedError
@@ -1029,12 +1029,12 @@ class MockStore(Store):
     def get_provenance(self, entry: DataEntry) -> ty.Dict[str, ty.Any]:
         raise NotImplementedError
 
-    def save_dataset_definition(
+    def save_frameset_definition(
         self, dataset_id: str, definition: ty.Dict[str, ty.Any], name: str
     ):
         raise NotImplementedError
 
-    def load_dataset_definition(
+    def load_frameset_definition(
         self, dataset_id: str, name: str
     ) -> ty.Dict[str, ty.Any]:
         raise NotImplementedError
@@ -1046,5 +1046,5 @@ class MockStore(Store):
         raise NotImplementedError
 
 
-class DummySpace(Axes):
+class DummyAxes(Axes):
     _ = 0b0
