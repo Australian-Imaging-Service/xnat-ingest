@@ -6,9 +6,8 @@ import tempfile
 from tqdm import tqdm
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
-from frametree.xnat import Xnat
+from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
-    DicomField,
     AssociatedFiles,
     logger,
     LogFile,
@@ -39,7 +38,7 @@ are uploaded to XNAT
     type=str,
     metavar="<mime-type>",
     multiple=True,
-    default="medimage/dicom-series",
+    default=["medimage/dicom-series"],
     envvar="XNAT_INGEST_STAGE_DATATYPE",
     help="The datatype of the primary files to to upload",
 )

@@ -5,15 +5,18 @@ import logging
 import os.path
 import subprocess as sp
 from functools import cached_property
-from typing_extensions import Self
 import shutil
+import random
+import string
+import platform
 from copy import deepcopy
-import yaml
-from tqdm import tqdm
-import attrs
 from itertools import chain
 from collections import defaultdict, Counter
 from pathlib import Path
+from typing_extensions import Self
+import attrs
+from tqdm import tqdm
+import yaml
 import pydicom
 from fileformats.generic import File
 from fileformats.application import Dicom
@@ -29,9 +32,6 @@ from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[im
 from .exceptions import ImagingSessionParseError, StagingError
 from .utils import add_exc_note, transform_paths, AssociatedFiles
 from .dicom import dcmedit_path
-import random
-import string
-import platform
 
 logger = logging.getLogger("xnat-ingest")
 
