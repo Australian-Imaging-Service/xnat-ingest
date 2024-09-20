@@ -18,7 +18,6 @@ import attrs
 from tqdm import tqdm
 import yaml
 import pydicom
-from fileformats.generic import File
 from fileformats.application import Dicom
 from fileformats.medimage import DicomSeries
 from fileformats.core import from_paths, FileSet, DataType, from_mime, to_mime
@@ -43,9 +42,20 @@ def scan_type_converter(scan_type: str) -> str:
 
 @attrs.define
 class ImagingScan:
+    """Representation of a scan to be uploaded to XNAT
+
+    Parameters
+    ----------
+    id: str
+        the ID of the scan on XNAT
+    type: str
+        the scan type/description
+    """
+
     id: str
     type: str = attrs.field(converter=scan_type_converter)
     resources: ty.Dict[str, FileSet] = attrs.field()
+    associated: bool = False
 
     def __contains__(self, resource_name):
         return resource_name in self.resources
@@ -115,13 +125,22 @@ class ImagingSession:
         return modalities
 
     @property
-    def dicoms(self):
-        return (scan["DICOM"] for scan in self.scans.values() if "DICOM" in scan)
+    def parent_dirs(self) -> ty.Set[Path]:
+        "Return parent directories for all resources in the session"
+        return set(r.parent for r in self.resources)
 
     @property
-    def dicom_dirs(self) -> ty.List[Path]:
-        "A common parent directory for all the top-level paths in the file-set"
-        return [p.parent for p in self.dicoms]  # type: ignore
+    def resources(self) -> ty.List[FileSet]:
+        return [r for p in self.scans.values() for r in p.resources.values()]
+
+    @property
+    def primary_resources(self) -> ty.List[FileSet]:
+        return [
+            r
+            for s in self.scans.values()
+            for r in s.resources.values()
+            if not s.associated
+        ]
 
     def select_resources(
         self,
@@ -199,13 +218,13 @@ class ImagingSession:
 
     @cached_property
     def metadata(self):
-        all_dicoms = list(self.dicoms)
-        all_keys = [list(d.metadata.keys()) for d in all_dicoms if d.metadata]
+        primary_resources = self.primary_resources
+        all_keys = [list(d.metadata.keys()) for d in primary_resources if d.metadata]
         common_keys = [
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
         ]
-        collated = {k: all_dicoms[0].metadata[k] for k in common_keys}
-        for i, series in enumerate(all_dicoms[1:], start=1):
+        collated = {k: primary_resources[0].metadata[k] for k in common_keys}
+        for i, series in enumerate(primary_resources[1:], start=1):
             for key in common_keys:
                 val = series.metadata[key]
                 if val != collated[key]:
@@ -232,7 +251,7 @@ class ImagingSession:
         visit_field: str = "AccessionNumber",
         scan_id_field: str = "SeriesNumber",
         scan_desc_field: str = "SeriesDescription",
-        resource_field: str = "ImageType",
+        resource_field: str = "ImageType[-1]",
         session_field: str | None = "StudyInstanceUID",
         project_id: str | None = None,
     ) -> ty.List[Self]:
@@ -260,7 +279,7 @@ class ImagingSession:
             by default "SeriesDescription"
         resource_field: str
             the metadata field that contains the XNAT resource ID for the imaging session,
-            by default "ImageType"
+            by default "ImageType[-1]"
         session_field : str, optional
             the name of the metadata field that uniquely identifies the session, used
             to check that the values extracted from the IDs across the DICOM scans are
@@ -331,8 +350,13 @@ class ImagingSession:
             session_uid = resource.metadata[session_field] if session_field else None
 
             def get_id(field_type: str, field_name: str) -> str:
+                if match := re.match(r"(\w+)\[([\-\d]+)\]", field_name):
+                    field_name, index = match.groups()
+                    index = int(index)
+                else:
+                    index = None
                 try:
-                    value = resource.metadata[field_name]
+                    value = str(resource.metadata[field_name])
                 except KeyError:
                     if session_uid and field_type in ("project", "subject", "visit"):
                         value = (
@@ -349,6 +373,8 @@ class ImagingSession:
                         f"Did not find '{field_name}' field in {resource}, "
                         "cannot uniquely identify the resource"
                     )
+                if index is not None:
+                    value = value[index]
                 return value
 
             if not project_id:
@@ -357,7 +383,10 @@ class ImagingSession:
             visit_id = get_id("visit", visit_field)
             scan_id = get_id("scan", scan_id_field)
             scan_type = get_id("scan type", scan_desc_field)
-            resource_id = get_id("resource", resource_field)
+            if isinstance(resource, DicomSeries):
+                resource_id = "DICOM"
+            else:
+                resource_id = get_id("resource", resource_field)
 
             if session_uid is None:
                 session_uid = (project_id, subject_id, visit_id)
@@ -592,7 +621,7 @@ class ImagingSession:
     def stage(
         self,
         dest_dir: Path,
-        associated_files: ty.Optional[AssociatedFiles] = None,
+        associated_file_groups: ty.Collection[AssociatedFiles] = (),
         remove_original: bool = False,
         deidentify: bool = True,
         project_list: ty.Optional[ty.List[str]] = None,
@@ -610,12 +639,12 @@ class ImagingSession:
         work_dir : Path, optional
             the directory the staged sessions are created in before they are moved into
             the staging directory
-        associated_files : ty.Tuple[str, str], optional
+        associated_file_groups : Collection[AssociatedFiles], optional
             Glob pattern used to select the non-dicom files to include in the session. Note
             that the pattern is relative to the parent directory containing the DICOM files
             NOT the current working directory.
             The glob pattern can contain string template placeholders corresponding to DICOM
-            metadata (e.g. '{PatientName.given_name}_{PatientName.family_name}'), which
+            metadata (e.g. '{PatientName.family_name}_{PatientName.given_name}'), which
             are substituted before the string is used to glob the non-DICOM files. In
             order to deidentify the filenames, the pattern must explicitly reference all
             identifiable fields in string template placeholders. By default, None
@@ -653,6 +682,7 @@ class ImagingSession:
             project_dir = "INVALID-UNRECOGNISED-PROJECT-" + self.project_id
         session_dir = dest_dir / project_dir / self.subject_id / self.visit_id
         session_dir.mkdir(parents=True)
+        session_metadata = self.metadata
         for scan in tqdm(
             self.scans.values(), f"Staging DICOM sessions to {session_dir}"
         ):
@@ -686,14 +716,14 @@ class ImagingSession:
             staged_scans.append(
                 ImagingScan(id=scan.id, type=scan.type, resources=staged_resources)
             )
-        if associated_files:
+        for associated_files in associated_file_groups:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
             associated_fspaths: ty.Set[Path] = set()
-            for dicom_dir in self.dicom_dirs:
+            for parent_dir in self.parent_dirs:
                 assoc_glob = str(
-                    dicom_dir / associated_files.glob.format(**self.metadata)
+                    parent_dir / associated_files.glob.format(**session_metadata)
                 )
                 if spaces_to_underscores:
                     assoc_glob = assoc_glob.replace(" ", "_")
@@ -705,7 +735,7 @@ class ImagingSession:
             logger.info(
                 "Found %s associated file paths matching '%s'",
                 len(associated_fspaths),
-                assoc_glob,
+                associated_files.glob,
             )
 
             tmpdir = session_dir / ".tmp"
@@ -720,12 +750,12 @@ class ImagingSession:
                     assoc_glob_pattern = associated_files.glob
                 else:
                     assoc_glob_pattern = (
-                        str(dicom_dir) + os.path.sep + associated_files.glob
+                        str(parent_dir) + os.path.sep + associated_files.glob
                     )
                 transformed_fspaths = transform_paths(
                     list(associated_fspaths),
                     assoc_glob_pattern,
-                    self.metadata,
+                    session_metadata,
                     staged_metadata,
                     spaces_to_underscores=spaces_to_underscores,
                 )
@@ -804,13 +834,13 @@ class ImagingSession:
                         else:
                             shutil.copyfile(fspath, dest_path)
                         resource_fspaths.append(dest_path)
-                    format_type = File if len(fspaths) == 1 else FileSet
-                    scan_resources[resource_name] = format_type(resource_fspaths)
+                    scan_resources[resource_name] = associated_files.datatype(resource_fspaths)
                 staged_scans.append(
                     ImagingScan(
                         id=scan_id,
                         type=scan_type,
                         resources=scan_resources,
+                        associated=True,
                     )
                 )
             os.rmdir(tmpdir)  # Should be empty

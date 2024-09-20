@@ -8,11 +8,19 @@ import typing as ty
 import hashlib
 import attrs
 import click.types
-from fileformats.core import FileSet
+from fileformats.core import DataType, FileSet, from_mime
 from .dicom import DicomField  # noqa
 
 
 logger = logging.getLogger("xnat-ingest")
+
+
+def datatype_converter(
+    datatype_str: ty.Union[str, ty.Type[DataType]]
+) -> ty.Type[DataType]:
+    if isinstance(datatype_str, str):
+        return from_mime(datatype_str)
+    return datatype_str
 
 
 class classproperty(object):
@@ -110,8 +118,9 @@ class MailServer(CliTyped):
 @attrs.define
 class AssociatedFiles(CliTyped):
 
-    glob: str
-    identity_pattern: str
+    datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+    glob: str = attrs.field()
+    identity_pattern: str = attrs.field()
 
 
 @attrs.define
@@ -136,6 +145,7 @@ def set_logger_handling(
     mail_server: MailServer,
     add_logger: ty.Sequence[str] = (),
 ):
+
     loggers = [logger]
     for log in add_logger:
         loggers.append(logging.getLogger(log))
@@ -173,16 +183,19 @@ def set_logger_handling(
                 logr.addHandler(smtp_hdle)
 
     # Configure the file logger
-    for log_file in log_files:
-        log_file.path.parent.mkdir(exist_ok=True)
-        log_file_hdle = logging.FileHandler(log_file)
-        if log_file.loglevel:
-            log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
-        log_file_hdle.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        for logr in loggers:
-            logr.addHandler(log_file_hdle)
+    if log_files:
+        for log_file in log_files:
+            log_file.path.parent.mkdir(exist_ok=True)
+            log_file_hdle = logging.FileHandler(log_file)
+            if log_file.loglevel:
+                log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
+            log_file_hdle.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            )
+            for logr in loggers:
+                logr.addHandler(log_file_hdle)
 
     console_hdle = logging.StreamHandler(sys.stdout)
     console_hdle.setLevel(getattr(logging, log_level.upper()))
@@ -397,7 +410,8 @@ def transform_paths(
                 stripped_fspath = Path(part)
             else:
                 stripped_fspath /= part
-        new_fspath = stripped_fspath
+        assert stripped_fspath is not None
+        new_fspath = str(stripped_fspath)
         # Use re.sub() with the custom replacement function
         transformed.append(Path(new_fspath))
     return transformed

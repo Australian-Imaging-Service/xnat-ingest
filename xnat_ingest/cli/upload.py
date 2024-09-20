@@ -446,6 +446,7 @@ def upload(
                         image_type = scan.metadata.get("ImageType")
                         if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
                             modality = "SC"
+                            resource_name = "secondary"
                         else:
                             modality = scan.metadata.get(
                                 "Modality", default_scan_modality

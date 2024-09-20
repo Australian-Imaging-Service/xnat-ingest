@@ -95,7 +95,7 @@ are uploaded to XNAT
 @click.option(
     "--resource-field",
     type=str,
-    default="ImageType",
+    default="ImageType[-1]",
     envvar="XNAT_INGEST_STAGE_RESOURCE",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging resource ID from "
@@ -110,11 +110,11 @@ are uploaded to XNAT
 @click.option(
     "--associated-files",
     type=AssociatedFiles.cli_type,
-    nargs=2,
+    nargs=3,
     default=None,
     multiple=True,
     envvar="XNAT_INGEST_STAGE_ASSOCIATED",
-    metavar="<glob> <id-pattern>",
+    metavar="<datatype> <glob> <id-pattern>",
     help=(
         'The "glob" arg is a glob pattern by which to detect associated files to be '
         "attached to the DICOM sessions. Note that when this pattern corresponds to a "
@@ -122,7 +122,7 @@ are uploaded to XNAT
         "the DICOMs for the session NOT the current working directory Can contain string "
         "templates corresponding to DICOM metadata fields, which are substituted before "
         "the glob is called. For example, "
-        '"./associated/{PatientName.given_name}_{PatientName.family_name}/*)" '
+        '"./associated/{PatientName.family_name}_{PatientName.given_name}/*)" '
         "will find all files under the subdirectory within '/path/to/dicoms/associated' that matches "
         "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
         "if a relative path is provided.\n"
@@ -308,7 +308,7 @@ def stage(
             # Identify theDeidentify files if necessary and save them to the staging directory
             session.stage(
                 staging_dir,
-                associated_files=associated_files,
+                associated_file_groups=associated_files,
                 remove_original=delete,
                 deidentify=deidentify,
                 project_list=project_list,
