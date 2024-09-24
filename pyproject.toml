@@ -16,8 +16,8 @@ dependencies = [
     "natsort",
     "paramiko",
     "xnat",
-    "arcana",
-    "arcana-xnat >=0.4.1",
+    "frametree",
+    "frametree-xnat",
 ]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]

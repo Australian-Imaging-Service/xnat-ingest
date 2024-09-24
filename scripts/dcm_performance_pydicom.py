@@ -8,9 +8,9 @@ METADATA_KEYS = [
     "StudyInstanceUID",
     "StudyID",
     "PatientID",
-    "AccessionNumber"
+    "AccessionNumber",
 ]
 
-series = DicomSeries(get_image().iterdir())
+series = DicomSeries(get_image().iterdir(), specific_tags=METADATA_KEYS)
 
-timeit.timeit(lambda: series.select_metadata(METADATA_KEYS))
+timeit.timeit(lambda: series.metadata)

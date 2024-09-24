@@ -3,7 +3,7 @@ from xnat_ingest.cli import upload
 from xnat_ingest.utils import show_cli_trace
 from click.testing import CliRunner
 
-PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
+PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
 runner = CliRunner()
 

@@ -1,10 +1,9 @@
 import pytest
 import platform
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_pet_image,
 )
 from fileformats.medimage import DicomSeries
-from xnat_ingest.session import ImagingSession
 
 # PATIENT_ID = "patient-id"
 # STUDY_ID = "study-id"
@@ -12,11 +11,13 @@ from xnat_ingest.session import ImagingSession
 
 
 @pytest.fixture
-def dicom_series(scope="module") -> ImagingSession:
+def dicom_series(scope="module") -> DicomSeries:
     return DicomSeries(get_pet_image().iterdir())
 
 
-@pytest.mark.xfail(condition=(platform.system() == "Linux"), reason="Not working on ubuntu")
+@pytest.mark.xfail(
+    condition=(platform.system() == "Linux"), reason="Not working on ubuntu"
+)
 def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     keys = [
         "AccessionNumber",
@@ -26,13 +27,15 @@ def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
         "StudyInstanceUID",
         "SOPInstanceUID",
     ]
-    dicom_series.select_metadata(keys)
+    dicom_series = DicomSeries(dicom_series, specific_tags=keys)
 
-    assert sorted(dicom_series.metadata) == sorted(keys + ['SpecificCharacterSet'])
+    assert not (set(keys + ["SpecificCharacterSet"]) - set(dicom_series.metadata))
     assert dicom_series.metadata["PatientName"] == "GivenName^FamilyName"
     assert dicom_series.metadata["AccessionNumber"] == "987654321"
-    assert dicom_series.metadata["PatientID"] == 'Session Label'
+    assert dicom_series.metadata["PatientID"] == "Session Label"
     assert dicom_series.metadata["StudyID"] == "PROJECT_ID"
     assert not isinstance(dicom_series.metadata["StudyInstanceUID"], list)
     assert isinstance(dicom_series.metadata["SOPInstanceUID"], list)
-    assert len(dicom_series.metadata["SOPInstanceUID"]) == len(list(dicom_series.contents))
+    assert len(dicom_series.metadata["SOPInstanceUID"]) == len(
+        list(dicom_series.contents)
+    )

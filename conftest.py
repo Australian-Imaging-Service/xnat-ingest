@@ -1,13 +1,20 @@
 import os
 from pathlib import Path
 import logging
+import typing as ty
 import tempfile
 from logging.handlers import SMTPHandler
 import pytest
 from click.testing import CliRunner
-import xnat4tests
+import xnat4tests  # type: ignore[import-untyped]
 from datetime import datetime
 from xnat_ingest.utils import logger
+from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode import (
+    get_data as get_listmode_data,
+)
+from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_countrate import (
+    get_data as get_countrate_data,
+)
 
 # Set DEBUG logging for unittests
 
@@ -110,3 +117,9 @@ class TestSMTPHandler(SMTPHandler):
         # Capture the email message and append it to the list
         msg = self.format(record)
         self.emails.append(msg)
+
+
+def get_raw_data_files(out_dir: ty.Optional[Path] = None, **kwargs) -> ty.List[Path]:
+    if out_dir is None:
+        out_dir = Path(tempfile.mkdtemp())
+    return get_listmode_data(out_dir, **kwargs) + get_countrate_data(out_dir, **kwargs)

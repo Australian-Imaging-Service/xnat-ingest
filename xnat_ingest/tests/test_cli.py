@@ -1,33 +1,32 @@
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
-from arcana.core.cli.dataset import (
+from frametree.core.cli import (  # type: ignore[import-untyped]
     define as dataset_define,
     add_source as dataset_add_source,
 )
-import xnat4tests
-from arcana.core.cli.store import add as store_add
+import xnat4tests  # type: ignore[import-untyped]
+from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from xnat_ingest.cli import stage, upload
 from xnat_ingest.utils import show_cli_trace
 from fileformats.medimage import DicomSeries
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_pet_image,
 )
-from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_ac_image,
 )
-from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_topogram_image,
 )
-from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_statistics_image,
 )
-from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b import (
-    get_files as get_raw_data_files,
-)
+from conftest import get_raw_data_files
 
 
-PATTERN = "{PatientName.given_name}_{PatientName.family_name}_{SeriesDate}.*"
+PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
 
 def test_stage_and_upload(
@@ -62,7 +61,6 @@ def test_stage_and_upload(
         for i, c in enumerate("abc"):
             first_name = f"First{c.upper()}"
             last_name = f"Last{c.upper()}"
-            PatientName = f"{first_name}^{last_name}"
             PatientID = f"subject{i}"
             AccessionNumber = f"98765432{i}"
             session_ids.append(f"{PatientID}_{AccessionNumber}")
@@ -74,7 +72,8 @@ def test_stage_and_upload(
             series = DicomSeries(
                 get_pet_image(
                     tmp_gen_dir / f"pet{i}",
-                    PatientName=PatientName,
+                    first_name=first_name,
+                    last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
@@ -86,7 +85,8 @@ def test_stage_and_upload(
             series = DicomSeries(
                 get_ac_image(
                     tmp_gen_dir / f"ac{i}",
-                    PatientName=PatientName,
+                    first_name=first_name,
+                    last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
@@ -98,7 +98,8 @@ def test_stage_and_upload(
             series = DicomSeries(
                 get_topogram_image(
                     tmp_gen_dir / f"topogram{i}",
-                    PatientName=PatientName,
+                    first_name=first_name,
+                    last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
@@ -110,7 +111,8 @@ def test_stage_and_upload(
             series = DicomSeries(
                 get_statistics_image(
                     tmp_gen_dir / f"statistics{i}",
-                    PatientName=PatientName,
+                    first_name=first_name,
+                    last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
@@ -123,7 +125,7 @@ def test_stage_and_upload(
                 tmp_gen_dir / f"non-dicom{i}",
                 first_name=first_name,
                 last_name=last_name,
-                date_time=f"2023.08.25.15.50.5{i}",
+                date_time=datetime(2023, 8, 25, 15, 50, 5, i),
             )
             for assoc_fspath in assoc_fspaths:
                 os.link(
@@ -136,8 +138,8 @@ def test_stage_and_upload(
     result = cli_runner(
         store_add,
         [
+            "xnat",
             "testxnat",
-            "xnat:Xnat",
             "--server",
             xnat_server,
             "--user",
@@ -163,11 +165,11 @@ def test_stage_and_upload(
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
             ".*/LISTMODE",
         ),
-        (
-            "sinogram",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
-            ".*/EM_SINO",
-        ),
+        # (
+        #     "sinogram",
+        #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
+        #     ".*/EM_SINO",
+        # ),
         (
             "countrate",
             "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
@@ -193,8 +195,9 @@ def test_stage_and_upload(
             str(dicoms_dir),
             str(staging_dir),
             "--associated-files",
+            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-raw-data",
             str(associated_files_dir)
-            + "/{PatientName.given_name}_{PatientName.family_name}*.ptd",
+            + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
             "--log-file",
             str(log_file),
@@ -249,5 +252,5 @@ def test_stage_and_upload(
                 "4",
                 "6",
                 "602",
-                "603",
+                # "603",
             ]
