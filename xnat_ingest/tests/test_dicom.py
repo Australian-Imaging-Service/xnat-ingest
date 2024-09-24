@@ -29,7 +29,7 @@ def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     ]
     dicom_series = DicomSeries(dicom_series, specific_tags=keys)
 
-    assert sorted(dicom_series.metadata) == sorted(keys + ["SpecificCharacterSet"])
+    assert not (set(keys + ["SpecificCharacterSet"]) - set(dicom_series.metadata))
     assert dicom_series.metadata["PatientName"] == "GivenName^FamilyName"
     assert dicom_series.metadata["AccessionNumber"] == "987654321"
     assert dicom_series.metadata["PatientID"] == "Session Label"

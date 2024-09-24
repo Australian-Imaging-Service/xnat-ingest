@@ -4,6 +4,7 @@ import platform
 from fileformats.core import from_mime, FileSet
 from fileformats.medimage import (
     DicomSeries,
+    Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
@@ -156,6 +157,7 @@ def test_session_select_resources(
         staging_dir,
         associated_file_groups=[
             AssociatedFiles(
+                Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
                 str(assoc_dir)
                 + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
                 r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",

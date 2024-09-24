@@ -834,7 +834,9 @@ class ImagingSession:
                         else:
                             shutil.copyfile(fspath, dest_path)
                         resource_fspaths.append(dest_path)
-                    scan_resources[resource_name] = associated_files.datatype(resource_fspaths)
+                    scan_resources[resource_name] = associated_files.datatype(
+                        resource_fspaths
+                    )
                 staged_scans.append(
                     ImagingScan(
                         id=scan_id,
