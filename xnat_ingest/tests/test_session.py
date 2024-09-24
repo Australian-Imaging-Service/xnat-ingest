@@ -1,13 +1,11 @@
 from pathlib import Path
 import pytest
-import platform
 from fileformats.core import from_mime, FileSet
 from fileformats.medimage import (
     DicomSeries,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
-    Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
 )
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.common import FileSystem  # type: ignore[import-untyped]
@@ -38,7 +36,6 @@ LAST_NAME = "FamilyName"
 
 @pytest.fixture
 def imaging_session() -> ImagingSession:
-    default_dicom_dir
     dicoms = [
         DicomSeries(d.iterdir())
         for d in (
