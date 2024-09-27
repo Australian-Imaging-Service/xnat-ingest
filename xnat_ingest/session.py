@@ -167,10 +167,10 @@ class ImagingSession:
                         f"{mime_like!r} does not correspond to a file format ({fileformat})"
                     )
             for scan in self.scans.values():
-                for resource_name, fileset in scan.resources.items():
-                    if isinstance(fileset, fileformat):
-                        uploaded.add((scan.id, resource_name))
-                        yield self.scans[scan.id].resources[resource_name]
+                for resource in scan.resources.values():
+                    if isinstance(resource.fileset, fileformat):
+                        uploaded.add((scan.id, resource.name))
+                        yield resource
         if dataset is not None:
             for column in dataset.columns.values():
                 try:
@@ -192,9 +192,15 @@ class ImagingSession:
                             always_include,
                         )
                         continue
-                    fileset = column.datatype(scan.resources[resource_name])
+                    resource = scan.resources[resource_name]
+                    if not isinstance(resource.fileset, column.datatype):
+                        resource = ImagingResource(
+                            name=resource_name,
+                            fileset=column.datatype(resource.fileset),
+                            scan=scan,
+                        )
                     uploaded.add((scan.id, resource_name))
-                yield self.scans[scan_id].resources[resource_name]
+                yield resource
 
     @cached_property
     def metadata(self) -> dict[str, ty.Any]:
@@ -586,21 +592,10 @@ class ImagingSession:
             visit_id=visit_id,
         )
         for scan_dir in session_dir.iterdir():
-            if not scan_dir.is_dir():
-                continue
-            scan_id, scan_type = scan_dir.name.split("-", 1)
-            scan_resources = {}
-            for resource_dir in scan_dir.iterdir():
-                scan_resources[resource_dir.name] = ImagingResource.load(
-                    resource_dir,
-                    require_manifest=require_manifest,
-                    check_checksums=check_checksums,
-                )
-            session.scans[scan_id] = ImagingScan(
-                scan_id,
-                scan_type,
-                scan_resources,  # type: ignore[arg-type]
-            )
+            if scan_dir.is_dir():
+                scan = ImagingScan.load(scan_dir, require_manifest=require_manifest)
+                scan.session = session
+                session.scans[scan.id] = scan
         return session
 
     def save(
@@ -652,22 +647,18 @@ class ImagingSession:
         Path
             the path to the directory where the session is saved
         """
-        staged = self.new_empty()
+        saved = self.new_empty()
         if available_projects is None or self.project_id in available_projects:
             project_id = self.project_id
         else:
             project_id = "INVALID_UNRECOGNISED_" + self.project_id
         session_dir = dest_dir / "-".join((project_id, self.subject_id, self.visit_id))
-        session_dir.mkdir(parents=True)
+        session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
-            for resource in scan.resources.values():
-                # Ensure scan type is a valid directory name
-                resource_dir = session_dir / f"{scan.id}-{scan.type}" / resource.name
-                resource_dir.mkdir(parents=True, exist_ok=True)
-                staged_fileset = resource.fileset.copy(resource_dir, mode=copy_mode)
-                staged.add_resource(scan.id, scan.type, resource.name, staged_fileset)
-
-        return staged, session_dir
+            saved_scan = scan.save(session_dir, copy_mode=copy_mode)
+            saved_scan.session = saved
+            saved.scans[saved_scan.id] = saved_scan
+        return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
 

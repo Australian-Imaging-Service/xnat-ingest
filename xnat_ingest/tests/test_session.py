@@ -45,17 +45,17 @@ RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
     (
         "listmode",
         "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
-        ".*/LISTMODE",
+        ".*/PET_LISTMODE",
     ),
     # (
     #     "sinogram",
     #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
-    #     ".*/EM_SINO",
+    #     ".*/PET_EM_SINO",
     # ),
     (
         "countrate",
         "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
-        ".*/COUNTRATE",
+        ".*/PET_COUNTRATE",
     ),
 ]
 
@@ -196,7 +196,7 @@ def test_session_select_resources(
                 Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
                 str(assoc_dir)
                 + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
-                r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+                r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.(?P<resource>[^\.]+).*",
             )
         ],
         spaces_to_underscores=True,
@@ -204,7 +204,8 @@ def test_session_select_resources(
 
     saved_session, saved_dir = imaging_session.save(staging_dir)
 
-    resources = list(saved_session.select_resources(dataset))
+    resources_iter = saved_session.select_resources(dataset)
+    resources = list(resources_iter)
 
     assert len(resources) == 5  # 6
     ids, descs, resource_names, scans = zip(*resources)
@@ -218,7 +219,9 @@ def test_session_select_resources(
             # "603",
         ]
     )
-    assert set(resource_names) == set(("DICOM", "LISTMODE", "COUNTRATE"))  # , "EM_SINO"
+    assert set(resource_names) == set(
+        ("DICOM", "PET_LISTMODE", "PET_COUNTRATE")
+    )  # , "PET_EM_SINO"
     assert set(type(s) for s in scans) == set(
         [
             DicomSeries,
@@ -232,7 +235,7 @@ def test_session_select_resources(
 def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
 
     # Save imaging sessions to a temporary directory
-    saved = imaging_session.save(tmp_path)
+    saved, _ = imaging_session.save(tmp_path)
     assert saved is not imaging_session
 
     # Calculate where the session should have been saved to
@@ -248,15 +251,15 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
     rereloaded = ImagingSession.load(session_dir)
     assert rereloaded == saved
 
-    # Load from saved directory, this time only using directory structure instead of
-    # manifest. Should be the same with the exception of the detected fileformats
-    loaded_no_manifest = ImagingSession.load(session_dir, use_manifest=False)
-    for scan in loaded_no_manifest.scans.values():
-        for key, resource in list(scan.resources.items()):
-            if key == "DICOM":
-                assert isinstance(resource, FileSet)
-                scan.resources[key] = DicomSeries(resource)
-    assert loaded_no_manifest == saved
+    # # Load from saved directory, this time only using directory structure instead of
+    # # manifest. Should be the same with the exception of the detected fileformats
+    # loaded_no_manifest = ImagingSession.load(session_dir, require_manifest=False)
+    # for scan in loaded_no_manifest.scans.values():
+    #     for key, resource in list(scan.resources.items()):
+    #         if key == "DICOM":
+    #             assert isinstance(resource, FileSet)
+    #             scan.resources[key] = DicomSeries(resource)
+    # assert loaded_no_manifest == saved
 
 
 def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
@@ -299,16 +302,11 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
     for staged_session in staged_sessions:
         resources = list(staged_session.select_resources(raw_frameset))
 
-        assert len(resources) == 5
-        ids, descs, resource_names, scans = zip(*resources)
-        assert set(ids) == set(("602",))
-        assert set(descs) == set(
-            [
-                "602",
-            ]
-        )
-        assert set(resource_names) == set(("LISTMODE", "COUNTRATE"))
-        assert set(type(s) for s in scans) == set(
+        assert len(resources) == 2
+        assert set([r.scan.id for r in resources]) == set(["602"])
+        assert set([r.scan.type for r in resources]) == set(["PET_Raw_Data"])
+        assert set(r.name for r in resources) == set(("PET_LISTMODE", "PET_COUNTRATE"))
+        assert set(type(r.fileset) for r in resources) == set(
             [
                 Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
                 Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,

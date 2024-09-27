@@ -20,8 +20,10 @@ logger = logging.getLogger("xnat-ingest")
 class ImagingResource:
     name: str
     fileset: FileSet
-    checksums: dict[str, str] = attrs.field()
-    scan: "xnat_ingest.scan.ImagingScan" = attrs.field(default=None)
+    checksums: dict[str, str] = attrs.field(eq=False, repr=False)
+    scan: "xnat_ingest.scan.ImagingScan" = attrs.field(
+        default=None, eq=False, repr=False
+    )
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
@@ -59,7 +61,7 @@ class ImagingResource:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
-    ) -> None:
+    ) -> Self:
         """Save the resource to a directory
 
         Parameters
@@ -76,6 +78,11 @@ class ImagingResource:
             issued, if False an exception will be raised, if True then the resource is
             saved regardless of the files being newer
 
+        Returns
+        -------
+        ImagingResource
+            The saved resource
+
         Raises
         ------
         FileExistsError
@@ -87,28 +94,39 @@ class ImagingResource:
             self.calculate_checksums() if calculate_checksums else self.checksums
         )
         if resource_dir.exists():
-            loaded = self.load(resource_dir, require_manifest=False)
-            if loaded.checksums == checksums:
-                return
-            elif overwrite is None and not self.newer_than_or_equal(loaded):
-                logger.warning(
-                    f"Resource '{self.name}' already exists in '{dest_dir}' but "
-                    "the files are not older than the ones to be be saved"
-                )
-            elif overwrite:
-                shutil.rmtree(resource_dir)
-            else:
-                if overwrite is None:
-                    msg = "and the files are not older than the ones to be be saved"
+            try:
+                loaded = self.load(resource_dir, require_manifest=False)
+                if loaded.checksums == checksums:
+                    return loaded
+                elif overwrite is None and not self.newer_than_or_equal(loaded):
+                    logger.warning(
+                        f"Resource '{self.name}' already exists in '{dest_dir}' but "
+                        "the files are not older than the ones to be be saved"
+                    )
+                elif overwrite:
+                    logger.warning(
+                        f"Resource '{self.name}' already exists in '{dest_dir}', overwriting"
+                    )
+                    shutil.rmtree(resource_dir)
                 else:
-                    msg = ""
-                raise FileExistsError(
-                    f"Resource '{self.name}' already exists in '{dest_dir}'{msg}, set "
-                    "'overwrite' to True to overwrite regardless of file times"
+                    if overwrite is None:
+                        msg = "and the files are not older than the ones to be be saved"
+                    else:
+                        msg = ""
+                    raise FileExistsError(
+                        f"Resource '{self.name}' already exists in '{dest_dir}'{msg}, set "
+                        "'overwrite' to True to overwrite regardless of file times"
+                    )
+            except DifferingCheckumsException:
+                logger.warning(
+                    f"Resource '{self.name}' already exists in '{dest_dir}', but it is "
+                    "incomplete, overwriting"
                 )
-        self.fileset.copy(resource_dir, mode=copy_mode, trim=True)
+                shutil.rmtree(resource_dir)
+        saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True)
         manifest = {"datatype": self.fileset.mime_like, "checksums": checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
+        return type(self)(name=self.name, fileset=saved_fileset, checksums=checksums)
 
     @classmethod
     def load(

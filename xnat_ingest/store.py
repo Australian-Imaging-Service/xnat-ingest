@@ -71,7 +71,7 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
             the item stored within the specified entry
         """
         scan_id, resource_name = entry.uri
-        return datatype(self.session.scans[scan_id][resource_name])  # type: ignore[no-any-return]
+        return datatype(self.session.scans[scan_id][resource_name].fileset)  # type: ignore[no-any-return]
 
     ######################################
     # The following methods can be empty #

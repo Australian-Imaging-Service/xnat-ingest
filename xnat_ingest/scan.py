@@ -1,5 +1,7 @@
 import typing as ty
 import re
+from pathlib import Path
+from typing_extensions import Self
 import logging
 import attrs
 from fileformats.core import FileSet
@@ -44,7 +46,9 @@ class ImagingScan:
         factory=dict, converter=scan_resources_converter
     )
     associated: AssociatedFiles | None = None
-    session: "xnat_ingest.session.ImagingSession" = attrs.field(default=None)
+    session: "xnat_ingest.session.ImagingSession" = attrs.field(
+        default=None, eq=False, repr=False
+    )
 
     def __contains__(self, resource_name: str) -> bool:
         return resource_name in self.resources
@@ -55,6 +59,37 @@ class ImagingScan:
     def __attrs_post_init__(self) -> None:
         for resource in self.resources.values():
             resource.scan = self
+
+    def new_empty(self) -> Self:
+        return type(self)(self.id, self.type)
+
+    def save(
+        self,
+        dest_dir: Path,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    ) -> Self:
+        # Ensure scan type is a valid directory name
+        saved = self.new_empty()
+        scan_dir = dest_dir / f"{self.id}-{self.type}"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+        for resource in self.resources.values():
+            saved_resource = resource.save(scan_dir, copy_mode=copy_mode)
+            saved_resource.scan = saved
+            saved.resources[saved_resource.name] = saved_resource
+        return saved
+
+    @classmethod
+    def load(cls, scan_dir: Path, require_manifest: bool = True) -> Self:
+        scan_id, scan_type = scan_dir.name.split("-", 1)
+        scan = cls(scan_id, scan_type)
+        for resource_dir in scan_dir.iterdir():
+            if resource_dir.is_dir():
+                resource = ImagingResource.load(
+                    resource_dir, require_manifest=require_manifest
+                )
+                resource.scan = scan
+                scan.resources[resource.name] = resource
+        return scan
 
     @property
     def path(self) -> str:
