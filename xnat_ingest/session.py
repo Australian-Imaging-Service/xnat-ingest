@@ -16,7 +16,7 @@ from fileformats.core import from_paths, FileSet, from_mime
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[import-untyped]
 from .exceptions import ImagingSessionParseError, StagingError
-from .utils import AssociatedFiles
+from .utils import AssociatedFiles, invalid_path_chars_re
 from .scan import ImagingScan
 from .resource import ImagingResource
 
@@ -356,7 +356,7 @@ class ImagingSession:
                 if index is not None:
                     value = value[index]
                 value_str = str(value)
-                value_str = cls.id_escape_re.sub("_", value_str)
+                value_str = invalid_path_chars_re.sub("_", value_str)
                 return value_str
 
             if not project_id:

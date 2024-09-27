@@ -284,10 +284,10 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         return None
     logger.debug(
         "Creating resource %s in %s",
-        resource_name,
+        resource.name,
         resource.scan.path,
     )
-    xresource = xscan.create_resource(resource_name)
+    xresource = xscan.create_resource(resource.name)
     return xresource
 
 

@@ -12,8 +12,10 @@ from fileformats.generic import File
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
+from fileformats.application import Json
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
+from xnat_ingest.resource import ImagingResource
 from xnat_ingest.utils import (
     logger,
     LogFile,
@@ -360,20 +362,39 @@ def upload(
                             for fspath in resource.fileset.fspaths:
                                 xresource.upload(str(fspath), fspath.name)
                         else:
+                            # Temporarily move the manifest file out of the way so it
+                            # doesn't get uploaded
+                            manifest_file = (
+                                resource.fileset.parent / ImagingResource.MANIFEST_FNAME
+                            )
+                            moved_manifest_file = (
+                                resource.fileset.parent.parent
+                                / ImagingResource.MANIFEST_FNAME
+                            )
+                            if manifest_file.exists():
+                                manifest_file.rename(moved_manifest_file)
+                            # Upload the contents of the resource to XNAT
                             xresource.upload_dir(resource.fileset.parent, method=method)
+                            # Move the manifest file back again
+                            if moved_manifest_file.exists():
+                                moved_manifest_file.rename(manifest_file)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
                         logger.debug("calculating checksums for %s", xresource)
                         calc_checksums = calculate_checksums(resource.fileset)
                         if remote_checksums != calc_checksums:
+                            extra_keys = set(remote_checksums) - set(calc_checksums)
+                            missing_keys = set(calc_checksums) - set(remote_checksums)
                             mismatching = [
                                 k
-                                for k, v in remote_checksums.items()
-                                if v != calc_checksums[k]
+                                for k, v in calc_checksums.items()
+                                if v != remote_checksums[k]
                             ]
                             raise RuntimeError(
                                 "Checksums do not match after upload of "
-                                f"'{resource.path}' resource. "
+                                f"'{resource.path}' resource.\n"
+                                f"Extra keys were {extra_keys}\n"
+                                f"Missing keys were {missing_keys}\n"
                                 f"Mismatching files were {mismatching}"
                             )
                         logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
