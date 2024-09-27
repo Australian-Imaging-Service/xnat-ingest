@@ -208,9 +208,10 @@ def test_session_select_resources(
     resources = list(resources_iter)
 
     assert len(resources) == 5  # 6
-    ids, descs, resource_names, scans = zip(*resources)
-    assert set(ids) == set(("1", "2", "4", "602"))  # , "603"))
-    assert set(descs) == set(
+    assert set([r.scan.id for r in resources]) == set(
+        ("1", "2", "4", "602")
+    )  # , "603"))
+    assert set([r.scan.type for r in resources]) == set(
         [
             "AC CT 30  SWB HD_FoV",
             "PET SWB 8MIN",
@@ -219,10 +220,10 @@ def test_session_select_resources(
             # "603",
         ]
     )
-    assert set(resource_names) == set(
+    assert set([r.name for r in resources]) == set(
         ("DICOM", "PET_LISTMODE", "PET_COUNTRATE")
     )  # , "PET_EM_SINO"
-    assert set(type(s) for s in scans) == set(
+    assert set([r.datatype for r in resources]) == set(
         [
             DicomSeries,
             Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
