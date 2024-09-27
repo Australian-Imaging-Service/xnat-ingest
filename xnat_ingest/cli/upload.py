@@ -192,11 +192,18 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--wait-period",
     type=int,
-    default=60,
+    default=0,
     help=(
-        "The number of seconds to wait between checking for new sessions in the S3 bucket. "
-        "This is to avoid hitting the S3 API rate limit"
+        "The number of seconds to wait since the last file modification in sessions "
+        "in the S3 bucket or source file-system directory before uploading them to "
+        "avoid uploading partial sessions"
     ),
+)
+@click.option(
+    "--loop",
+    type=int,
+    default=None,
+    help="Run the staging process continuously every LOOP seconds",
 )
 def upload(
     staged: str,
@@ -218,6 +225,7 @@ def upload(
     use_curl_jsession: bool,
     method: str,
     wait_period: int,
+    loop: int | None,
 ) -> None:
 
     set_logger_handling(
@@ -240,185 +248,208 @@ def upload(
         verify_ssl=verify_ssl,
     )
 
-    if use_curl_jsession:
-        jsession = sp.check_output(
-            [
-                "curl",
-                "-X",
-                "PUT",
-                "-d",
-                f"username={user}&password={password}",
-                f"{server}/data/services/auth",
-            ]
-        ).decode("utf-8")
-        xnat_repo.connection.depth = 1
-        xnat_repo.connection.session = xnat.connect(
-            server, user=user, jsession=jsession
-        )
-
-    with xnat_repo.connection:
-
-        num_sessions: int
-        sessions: ty.Iterable[Path]
-        if staged.startswith("s3://"):
-            sessions = iterate_s3_sessions(
-                staged, store_credentials, temp_dir, wait_period=wait_period
-            )
-            # bit of a hack: number of sessions is the first item in the iterator
-            num_sessions = next(sessions)  # type: ignore[assignment]
-        else:
-            sessions = []
-            for project_dir in Path(staged).iterdir():
-                for subject_dir in project_dir.iterdir():
-                    for session_dir in subject_dir.iterdir():
-                        if dir_older_than(session_dir, wait_period):
-                            sessions.append(session_dir)
-                        else:
-                            logger.info(
-                                "Skipping '%s' session as it has been modified recently",
-                                session_dir,
-                            )
-            num_sessions = len(sessions)
-            logger.info(
-                "Found %d sessions in staging directory to stage'%s'",
-                num_sessions,
-                staged,
+    def do_upload() -> None:
+        if use_curl_jsession:
+            jsession = sp.check_output(
+                [
+                    "curl",
+                    "-X",
+                    "PUT",
+                    "-d",
+                    f"username={user}&password={password}",
+                    f"{server}/data/services/auth",
+                ]
+            ).decode("utf-8")
+            xnat_repo.connection.depth = 1
+            xnat_repo.connection.session = xnat.connect(
+                server, user=user, jsession=jsession
             )
 
-        framesets: dict[str, FrameSet] = {}
+        with xnat_repo.connection:
 
-        for session_staging_dir in tqdm(
-            sessions,
-            total=num_sessions,
-            desc=f"Processing staged sessions found in '{staged}'",
-        ):
-
-            session = ImagingSession.load(
-                session_staging_dir,
-                require_manifest=require_manifest,
-            )
-            try:
-                # Create corresponding session on XNAT
-                xproject = xnat_repo.connection.projects[session.project_id]
-
-                # Access Arcana frameset associated with project
-                try:
-                    frameset = framesets[session.project_id]
-                except KeyError:
-                    try:
-                        frameset = FrameSet.load(session.project_id, xnat_repo)
-                    except Exception as e:
-                        if not always_include:
-                            logger.error(
-                                "Did not load frameset definition (%s) from %s project "
-                                "on %s. Either '--always-include' flag must be used or "
-                                "the frameset must be defined on XNAT using the `frametree` "
-                                "command line tool (see https://arcanaframework.github.io/frametree/).",
-                                e,
-                                session.project_id,
-                                xnat_repo.server,
-                            )
-                            continue
-                        else:
-                            frameset = None
-                    framesets[session.project_id] = frameset
-
-                xsession = get_xnat_session(session, xproject)
-
-                # Anonymise DICOMs and save to directory prior to upload
-                if always_include:
-                    logger.info(
-                        f"Including {always_include} scans/files in upload from '{session.name}' to "
-                        f"{session.path} regardless of whether they are explicitly specified"
-                    )
-
-                for resource in tqdm(
-                    sorted(
-                        session.select_resources(
-                            frameset, always_include=always_include
-                        )
-                    ),
-                    f"Uploading resources found in {session.name}",
-                ):
-                    xresource = get_xnat_resource(resource, xsession)
-                    if xresource is None:
-                        logger.info(
-                            "Skipping '%s' resource as it is already uploaded",
-                            resource.path,
-                        )
-                        continue  # skipping as resource already exists
-                    if isinstance(resource.fileset, File):
-                        for fspath in resource.fileset.fspaths:
-                            xresource.upload(str(fspath), fspath.name)
+            num_sessions: int
+            sessions: ty.Iterable[Path]
+            if staged.startswith("s3://"):
+                sessions = iterate_s3_sessions(
+                    staged, store_credentials, temp_dir, wait_period=wait_period
+                )
+                # bit of a hack: number of sessions is the first item in the iterator
+                num_sessions = next(sessions)  # type: ignore[assignment]
+            else:
+                sessions = []
+                for session_dir in Path(staged).iterdir():
+                    if dir_older_than(session_dir, wait_period):
+                        sessions.append(session_dir)
                     else:
-                        xresource.upload_dir(resource.fileset.parent, method=method)
-                    logger.debug("retrieving checksums for %s", xresource)
-                    remote_checksums = get_xnat_checksums(xresource)
-                    logger.debug("calculating checksums for %s", xresource)
-                    calc_checksums = calculate_checksums(resource.fileset)
-                    if remote_checksums != calc_checksums:
-                        mismatching = [
-                            k
-                            for k, v in remote_checksums.items()
-                            if v != calc_checksums[k]
-                        ]
-                        raise RuntimeError(
-                            "Checksums do not match after upload of "
-                            f"'{resource.path}' resource. "
-                            f"Mismatching files were {mismatching}"
+                        logger.info(
+                            "Skipping '%s' session as it has been modified recently",
+                            session_dir,
                         )
-                    logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
-                logger.info(f"Successfully uploaded all files in '{session.name}'")
-                # Extract DICOM metadata
-                logger.info("Extracting metadata from DICOMs on XNAT..")
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
-                    )
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?fixScanTypes=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(f"Failed to fix scan types in '{session.name}': {e}")
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?triggerPipelines=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to trigger pipelines in '{session.name}': {e}"
-                    )
-                logger.info(f"Succesfully uploaded all files in '{session.name}'")
-            except Exception as e:
-                if not raise_errors:
-                    logger.error(
-                        f"Skipping '{session.name}' session due to error in staging: \"{e}\""
-                        f"\n{traceback.format_exc()}\n\n"
-                    )
-                    continue
-                else:
-                    raise
+                num_sessions = len(sessions)
+                logger.info(
+                    "Found %d sessions in staging directory to stage'%s'",
+                    num_sessions,
+                    staged,
+                )
 
-    if use_curl_jsession:
-        xnat_repo.connection.exit()
+            framesets: dict[str, FrameSet] = {}
 
-    if clean_up_older_than:
-        logger.info(
-            "Cleaning up files in %s older than %d days",
-            staged,
-            clean_up_older_than,
-        )
-        if staged.startswith("s3://"):
-            remove_old_files_on_s3(remote_store=staged, threshold=clean_up_older_than)
-        elif "@" in staged:
-            remove_old_files_on_ssh(remote_store=staged, threshold=clean_up_older_than)
-        else:
-            assert False
+            for session_staging_dir in tqdm(
+                sessions,
+                total=num_sessions,
+                desc=f"Processing staged sessions found in '{staged}'",
+            ):
+
+                session = ImagingSession.load(
+                    session_staging_dir,
+                    require_manifest=require_manifest,
+                )
+                try:
+                    # Create corresponding session on XNAT
+                    xproject = xnat_repo.connection.projects[session.project_id]
+
+                    # Access Arcana frameset associated with project
+                    try:
+                        frameset = framesets[session.project_id]
+                    except KeyError:
+                        try:
+                            frameset = FrameSet.load(session.project_id, xnat_repo)
+                        except Exception as e:
+                            if not always_include:
+                                logger.error(
+                                    "Did not load frameset definition (%s) from %s project "
+                                    "on %s. Either '--always-include' flag must be used or "
+                                    "the frameset must be defined on XNAT using the `frametree` "
+                                    "command line tool (see https://arcanaframework.github.io/frametree/).",
+                                    e,
+                                    session.project_id,
+                                    xnat_repo.server,
+                                )
+                                continue
+                            else:
+                                frameset = None
+                        framesets[session.project_id] = frameset
+
+                    xsession = get_xnat_session(session, xproject)
+
+                    # Anonymise DICOMs and save to directory prior to upload
+                    if always_include:
+                        logger.info(
+                            f"Including {always_include} scans/files in upload from '{session.name}' to "
+                            f"{session.path} regardless of whether they are explicitly specified"
+                        )
+
+                    for resource in tqdm(
+                        sorted(
+                            session.select_resources(
+                                frameset, always_include=always_include
+                            )
+                        ),
+                        f"Uploading resources found in {session.name}",
+                    ):
+                        xresource = get_xnat_resource(resource, xsession)
+                        if xresource is None:
+                            logger.info(
+                                "Skipping '%s' resource as it is already uploaded",
+                                resource.path,
+                            )
+                            continue  # skipping as resource already exists
+                        if isinstance(resource.fileset, File):
+                            for fspath in resource.fileset.fspaths:
+                                xresource.upload(str(fspath), fspath.name)
+                        else:
+                            xresource.upload_dir(resource.fileset.parent, method=method)
+                        logger.debug("retrieving checksums for %s", xresource)
+                        remote_checksums = get_xnat_checksums(xresource)
+                        logger.debug("calculating checksums for %s", xresource)
+                        calc_checksums = calculate_checksums(resource.fileset)
+                        if remote_checksums != calc_checksums:
+                            mismatching = [
+                                k
+                                for k, v in remote_checksums.items()
+                                if v != calc_checksums[k]
+                            ]
+                            raise RuntimeError(
+                                "Checksums do not match after upload of "
+                                f"'{resource.path}' resource. "
+                                f"Mismatching files were {mismatching}"
+                            )
+                        logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
+                    logger.info(f"Successfully uploaded all files in '{session.name}'")
+                    # Extract DICOM metadata
+                    logger.info("Extracting metadata from DICOMs on XNAT..")
+                    try:
+                        xnat_repo.connection.put(
+                            f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
+                        )
+                    except XNATResponseError as e:
+                        logger.warning(
+                            f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
+                        )
+                    try:
+                        xnat_repo.connection.put(
+                            f"/data/experiments/{xsession.id}?fixScanTypes=true"
+                        )
+                    except XNATResponseError as e:
+                        logger.warning(
+                            f"Failed to fix scan types in '{session.name}': {e}"
+                        )
+                    try:
+                        xnat_repo.connection.put(
+                            f"/data/experiments/{xsession.id}?triggerPipelines=true"
+                        )
+                    except XNATResponseError as e:
+                        logger.warning(
+                            f"Failed to trigger pipelines in '{session.name}': {e}"
+                        )
+                    logger.info(f"Succesfully uploaded all files in '{session.name}'")
+                except Exception as e:
+                    if not raise_errors:
+                        logger.error(
+                            f"Skipping '{session.name}' session due to error in staging: \"{e}\""
+                            f"\n{traceback.format_exc()}\n\n"
+                        )
+                        continue
+                    else:
+                        raise
+
+        if use_curl_jsession:
+            xnat_repo.connection.exit()
+
+        if clean_up_older_than:
+            logger.info(
+                "Cleaning up files in %s older than %d days",
+                staged,
+                clean_up_older_than,
+            )
+            if staged.startswith("s3://"):
+                remove_old_files_on_s3(
+                    remote_store=staged, threshold=clean_up_older_than
+                )
+            elif "@" in staged:
+                remove_old_files_on_ssh(
+                    remote_store=staged, threshold=clean_up_older_than
+                )
+            else:
+                assert False
+
+    if loop:
+        while True:
+            start_time = datetime.datetime.now()
+            do_upload()
+            end_time = datetime.datetime.now()
+            elapsed_seconds = (end_time - start_time).total_seconds()
+            sleep_time = loop - elapsed_seconds
+            logger.info(
+                "Stage took %s seconds, waiting another %s seconds before running "
+                "again (loop every %s seconds)",
+                elapsed_seconds,
+                sleep_time,
+                loop,
+            )
+            time.sleep(loop)
+    else:
+        do_upload()
 
 
 if __name__ == "__main__":

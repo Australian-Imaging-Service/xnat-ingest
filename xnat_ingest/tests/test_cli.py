@@ -9,6 +9,7 @@ from frametree.core.cli import (  # type: ignore[import-untyped]
 import xnat4tests  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from xnat_ingest.cli import stage, upload
+from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
 from xnat_ingest.utils import show_cli_trace
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
@@ -218,7 +219,7 @@ def test_stage_and_upload(
     result = cli_runner(
         upload,
         [
-            str(staging_dir),
+            str(staging_dir / STAGED_NAME_DEFAULT),
             "--log-file",
             str(log_file),
             "info",
@@ -230,6 +231,8 @@ def test_stage_and_upload(
             "--method",
             "tar_file",
             "--use-curl-jsession",
+            "--wait-period",
+            "0",
         ],
         env={
             "XNAT_INGEST_UPLOAD_HOST": xnat_server,
