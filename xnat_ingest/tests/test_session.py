@@ -202,9 +202,9 @@ def test_session_select_resources(
         spaces_to_underscores=True,
     )
 
-    staged_session = imaging_session.save(staging_dir)
+    saved_session, saved_dir = imaging_session.save(staging_dir)
 
-    resources = list(staged_session.select_resources(dataset))
+    resources = list(saved_session.select_resources(dataset))
 
     assert len(resources) == 5  # 6
     ids, descs, resource_names, scans = zip(*resources)
@@ -293,7 +293,7 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
         staged_sessions.append(
             imaging_session.save(
                 staging_dir,
-            )
+            )[0]
         )
 
     for staged_session in staged_sessions:

@@ -9,7 +9,6 @@ from fileformats.application import Json
 from fileformats.core import FileSet
 from .exceptions import (
     IncompleteCheckumsException,
-    UpdatedFilesException,
     DifferingCheckumsException,
 )
 import xnat_ingest.scan
@@ -44,11 +43,11 @@ class ImagingResource:
         try:
             scan_id = int(self.scan.id)
         except ValueError:
-            scan_id = self.scan.id
+            scan_id = self.scan.id  # type: ignore[assignment]
         try:
             other_scan_id = int(other.scan.id)
         except ValueError:
-            other_scan_id = other.scan.id
+            other_scan_id = other.scan.id  # type: ignore[assignment]
         return (scan_id, self.name) < (other_scan_id, other.name)
 
     def newer_than_or_equal(self, other: Self) -> bool:
@@ -116,6 +115,7 @@ class ImagingResource:
         cls,
         resource_dir: Path,
         require_manifest: bool = True,
+        check_checksums: bool = True,
     ) -> Self:
         """Load a resource from a directory, reading the manifest file if it exists.
         If the manifest file doesn't exist and 'require_manifest' is True then an
@@ -139,22 +139,27 @@ class ImagingResource:
             p for p in resource_dir.iterdir() if p.name != cls.MANIFEST_FNAME
         )
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
-        if checksums is not None:
-            calc_checksums = resource.calculate_checksums()
-            if calc_checksums != checksums:
-                if all(v == checksums[k] for k, v in calc_checksums.items()):
-                    missing = list(set(checksums) - set(calc_checksums))
-                    raise IncompleteCheckumsException(
-                        f"Files saved with '{resource.name}' resource are incomplete "
-                        f"according to saved checksums, missing {missing}"
-                    )
-
-                differing = [k for k in checksums if calc_checksums[k] != checksums[k]]
-                raise DifferingCheckumsException(
-                    f"Checksums don't match those saved with '{resource.name}' "
-                    f"resource: {differing}"
-                )
+        if checksums is not None and check_checksums:
+            resource.check_checksums()
         return resource
+
+    def check_checksums(self) -> None:
+        calc_checksums = self.calculate_checksums()
+        if calc_checksums != self.checksums:
+            if all(v == self.checksums[k] for k, v in calc_checksums.items()):
+                missing = list(set(self.checksums) - set(calc_checksums))
+                raise IncompleteCheckumsException(
+                    f"Files saved with '{self.name}' resource are incomplete "
+                    f"according to saved checksums, missing {missing}"
+                )
+
+            differing = [
+                k for k in self.checksums if calc_checksums[k] != self.checksums[k]
+            ]
+            raise DifferingCheckumsException(
+                f"Checksums don't match those saved with '{self.name}' "
+                f"resource: {differing}"
+            )
 
     def unlink(self) -> None:
         """Remove all files in the file-set, the object will be unusable after this"""

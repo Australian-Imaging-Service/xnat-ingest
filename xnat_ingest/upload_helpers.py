@@ -20,15 +20,31 @@ from .resource import ImagingResource
 
 
 def iterate_s3_sessions(
-    store_credentials: StoreCredentials, staged: str, temp_dir: Path
+    bucket_path: str,
+    store_credentials: StoreCredentials,
+    temp_dir: Path | None,
+    wait_period: int,
 ) -> ty.Iterator[Path]:
+    """Iterate over sessions stored in an S3 bucket
+
+    Parameters
+    ----------
+    bucket_path : str
+        the path to the S3 bucket
+    store_credentials : StoreCredentials
+        the credentials to access the S3 bucket
+    temp_dir : Path, optional
+        the temporary directory to download the sessions to, by default None
+    wait_period : int
+        the number of seconds after the last write before considering a session complete
+    """
     # List sessions stored in s3 bucket
     s3 = boto3.resource(
         "s3",
         aws_access_key_id=store_credentials.access_key,
         aws_secret_access_key=store_credentials.access_secret,
     )
-    bucket_name, prefix = staged[5:].split("/", 1)
+    bucket_name, prefix = bucket_path[5:].split("/", 1)
     bucket = s3.Bucket(bucket_name)
     if not prefix.endswith("/"):
         prefix += "/"
@@ -37,9 +53,9 @@ def iterate_s3_sessions(
     for obj in all_objects:
         if obj.key.endswith("/"):
             continue  # skip directories
-        path_parts = obj.key[len(prefix) :].split("-")
-        session_ids = tuple(path_parts[:3])
-        session_objs[session_ids].append((path_parts[3:], obj))
+        path_parts = obj.key[len(prefix) :].split("/")
+        session_name = path_parts[0]
+        session_objs[session_name].append((path_parts[1:], obj))
 
     num_sessions = len(session_objs)
     # Bit of a hack to allow the caller to know how many sessions are in the bucket
@@ -52,24 +68,42 @@ def iterate_s3_sessions(
     else:
         tmp_download_dir = Path(tempfile.mkdtemp())
 
-    for ids, objs in session_objs.items():
+    for session_name, objs in session_objs.items():
         # Just in case the manifest file is not included in the list of objects
         # we recreate the project/subject/sesssion directory structure
-        session_tmp_dir = tmp_download_dir.joinpath(*ids)
+        session_tmp_dir = tmp_download_dir / session_name
         session_tmp_dir.mkdir(parents=True, exist_ok=True)
-        for relpath, obj in tqdm(
-            objs,
-            desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
+        # Check to see if the session is still being updated
+        last_modified = None
+        for _, obj in objs:
+            if last_modified is None or obj.last_modified > last_modified:
+                last_modified = obj.last_modified
+        assert last_modified is not None
+        if (datetime.datetime.now() - last_modified) >= datetime.timedelta(
+            seconds=wait_period
         ):
-            obj_path = session_tmp_dir.joinpath(*relpath)
-            obj_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.debug("Downloading %s to %s", obj, obj_path)
-            with open(obj_path, "wb") as f:
-                bucket.download_fileobj(obj.key, f)
-        yield session_tmp_dir
+            for relpath, obj in tqdm(
+                objs,
+                desc=f"Downloading scans in '{session_name}' session from S3 bucket",
+            ):
+                if last_modified is None or obj.last_modified > last_modified:
+                    last_modified = obj.last_modified
+                obj_path = session_tmp_dir.joinpath(*relpath)
+                obj_path.parent.mkdir(parents=True, exist_ok=True)
+                logger.debug("Downloading %s to %s", obj, obj_path)
+                with open(obj_path, "wb") as f:
+                    bucket.download_fileobj(obj.key, f)
+            yield session_tmp_dir
+        else:
+            logger.info(
+                "Skipping session '%s' as it was last modified less than %d seconds ago "
+                "and waiting until it is complete",
+                session_name,
+                wait_period,
+            )
         shutil.rmtree(session_tmp_dir)  # Delete the tmp session after the upload
 
-    logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, staged)
+    logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, bucket_path)
     logger.debug("Created sessions iterator")
 
 
@@ -309,3 +343,29 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
 
 
 HASH_CHUNK_SIZE = 2**20
+
+
+def dir_older_than(path: Path, period: int) -> bool:
+    """
+    Get the most recent modification time of a directory and its contents.
+
+    Parameters
+    ----------
+    path : Path
+        the directory to get the modification time of
+    period : int
+        the number of seconds after the last modification time to check against
+
+    Returns
+    -------
+    bool
+        whether the directory is older than the specified period
+    """
+    mtimes = [path.stat().st_mtime]
+    for root, _, files in os.walk(path):
+        for file in files:
+            mtimes.append((Path(root) / file).stat().st_mtime)
+    last_modified = datetime.datetime.fromtimestamp(max(mtimes))
+    return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
+        seconds=period
+    )

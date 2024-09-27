@@ -5,7 +5,6 @@ from collections import Counter
 from pathlib import Path
 import sys
 import typing as ty
-import hashlib
 import attrs
 import click.types
 import click.testing

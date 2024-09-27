@@ -20,7 +20,7 @@ from xnat_ingest.utils import (
     set_logger_handling,
     StoreCredentials,
 )
-from xnat_ingest.helpers_upload import (
+from xnat_ingest.upload_helpers import (
     get_xnat_session,
     get_xnat_resource,
     get_xnat_checksums,
@@ -28,6 +28,7 @@ from xnat_ingest.helpers_upload import (
     iterate_s3_sessions,
     remove_old_files_on_s3,
     remove_old_files_on_ssh,
+    dir_older_than,
 )
 
 
@@ -188,6 +189,15 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
         "'tgz_file' is used"
     ),
 )
+@click.option(
+    "--wait-period",
+    type=int,
+    default=1800,
+    help=(
+        "The number of seconds to wait between checking for new sessions in the S3 bucket. "
+        "This is to avoid hitting the S3 API rate limit"
+    ),
+)
 def upload(
     staged: str,
     server: str,
@@ -207,6 +217,7 @@ def upload(
     verify_ssl: bool,
     use_curl_jsession: bool,
     method: str,
+    wait_period: int,
 ) -> None:
 
     set_logger_handling(
@@ -250,7 +261,9 @@ def upload(
         num_sessions: int
         sessions: ty.Iterable[Path]
         if staged.startswith("s3://"):
-            sessions = iterate_s3_sessions(store_credentials, staged, temp_dir)
+            sessions = iterate_s3_sessions(
+                staged, store_credentials, temp_dir, wait_period=wait_period
+            )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
         else:
@@ -258,10 +271,18 @@ def upload(
             for project_dir in Path(staged).iterdir():
                 for subject_dir in project_dir.iterdir():
                     for session_dir in subject_dir.iterdir():
-                        sessions.append(session_dir)
+                        if dir_older_than(session_dir, wait_period):
+                            sessions.append(session_dir)
+                        else:
+                            logger.info(
+                                "Skipping '%s' session as it has been modified recently",
+                                session_dir,
+                            )
             num_sessions = len(sessions)
             logger.info(
-                "Found %d sessions in staging directory '%s'", num_sessions, staged
+                "Found %d sessions in staging directory to stage'%s'",
+                num_sessions,
+                staged,
             )
 
         framesets: dict[str, FrameSet] = {}
@@ -271,11 +292,12 @@ def upload(
             total=num_sessions,
             desc=f"Processing staged sessions found in '{staged}'",
         ):
+
             session = ImagingSession.load(
-                session_staging_dir, require_manifest=require_manifest
+                session_staging_dir,
+                require_manifest=require_manifest,
             )
             try:
-
                 # Create corresponding session on XNAT
                 xproject = xnat_repo.connection.projects[session.project_id]
 
@@ -301,17 +323,13 @@ def upload(
                             frameset = None
                     framesets[session.project_id] = frameset
 
-                session_path = (
-                    f"{session.project_id}:{session.subject_id}:{session.visit_id}"
-                )
-
                 xsession = get_xnat_session(session, xproject)
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:
                     logger.info(
                         f"Including {always_include} scans/files in upload from '{session.name}' to "
-                        f"{session_path} regardless of whether they are explicitly specified"
+                        f"{session.path} regardless of whether they are explicitly specified"
                     )
 
                 for resource in tqdm(
@@ -320,10 +338,14 @@ def upload(
                             frameset, always_include=always_include
                         )
                     ),
-                    f"Uploading scans found in {session.name}",
+                    f"Uploading resources found in {session.name}",
                 ):
                     xresource = get_xnat_resource(resource, xsession)
                     if xresource is None:
+                        logger.info(
+                            "Skipping '%s' resource as it is already uploaded",
+                            resource.path,
+                        )
                         continue  # skipping as resource already exists
                     if isinstance(resource.fileset, File):
                         for fspath in resource.fileset.fspaths:

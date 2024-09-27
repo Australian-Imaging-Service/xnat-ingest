@@ -3,7 +3,6 @@ import typing as ty
 import traceback
 import click
 import tempfile
-import shutil
 from tqdm import tqdm
 from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
@@ -33,7 +32,7 @@ are uploaded to XNAT
 )
 @click.argument("files_path", type=str, envvar="XNAT_INGEST_STAGE_DICOMS_PATH")
 @click.argument(
-    "staging_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
 )
 @click.option(
     "--datatype",
@@ -237,9 +236,15 @@ are uploaded to XNAT
         "physical disk as the staging directory for optimal performance"
     ),
 )
+@click.option(
+    "--copy-mode",
+    type=FileSet.CopyMode,
+    default=FileSet.CopyMode.hardlink_or_copy,
+    help="The method to use for copying files",
+)
 def stage(
     files_path: str,
-    staging_dir: Path,
+    output_dir: Path,
     datatype: str,
     associated_files: ty.List[AssociatedFiles],
     project_field: str,
@@ -260,6 +265,7 @@ def stage(
     deidentify: bool,
     xnat_login: XnatLogin,
     spaces_to_underscores: bool,
+    copy_mode: FileSet.CopyMode,
     work_dir: Path | None = None,
 ) -> None:
     set_logger_handling(
@@ -269,13 +275,6 @@ def stage(
         mail_server=mail_server,
         add_logger=add_logger,
     )
-    if work_dir is None:
-        work_dir = staging_dir.parent / (staging_dir.name + ".work")
-    if not work_dir.exists():
-        work_dir.mkdir(parents=True)
-        cleanup_work_dir = True
-    else:
-        cleanup_work_dir = False
 
     if xnat_login:
         xnat_repo = Xnat(
@@ -313,7 +312,19 @@ def stage(
         project_id=project_id,
     )
 
-    logger.info("Staging sessions to '%s'", str(staging_dir))
+    logger.info("Staging sessions to '%s'", str(output_dir))
+
+    # Create sub-directories of the output directory for the different phases of the
+    # staging process
+    prestage_dir = output_dir / "PRE-STAGE"
+    staged_dir = output_dir / "STAGED"
+    invalid_dir = output_dir / "INVALID"
+    prestage_dir.mkdir(parents=True, exist_ok=True)
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    invalid_dir.mkdir(parents=True, exist_ok=True)
+    if deidentify:
+        deidentified_dir = output_dir / "DEIDENTIFIED"
+        deidentified_dir.mkdir(parents=True, exist_ok=True)
 
     for session in tqdm(sessions, f"Staging resources found in '{files_path}'"):
         try:
@@ -323,14 +334,25 @@ def stage(
                     spaces_to_underscores=spaces_to_underscores,
                 )
             if deidentify:
-                session = session.deidentify(
-                    work_dir / "deidentified",
-                    copy_mode=FileSet.CopyMode.hardlink_or_copy,
+                deidentified_session = session.deidentify(
+                    deidentified_dir,
+                    copy_mode=copy_mode,
                 )
-            session.save(
-                staging_dir.joinpath(*session.staging_relpath),
+                if delete:
+                    session.unlink()
+                session = deidentified_session
+            # We save the session into a temporary "pre-stage" directory first before
+            # moving them into the final "staged" directory. This is to prevent the
+            # files being transferred/deleted until the saved session is in a final state.
+            _, saved_dir = session.save(
+                prestage_dir.joinpath(*session.staging_relpath),
                 available_projects=project_list,
+                copy_mode=copy_mode,
             )
+            if "INVALID" in saved_dir.name:
+                invalid_dir.rename(staged_dir.joinpath(*session.staging_relpath))
+            else:
+                saved_dir.rename(staged_dir.joinpath(*session.staging_relpath))
             if delete:
                 session.unlink()
         except Exception as e:
@@ -342,9 +364,6 @@ def stage(
                 continue
             else:
                 raise
-        finally:
-            if cleanup_work_dir:
-                shutil.rmtree(work_dir)
 
 
 if __name__ == "__main__":

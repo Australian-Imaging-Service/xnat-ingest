@@ -549,7 +549,12 @@ class ImagingSession:
         )
 
     @classmethod
-    def load(cls, session_dir: Path, require_manifest: bool = True) -> Self:
+    def load(
+        cls,
+        session_dir: Path,
+        require_manifest: bool = True,
+        check_checksums: bool = True,
+    ) -> Self:
         """Loads a session from a directory. Assumes that the name of the directory is
         the name of the session dir and the parent directory is the subject ID and the
         grandparent directory is the project ID. The scan information is loaded from a YAML
@@ -566,6 +571,8 @@ class ImagingSession:
             if true, resources will only be loaded if the manifest file is found,
             if false, resources will be loaded as FileSet types and checksums will not
             be checked, by default True
+        check_checksums: bool, optional
+            whether to check the checksums of the files in the session, by default True
 
         Returns
         -------
@@ -585,7 +592,9 @@ class ImagingSession:
             scan_resources = {}
             for resource_dir in scan_dir.iterdir():
                 scan_resources[resource_dir.name] = ImagingResource.load(
-                    resource_dir, require_manifest=require_manifest
+                    resource_dir,
+                    require_manifest=require_manifest,
+                    check_checksums=check_checksums,
                 )
             session.scans[scan_id] = ImagingScan(
                 scan_id,
@@ -598,7 +607,8 @@ class ImagingSession:
         self,
         dest_dir: Path,
         available_projects: ty.Optional[ty.List[str]] = None,
-    ) -> Self:
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    ) -> tuple[Self, Path]:
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
 
@@ -639,6 +649,8 @@ class ImagingSession:
         -------
         ImagingSession
             a deidentified session with updated paths
+        Path
+            the path to the directory where the session is saved
         """
         staged = self.new_empty()
         if available_projects is None or self.project_id in available_projects:
@@ -652,10 +664,10 @@ class ImagingSession:
                 # Ensure scan type is a valid directory name
                 resource_dir = session_dir / f"{scan.id}-{scan.type}" / resource.name
                 resource_dir.mkdir(parents=True, exist_ok=True)
-                staged_fileset = resource.fileset.copy(resource_dir)
+                staged_fileset = resource.fileset.copy(resource_dir, mode=copy_mode)
                 staged.add_resource(scan.id, scan.type, resource.name, staged_fileset)
 
-        return staged
+        return staged, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
 
