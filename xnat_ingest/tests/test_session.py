@@ -27,7 +27,8 @@ from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b im
     get_image as get_statistics_image,
     __file__ as statistics_src_file,
 )
-from xnat_ingest.session import ImagingSession, ImagingScan, DummyAxes
+from xnat_ingest.session import ImagingSession, ImagingScan
+from xnat_ingest.store import DummyAxes
 from xnat_ingest.utils import AssociatedFiles
 from conftest import get_raw_data_files
 

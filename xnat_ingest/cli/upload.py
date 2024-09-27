@@ -1,19 +1,11 @@
 from pathlib import Path
-import shutil
-import os
-import datetime
 import traceback
 import typing as ty
-from collections import defaultdict
 import tempfile
-from operator import itemgetter
 import subprocess as sp
 import click
 from tqdm import tqdm
-from natsort import natsorted
 import xnat
-import boto3
-import paramiko
 from fileformats.generic import File
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -26,9 +18,16 @@ from xnat_ingest.utils import (
     LogEmail,
     MailServer,
     set_logger_handling,
-    get_checksums,
-    calculate_checksums,
     StoreCredentials,
+)
+from xnat_ingest.helpers_upload import (
+    get_xnat_session,
+    get_xnat_resource,
+    get_xnat_checksums,
+    calculate_checksums,
+    iterate_s3_sessions,
+    remove_old_files_on_s3,
+    remove_old_files_on_ssh,
 )
 
 
@@ -217,6 +216,8 @@ def upload(
         mail_server=mail_server,
         add_logger=add_logger,
     )
+
+    # Set the directory to create temporary files/directories in away from system default
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
 
@@ -246,122 +247,24 @@ def upload(
 
     with xnat_repo.connection:
 
-        def xnat_session_exists(
-            project_id: str, subject_id: str, visit_id: str
-        ) -> bool:
-            try:
-                xnat_repo.connection.projects[project_id].subjects[
-                    subject_id
-                ].experiments[
-                    ImagingSession.make_session_id(project_id, subject_id, visit_id)
-                ]
-            except KeyError:
-                return False
-            else:
-                logger.info(
-                    "Skipping session '%s-%s-%s' as it already exists on XNAT",
-                    project_id,
-                    subject_id,
-                    visit_id,
-                )
-                return True
-
-        project_ids = set()
-
+        num_sessions: int
         sessions: ty.Iterable[Path]
         if staged.startswith("s3://"):
-            # List sessions stored in s3 bucket
-            s3 = boto3.resource(
-                "s3",
-                aws_access_key_id=store_credentials.access_key,
-                aws_secret_access_key=store_credentials.access_secret,
-            )
-            bucket_name, prefix = staged[5:].split("/", 1)
-            bucket = s3.Bucket(bucket_name)
-            if not prefix.endswith("/"):
-                prefix += "/"
-            all_objects = bucket.objects.filter(Prefix=prefix)
-            session_objs = defaultdict(list)
-            for obj in all_objects:
-                if obj.key.endswith("/"):
-                    continue  # skip directories
-                path_parts = obj.key[len(prefix) :].split("/")
-                session_ids = tuple(path_parts[:3])
-                project_ids.add(session_ids[0])
-                session_objs[session_ids].append((path_parts[3:], obj))
-
-            for ids, objs in list(session_objs.items()):
-                if xnat_session_exists(*ids):
-                    logger.info(
-                        "Skipping session '%s' as it already exists on XNAT", ids
-                    )
-                    del session_objs[ids]
-
-            num_sessions = len(session_objs)
-
-            if temp_dir:
-                tmp_download_dir = temp_dir / "xnat-ingest-download"
-                tmp_download_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                tmp_download_dir = Path(tempfile.mkdtemp())
-
-            def iter_staged_sessions() -> ty.Iterator[Path]:
-                for ids, objs in session_objs.items():
-                    # Just in case the manifest file is not included in the list of objects
-                    # we recreate the project/subject/sesssion directory structure
-                    session_tmp_dir = tmp_download_dir.joinpath(*ids)
-                    session_tmp_dir.mkdir(parents=True, exist_ok=True)
-                    for relpath, obj in tqdm(
-                        objs,
-                        desc=f"Downloading scans in {':'.join(ids)} session from S3 bucket",
-                    ):
-                        obj_path = session_tmp_dir.joinpath(*relpath)
-                        obj_path.parent.mkdir(parents=True, exist_ok=True)
-                        logger.debug("Downloading %s to %s", obj, obj_path)
-                        with open(obj_path, "wb") as f:
-                            bucket.download_fileobj(obj.key, f)
-                    yield session_tmp_dir
-                    shutil.rmtree(
-                        session_tmp_dir
-                    )  # Delete the tmp session after the upload
-
-            logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, staged)
-            sessions = iter_staged_sessions()
-            logger.debug("Created sessions iterator")
+            sessions = iterate_s3_sessions(store_credentials, staged, temp_dir)
+            # bit of a hack: number of sessions is the first item in the iterator
+            num_sessions = next(sessions)  # type: ignore[assignment]
         else:
             sessions = []
             for project_dir in Path(staged).iterdir():
                 for subject_dir in project_dir.iterdir():
                     for session_dir in subject_dir.iterdir():
-                        if not xnat_session_exists(
-                            project_dir.name, subject_dir.name, session_dir.name
-                        ):
-                            sessions.append(session_dir)
-                project_ids.add(project_dir.name)
+                        sessions.append(session_dir)
             num_sessions = len(sessions)
             logger.info(
                 "Found %d sessions in staging directory '%s'", num_sessions, staged
             )
 
-        # Check for dataset definitions on XNAT if an always_include option is not
-        # provided
-        if not always_include:
-            missing_datasets = set()
-            for project_id in project_ids:
-                try:
-                    dataset = FrameSet.load(project_id, xnat_repo)
-                except Exception:
-                    missing_datasets.add(project_id)
-                else:
-                    logger.debug(
-                        "Found dataset definition for '%s' project", project_id
-                    )
-            if missing_datasets:
-                raise ValueError(
-                    "Either an '--always-include' option must be provided or dataset "
-                    "definitions must be present on XNAT for the following projects "
-                    f"({missing_datasets}) in order to upload the sessions"
-                )
+        framesets: dict[str, FrameSet] = {}
 
         for session_staging_dir in tqdm(
             sessions,
@@ -372,58 +275,37 @@ def upload(
                 session_staging_dir, require_manifest=require_manifest
             )
             try:
-                if "MR" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.MrSessionData
-                    default_scan_modality = "MR"
-                elif "PT" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.PetSessionData
-                    default_scan_modality = "PT"
-                elif "CT" in session.modalities:
-                    SessionClass = xnat_repo.connection.classes.CtSessionData
-                    default_scan_modality = "CT"
-                else:
-                    raise RuntimeError(
-                        f"Found the following unsupported modalities {session.modalities}, "
-                        "in the session. Must contain one of 'MR', 'PT' or 'CT'"
-                    )
 
                 # Create corresponding session on XNAT
                 xproject = xnat_repo.connection.projects[session.project_id]
 
-                # Access Arcana dataset associated with project
+                # Access Arcana frameset associated with project
                 try:
-                    dataset = FrameSet.load(session.project_id, xnat_repo)
-                except Exception as e:
-                    logger.warning(
-                        "Did not load dataset definition (%s) from %s project "
-                        "on %s. Only the scan types specified in --always-include",
-                        e,
-                        session.project_id,
-                        server,
-                    )
-                    dataset = None
-
-                xsubject = xnat_repo.connection.classes.SubjectData(
-                    label=session.subject_id, parent=xproject
-                )
-                try:
-                    xsession = xproject.experiments[session.session_id]
+                    frameset = framesets[session.project_id]
                 except KeyError:
-                    if "MR" in session.modalities:
-                        SessionClass = xnat_repo.connection.classes.MrSessionData
-                    elif "PT" in session.modalities:
-                        SessionClass = xnat_repo.connection.classes.PetSessionData
-                    elif "CT" in session.modalities:
-                        SessionClass = xnat_repo.connection.classes.CtSessionData
-                    else:
-                        raise RuntimeError(
-                            "Found the following unsupported modalities in "
-                            f"{session.name}: {session.modalities}"
-                        )
-                    xsession = SessionClass(label=session.session_id, parent=xsubject)
+                    try:
+                        frameset = FrameSet.load(session.project_id, xnat_repo)
+                    except Exception as e:
+                        if not always_include:
+                            logger.error(
+                                "Did not load frameset definition (%s) from %s project "
+                                "on %s. Either '--always-include' flag must be used or "
+                                "the frameset must be defined on XNAT using the `frametree` "
+                                "command line tool (see https://arcanaframework.github.io/frametree/).",
+                                e,
+                                session.project_id,
+                                xnat_repo.server,
+                            )
+                            continue
+                        else:
+                            frameset = None
+                    framesets[session.project_id] = frameset
+
                 session_path = (
                     f"{session.project_id}:{session.subject_id}:{session.visit_id}"
                 )
+
+                xsession = get_xnat_session(session, xproject)
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:
@@ -432,68 +314,26 @@ def upload(
                         f"{session_path} regardless of whether they are explicitly specified"
                     )
 
-                for scan_id, scan_type, resource_name, scan in tqdm(
-                    natsorted(
+                for resource in tqdm(
+                    sorted(
                         session.select_resources(
-                            dataset,
-                            always_include=always_include,
-                        ),
-                        key=itemgetter(0),
+                            frameset, always_include=always_include
+                        )
                     ),
                     f"Uploading scans found in {session.name}",
                 ):
-                    if scan.metadata:
-                        image_type = scan.metadata.get("ImageType")
-                        if image_type and image_type[:2] == ["DERIVED", "SECONDARY"]:
-                            modality = "SC"
-                            resource_name = "secondary"
-                        else:
-                            modality = scan.metadata.get(
-                                "Modality", default_scan_modality
-                            )
-                    else:
-                        modality = default_scan_modality
-                    if modality == "SC":
-                        ScanClass = xnat_repo.connection.classes.ScScanData
-                    elif modality == "MR":
-                        ScanClass = xnat_repo.connection.classes.MrScanData
-                    elif modality == "PT":
-                        ScanClass = xnat_repo.connection.classes.PetScanData
-                    elif modality == "CT":
-                        ScanClass = xnat_repo.connection.classes.CtScanData
-                    else:
-                        if SessionClass is xnat_repo.connection.classes.PetSessionData:
-                            ScanClass = xnat_repo.connection.classes.PetScanData
-                        elif SessionClass is xnat_repo.connection.classes.CtSessionData:
-                            ScanClass = xnat_repo.connection.classes.CtScanData
-                        else:
-                            ScanClass = xnat_repo.connection.classes.MrScanData
-                        logger.info(
-                            "Can't determine modality of %s-%s scan, defaulting to the "
-                            "default for %s sessions, %s",
-                            scan_id,
-                            scan_type,
-                            SessionClass,
-                            ScanClass,
-                        )
-                    logger.debug("Creating scan %s in %s", scan_id, session_path)
-                    xscan = ScanClass(id=scan_id, type=scan_type, parent=xsession)
-                    logger.debug(
-                        "Creating resource %s in %s in %s",
-                        resource_name,
-                        scan_id,
-                        session_path,
-                    )
-                    xresource = xscan.create_resource(resource_name)
-                    if isinstance(scan, File):
-                        for fspath in scan.fspaths:
+                    xresource = get_xnat_resource(resource, xsession)
+                    if xresource is None:
+                        continue  # skipping as resource already exists
+                    if isinstance(resource.fileset, File):
+                        for fspath in resource.fileset.fspaths:
                             xresource.upload(str(fspath), fspath.name)
                     else:
-                        xresource.upload_dir(scan.parent, method=method)
+                        xresource.upload_dir(resource.fileset.parent, method=method)
                     logger.debug("retrieving checksums for %s", xresource)
-                    remote_checksums = get_checksums(xresource)
+                    remote_checksums = get_xnat_checksums(xresource)
                     logger.debug("calculating checksums for %s", xresource)
-                    calc_checksums = calculate_checksums(scan)
+                    calc_checksums = calculate_checksums(resource.fileset)
                     if remote_checksums != calc_checksums:
                         mismatching = [
                             k
@@ -502,10 +342,10 @@ def upload(
                         ]
                         raise RuntimeError(
                             "Checksums do not match after upload of "
-                            f"'{session.name}:{scan_id}:{resource_name}' resource. "
+                            f"'{resource.path}' resource. "
                             f"Mismatching files were {mismatching}"
                         )
-                    logger.info(f"Uploaded '{scan_id}' in '{session.name}'")
+                    logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
                 logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
                 logger.info("Extracting metadata from DICOMs on XNAT..")
@@ -557,50 +397,6 @@ def upload(
             remove_old_files_on_ssh(remote_store=staged, threshold=clean_up_older_than)
         else:
             assert False
-
-
-def remove_old_files_on_s3(remote_store: str, threshold: int) -> None:
-    # Parse S3 bucket and prefix from remote store
-    bucket_name, prefix = remote_store[5:].split("/", 1)
-
-    # Create S3 client
-    s3_client = boto3.client("s3")
-
-    # List objects in the bucket with the specified prefix
-    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-    now = datetime.datetime.now()
-
-    # Iterate over objects and delete files older than the threshold
-    for obj in response.get("Contents", []):
-        last_modified = obj["LastModified"]
-        age = (now - last_modified).days
-        if age > threshold:
-            s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
-
-
-def remove_old_files_on_ssh(remote_store: str, threshold: int) -> None:
-    # Parse SSH server and directory from remote store
-    server, directory = remote_store.split("@", 1)
-
-    # Create SSH client
-    ssh_client = paramiko.SSHClient()
-    ssh_client.load_system_host_keys()
-    ssh_client.connect(server)
-
-    # Execute find command to list files in the directory
-    stdin, stdout, stderr = ssh_client.exec_command(f"find {directory} -type f")
-
-    now = datetime.datetime.now()
-
-    # Iterate over files and delete files older than the threshold
-    for file_path in stdout.read().decode().splitlines():
-        last_modified = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
-        age = (now - last_modified).days
-        if age > threshold:
-            ssh_client.exec_command(f"rm {file_path}")
-
-    ssh_client.close()
 
 
 if __name__ == "__main__":

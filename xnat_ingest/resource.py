@@ -7,6 +7,12 @@ import shutil
 import attrs
 from fileformats.application import Json
 from fileformats.core import FileSet
+from .exceptions import (
+    IncompleteCheckumsException,
+    UpdatedFilesException,
+    DifferingCheckumsException,
+)
+import xnat_ingest.scan
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -16,6 +22,7 @@ class ImagingResource:
     name: str
     fileset: FileSet
     checksums: dict[str, str] = attrs.field()
+    scan: "xnat_ingest.scan.ImagingScan" = attrs.field(default=None)
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
@@ -32,6 +39,17 @@ class ImagingResource:
     @property
     def mime_like(self) -> str:
         return self.fileset.mime_like
+
+    def __lt__(self, other: Self) -> bool:
+        try:
+            scan_id = int(self.scan.id)
+        except ValueError:
+            scan_id = self.scan.id
+        try:
+            other_scan_id = int(other.scan.id)
+        except ValueError:
+            other_scan_id = other.scan.id
+        return (scan_id, self.name) < (other_scan_id, other.name)
 
     def newer_than_or_equal(self, other: Self) -> bool:
         return all(s >= m for s, m in zip(self.fileset.mtimes, other.fileset.mtimes))
@@ -99,6 +117,11 @@ class ImagingResource:
         resource_dir: Path,
         require_manifest: bool = True,
     ) -> Self:
+        """Load a resource from a directory, reading the manifest file if it exists.
+        If the manifest file doesn't exist and 'require_manifest' is True then an
+        exception is raised, if it is False, then a generic FileSet object is loaded
+        from the files that were found
+        """
         manifest_file = resource_dir / cls.MANIFEST_FNAME
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
@@ -116,11 +139,18 @@ class ImagingResource:
             p for p in resource_dir.iterdir() if p.name != cls.MANIFEST_FNAME
         )
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
-        if checksums:
+        if checksums is not None:
             calc_checksums = resource.calculate_checksums()
             if calc_checksums != checksums:
+                if all(v == checksums[k] for k, v in calc_checksums.items()):
+                    missing = list(set(checksums) - set(calc_checksums))
+                    raise IncompleteCheckumsException(
+                        f"Files saved with '{resource.name}' resource are incomplete "
+                        f"according to saved checksums, missing {missing}"
+                    )
+
                 differing = [k for k in checksums if calc_checksums[k] != checksums[k]]
-                raise ValueError(
+                raise DifferingCheckumsException(
                     f"Checksums don't match those saved with '{resource.name}' "
                     f"resource: {differing}"
                 )
@@ -133,5 +163,9 @@ class ImagingResource:
                 fspath.unlink()
             else:
                 shutil.rmtree(fspath)
+
+    @property
+    def path(self) -> str:
+        return self.scan.path + ":" + self.name
 
     MANIFEST_FNAME = "MANIFEST.json"

@@ -208,60 +208,6 @@ def set_logger_handling(
         logr.addHandler(console_hdle)
 
 
-def get_checksums(xresource: ty.Any) -> dict[str, str]:
-    """
-    Downloads the MD5 digests associated with the files in a resource.
-
-    Parameters
-    ----------
-    xresource : xnat.classes.Resource
-        XNAT resource to retrieve the checksums from
-
-    Returns
-    -------
-    dict[str, str]
-        the checksums calculated by XNAT
-    """
-    result = xresource.xnat_session.get(xresource.uri + "/files")
-    if result.status_code != 200:
-        raise RuntimeError(
-            "Could not download metadata for resource {}. Files "
-            "may have been uploaded but cannot check checksums".format(xresource.id)
-        )
-    return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
-
-
-def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
-    """
-    Calculates the MD5 digests associated with the files in a fileset.
-
-    Parameters
-    ----------
-    scan : FileSet
-        the file-set to calculate the checksums for
-
-    Returns
-    -------
-    dict[str, str]
-        the calculated checksums
-    """
-    checksums = {}
-    for fspath in scan.fspaths:
-        try:
-            hsh = hashlib.md5()
-            with open(fspath, "rb") as f:
-                for chunk in iter(lambda: f.read(HASH_CHUNK_SIZE), b""):
-                    hsh.update(chunk)
-            checksum = hsh.hexdigest()
-        except OSError:
-            raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        checksums[str(fspath.relative_to(scan.parent))] = checksum
-    return checksums
-
-
-HASH_CHUNK_SIZE = 2**20
-
-
 def show_cli_trace(result: click.testing.Result) -> str:
     """Show the exception traceback from CLIRunner results"""
     assert result.exc_info is not None

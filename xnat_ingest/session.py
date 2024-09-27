@@ -17,7 +17,6 @@ from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[import-untyped]
 from .exceptions import ImagingSessionParseError, StagingError
 from .utils import AssociatedFiles
-from .dicom import dcmedit_path
 from .scan import ImagingScan
 from .resource import ImagingResource
 
@@ -46,6 +45,10 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
 
+    def __attrs_post_init__(self) -> None:
+        for scan in self.scans.values():
+            scan.session = self
+
     id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
     def __getitem__(self, fieldname: str) -> ty.Any:
@@ -62,6 +65,10 @@ class ImagingSession:
             or self.subject_id.startswith("INVALID")
             or self.visit_id.startswith("INVALID")
         )
+
+    @property
+    def path(self) -> str:
+        return ":".join([self.project_id, self.subject_id, self.visit_id])
 
     @property
     def staging_relpath(self) -> list[str]:
@@ -119,7 +126,7 @@ class ImagingSession:
         self,
         dataset: ty.Optional[FrameSet],
         always_include: ty.Sequence[str] = (),
-    ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
+    ) -> ty.Iterator[ImagingResource]:
         """Returns selected resources that match the columns in the dataset definition
 
         Parameters
@@ -163,7 +170,7 @@ class ImagingSession:
                 for resource_name, fileset in scan.resources.items():
                     if isinstance(fileset, fileformat):
                         uploaded.add((scan.id, resource_name))
-                        yield scan.id, scan.type, resource_name, fileset
+                        yield self.scans[scan.id].resources[resource_name]
         if dataset is not None:
             for column in dataset.columns.values():
                 try:
@@ -187,7 +194,7 @@ class ImagingSession:
                         continue
                     fileset = column.datatype(scan.resources[resource_name])
                     uploaded.add((scan.id, resource_name))
-                yield scan_id, scan.type, entry.uri[1], column.datatype(entry.item)
+                yield self.scans[scan_id].resources[resource_name]
 
     @cached_property
     def metadata(self) -> dict[str, ty.Any]:
@@ -342,8 +349,9 @@ class ImagingSession:
                     )
                 if index is not None:
                     value = value[index]
-                value = cls.id_escape_re.sub("_", value)
-                return str(value)
+                value_str = str(value)
+                value_str = cls.id_escape_re.sub("_", value_str)
+                return value_str
 
             if not project_id:
                 project_id = get_id("project", project_field)
@@ -519,7 +527,7 @@ class ImagingSession:
             scan = self.scans[scan_id]
         except KeyError:
             scan = self.scans[scan_id] = ImagingScan(
-                id=scan_id, type=scan_type, associated=associated
+                id=scan_id, type=scan_type, associated=associated, session=self
             )
         else:
             if scan.type != scan_type:
@@ -537,7 +545,7 @@ class ImagingSession:
                 f"Clash between resource names ('{resource_name}') for {scan_id} scan"
             )
         scan.resources[resource_name] = ImagingResource(
-            name=resource_name, fileset=fileset
+            name=resource_name, fileset=fileset, scan=scan
         )
 
     @classmethod
@@ -582,7 +590,7 @@ class ImagingSession:
             session.scans[scan_id] = ImagingScan(
                 scan_id,
                 scan_type,
-                scan_resources,
+                scan_resources,  # type: ignore[arg-type]
             )
         return session
 
@@ -632,12 +640,6 @@ class ImagingSession:
         ImagingSession
             a deidentified session with updated paths
         """
-        if not dcmedit_path:
-            logger.warning(
-                "Did not find `dcmedit` tool from the MRtrix package on the system path, "
-                "de-identification will be performed by pydicom instead and may be slower"
-            )
-
         staged = self.new_empty()
         if available_projects is None or self.project_id in available_projects:
             project_id = self.project_id

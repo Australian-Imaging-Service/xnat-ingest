@@ -5,6 +5,7 @@ import attrs
 from fileformats.core import FileSet
 from .resource import ImagingResource
 from .utils import AssociatedFiles
+import xnat_ingest.session
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -43,9 +44,18 @@ class ImagingScan:
         factory=dict, converter=scan_resources_converter
     )
     associated: AssociatedFiles | None = None
+    session: "xnat_ingest.session.ImagingSession" = attrs.field(default=None)
 
     def __contains__(self, resource_name: str) -> bool:
         return resource_name in self.resources
 
     def __getitem__(self, resource_name: str) -> ImagingResource:
         return self.resources[resource_name]
+
+    def __attrs_post_init__(self) -> None:
+        for resource in self.resources.values():
+            resource.scan = self
+
+    @property
+    def path(self) -> str:
+        return self.session.path + ":" + self.id + "-" + self.type

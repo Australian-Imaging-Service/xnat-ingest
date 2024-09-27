@@ -1,18 +1,24 @@
-class UnsupportedModalityError(Exception):
+class XnatIngestError(Exception):
     def __init__(self, msg: str):
         self.msg = msg
 
 
-class StagingError(Exception):
-    def __init__(self, msg: str):
-        self.msg = msg
+class UnsupportedModalityError(XnatIngestError): ...
 
 
-class ImagingSessionParseError(StagingError):
-    def __init__(self, msg: str):
-        self.msg = msg
+class StagingError(XnatIngestError): ...
 
 
-class UploadError(Exception):
-    def __init__(self, msg: str):
-        self.msg = msg
+class ImagingSessionParseError(StagingError): ...
+
+
+class UploadError(XnatIngestError): ...
+
+
+class DifferingCheckumsException(XnatIngestError): ...
+
+
+class UpdatedFilesException(DifferingCheckumsException): ...
+
+
+class IncompleteCheckumsException(DifferingCheckumsException): ...

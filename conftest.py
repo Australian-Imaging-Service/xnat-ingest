@@ -122,6 +122,6 @@ class TestSMTPHandler(SMTPHandler):
 def get_raw_data_files(out_dir: ty.Optional[Path] = None, **kwargs) -> ty.List[Path]:
     if out_dir is None:
         out_dir = Path(tempfile.mkdtemp())
-    return get_listmode_data(
-        out_dir, skip_unknown=False, **kwargs
-    ) + get_countrate_data(out_dir, skip_unknown=False, **kwargs)
+    return get_listmode_data(out_dir, skip_unknown=True, **kwargs) + get_countrate_data(
+        out_dir, skip_unknown=True, **kwargs
+    )
