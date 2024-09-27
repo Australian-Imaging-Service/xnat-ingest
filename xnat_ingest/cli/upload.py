@@ -192,7 +192,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--wait-period",
     type=int,
-    default=1800,
+    default=60,
     help=(
         "The number of seconds to wait between checking for new sessions in the S3 bucket. "
         "This is to avoid hitting the S3 API rate limit"
