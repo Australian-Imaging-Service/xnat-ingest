@@ -1,5 +1,6 @@
 from pathlib import Path
 import pytest
+import typing as ty
 from fileformats.core import from_mime, FileSet
 from fileformats.medimage import (
     DicomSeries,
@@ -32,6 +33,30 @@ from conftest import get_raw_data_files
 
 FIRST_NAME = "Given Name"
 LAST_NAME = "FamilyName"
+
+DICOM_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
+    ("pet", "medimage/dicom-series", "PET SWB 8MIN"),
+    ("topogram", "medimage/dicom-series", "Topogram.*"),
+    ("atten_corr", "medimage/dicom-series", "AC CT.*"),
+]
+
+RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
+    (
+        "listmode",
+        "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
+        ".*/LISTMODE",
+    ),
+    # (
+    #     "sinogram",
+    #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
+    #     ".*/EM_SINO",
+    # ),
+    (
+        "countrate",
+        "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
+        ".*/COUNTRATE",
+    ),
+]
 
 
 @pytest.fixture
@@ -109,26 +134,40 @@ def dataset(tmp_path: Path) -> FrameSet:
         hierarchy=[],
         axes=DummyAxes,
     )
-    for col_name, col_type, col_pattern in [
-        ("pet", "medimage/dicom-series", "PET SWB 8MIN"),
-        ("topogram", "medimage/dicom-series", "Topogram.*"),
-        ("atten_corr", "medimage/dicom-series", "AC CT.*"),
-        (
-            "listmode",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
-            ".*/LISTMODE",
-        ),
-        # (
-        #     "sinogram",
-        #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
-        #     ".*/EM_SINO",
-        # ),
-        (
-            "countrate",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
-            ".*/COUNTRATE",
-        ),
-    ]:
+    for col_name, col_type, col_pattern in DICOM_COLUMNS + RAW_COLUMNS:
+        dataset.add_source(col_name, from_mime(col_type), col_pattern, is_regex=True)
+    return dataset
+
+
+@pytest.fixture
+def raw_frameset(tmp_path: Path) -> FrameSet:
+    """For use in tests, this method creates a test dataset from the provided
+    blueprint
+
+    Parameters
+    ----------
+    store: DataStore
+        the store to make the dataset within
+    dataset_id : str
+        the ID of the project/directory within the store to create the dataset
+    name : str, optional
+        the name to give the dataset. If provided the dataset is also saved in the
+        datastore
+    source_data : Path, optional
+        path to a directory containing source data to use instead of the dummy
+        data
+    **kwargs
+        passed through to create_dataset
+    """
+    dataset_path = tmp_path / "a-dataset"
+    store = FileSystem()
+    dataset = store.create_dataset(
+        id=dataset_path,
+        leaves=[],
+        hierarchy=[],
+        axes=DummyAxes,
+    )
+    for col_name, col_type, col_pattern in RAW_COLUMNS:
         dataset.add_source(col_name, from_mime(col_type), col_pattern, is_regex=True)
     return dataset
 
@@ -216,3 +255,55 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
                 assert isinstance(resource, FileSet)
                 scan.resources[key] = DicomSeries(resource)
     assert loaded_no_manifest == saved
+
+
+def test_stage_raw_data_directly(dataset: FrameSet, tmp_path: Path):
+
+    raw_data_dir = tmp_path / "assoc"
+    raw_data_dir.mkdir()
+
+    num_sessions = 2
+
+    for i in range(num_sessions):
+        raw_data_dir = raw_data_dir / str(i)
+        raw_data_dir.mkdir()
+        get_raw_data_files(
+            out_dir=raw_data_dir,
+            first_name=FIRST_NAME + str(i),
+            last_name=LAST_NAME + str(i),
+            Study=f"Study{i}",
+            Patient=f"Patient{i}",
+            AccessionNumber=f"AccessionNumber{i}",
+            StudyInstanceUID=f"StudyInstanceUID{i}",
+        )
+
+    imaging_sessions = ImagingSession.from_paths(
+        f"{raw_data_dir}/**/*.ptd",
+        datatypes=[Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData],
+    )
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+
+    for imaging_session in imaging_sessions:
+        staged_session = imaging_session.stage(
+            staging_dir,
+        )
+
+    resources = list(staged_session.select_resources(dataset))
+
+    assert len(resources) == 5
+    ids, descs, resource_names, scans = zip(*resources)
+    assert set(ids) == set(("602",))
+    assert set(descs) == set(
+        [
+            "602",
+        ]
+    )
+    assert set(resource_names) == set(("LISTMODE", "COUNTRATE"))
+    assert set(type(s) for s in scans) == set(
+        [
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+        ]
+    )
