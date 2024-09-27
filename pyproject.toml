@@ -85,3 +85,18 @@ per-file-ignores = ["__init__.py:F401"]
 max-line-length = 88
 select = "C,E,F,W,B,B950"
 extend-ignore = ['E203', 'E501', 'E129', "W503"]
+
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = true
+explicit_package_bases = true
+exclude = [
+    "tests",
+    "scripts",
+    "docs",
+    "build",
+    "dist",
+    "xnat_ingest/_version.py",
+]

@@ -3,7 +3,9 @@ import typing as ty
 import traceback
 import click
 import tempfile
+import shutil
 from tqdm import tqdm
+from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from frametree.xnat import Xnat  # type: ignore[import-untyped]
@@ -225,6 +227,16 @@ are uploaded to XNAT
     envvar="XNAT_INGEST_STAGE_SPACES_TO_UNDERSCORES",
     type=bool,
 )
+@click.option(
+    "--work-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    envvar="XNAT_INGEST_STAGE_WORK_DIR",
+    help=(
+        "The working directory to use for temporary files. Should be on the same "
+        "physical disk as the staging directory for optimal performance"
+    ),
+)
 def stage(
     files_path: str,
     staging_dir: Path,
@@ -248,7 +260,8 @@ def stage(
     deidentify: bool,
     xnat_login: XnatLogin,
     spaces_to_underscores: bool,
-):
+    work_dir: Path | None = None,
+) -> None:
     set_logger_handling(
         log_level=log_level,
         log_emails=log_emails,
@@ -256,6 +269,13 @@ def stage(
         mail_server=mail_server,
         add_logger=add_logger,
     )
+    if work_dir is None:
+        work_dir = staging_dir.parent / (staging_dir.name + ".work")
+    if not work_dir.exists():
+        work_dir.mkdir(parents=True)
+        cleanup_work_dir = True
+    else:
+        cleanup_work_dir = False
 
     if xnat_login:
         xnat_repo = Xnat(
@@ -295,25 +315,24 @@ def stage(
 
     logger.info("Staging sessions to '%s'", str(staging_dir))
 
-    for session in tqdm(sessions, f"Staging DICOM sessions found in '{files_path}'"):
+    for session in tqdm(sessions, f"Staging resources found in '{files_path}'"):
         try:
-            session_staging_dir = staging_dir.joinpath(*session.staging_relpath)
-            if session_staging_dir.exists():
-                logger.info(
-                    "Skipping %s session as staging directory %s already exists",
-                    session.name,
-                    str(session_staging_dir),
+            if associated_files:
+                session.associate_files(
+                    associated_files,
+                    spaces_to_underscores=spaces_to_underscores,
                 )
-                continue
-            # Identify theDeidentify files if necessary and save them to the staging directory
-            session.stage(
-                staging_dir,
-                associated_file_groups=associated_files,
-                remove_original=delete,
-                deidentify=deidentify,
-                project_list=project_list,
-                spaces_to_underscores=spaces_to_underscores,
+            if deidentify:
+                session = session.deidentify(
+                    work_dir / "deidentified",
+                    copy_mode=FileSet.CopyMode.hardlink_or_copy,
+                )
+            session.save(
+                staging_dir.joinpath(*session.staging_relpath),
+                available_projects=project_list,
             )
+            if delete:
+                session.unlink()
         except Exception as e:
             if not raise_errors:
                 logger.error(
@@ -323,6 +342,9 @@ def stage(
                 continue
             else:
                 raise
+        finally:
+            if cleanup_work_dir:
+                shutil.rmtree(work_dir)
 
 
 if __name__ == "__main__":

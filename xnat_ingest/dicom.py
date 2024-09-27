@@ -1,12 +1,6 @@
 import typing as ty
 import subprocess as sp
-
-# import re
 import pydicom
-
-# from fileformats.core import FileSet
-# from fileformats.application import Dicom
-# from fileformats.extras.application.medical import dicom_read_metadata
 
 dcmedit_path: ty.Optional[str]
 try:
@@ -36,21 +30,17 @@ def keyword2tag(keyword: str) -> ty.Tuple[str, str]:
 class DicomField:
     name = "dicom_field"
 
-    def __init__(self, keyword_or_tag):
+    def __init__(self, keyword_or_tag: str | ty.Tuple[str, str]):
         # Get the tag associated with the keyword
         try:
-            self.tag = keyword2tag(keyword_or_tag)
-        except ValueError:
-            try:
-                self.keyword = tag2keyword(keyword_or_tag)
-            except ValueError:
-                raise ValueError(
-                    f'Could not parse "{keyword_or_tag}" as a DICOM keyword or tag'
-                )
+            if isinstance(keyword_or_tag, str):
+                self.tag = keyword2tag(keyword_or_tag)
             else:
-                self.tag = keyword_or_tag
-        else:
-            self.keyword = keyword_or_tag
+                self.keyword = tag2keyword(keyword_or_tag)
+        except ValueError:
+            raise ValueError(
+                f'Could not parse "{keyword_or_tag}" as a DICOM keyword or tag'
+            )
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"'{self.keyword}' field ({','.join(self.tag)})"

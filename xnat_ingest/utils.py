@@ -8,6 +8,8 @@ import typing as ty
 import hashlib
 import attrs
 import click.types
+import xnat
+import click.testing
 from fileformats.core import DataType, FileSet, from_mime
 from .dicom import DicomField  # noqa
 
@@ -24,10 +26,10 @@ def datatype_converter(
 
 
 class classproperty(object):
-    def __init__(self, f):
+    def __init__(self, f: ty.Callable[..., ty.Any]) -> None:
         self.f = f
 
-    def __get__(self, obj, owner):
+    def __get__(self, obj: object, owner: ty.Any) -> ty.Any:
         return self.f(owner)
 
 
@@ -37,46 +39,48 @@ class CliType(click.types.ParamType):
 
     def __init__(
         self,
-        type_,
-        multiple=False,
+        type_: ty.Type["CliTyped" | "MultiCliTyped"],
+        multiple: bool = False,
     ):
         self.type = type_
         self.multiple = multiple
 
     def convert(
         self, value: ty.Any, param: click.Parameter | None, ctx: click.Context | None
-    ):
+    ) -> ty.Any:
         if isinstance(value, self.type):
             return value
         return self.type(*value)
 
     @property
-    def arity(self):
+    def arity(self) -> int:  # type: ignore[override]
         return len(attrs.fields(self.type))
 
     @property
-    def name(self):
+    def name(self) -> str:  # type: ignore[override]
         return type(self).__name__.lower()
 
-    def split_envvar_value(self, envvar):
+    def split_envvar_value(self, envvar: str) -> ty.Any:
         if self.multiple:
             return [self.type(*entry.split(",")) for entry in envvar.split(";")]
         else:
             return self.type(*envvar.split(","))
 
 
+@attrs.define
 class CliTyped:
 
     @classproperty
-    def cli_type(cls):
-        return CliType(cls)
+    def cli_type(cls) -> CliType:
+        return CliType(cls)  # type: ignore[arg-type]
 
 
+@attrs.define
 class MultiCliTyped:
 
     @classproperty
-    def cli_type(cls):
-        return CliType(cls, multiple=True)
+    def cli_type(cls) -> CliType:
+        return CliType(cls, multiple=True)  # type: ignore[arg-type]
 
 
 @attrs.define
@@ -86,7 +90,7 @@ class LogEmail(CliTyped):
     loglevel: str
     subject: str
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.address
 
 
@@ -96,13 +100,13 @@ class LogFile(MultiCliTyped):
     path: Path = attrs.field(converter=Path)
     loglevel: str
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.path)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.path)
 
-    def __fspath__(self):
+    def __fspath__(self) -> str:
         return str(self.path)
 
 
@@ -144,7 +148,7 @@ def set_logger_handling(
     log_files: ty.List[LogFile] | None,
     mail_server: MailServer,
     add_logger: ty.Sequence[str] = (),
-):
+) -> None:
 
     loggers = [logger]
     for log in add_logger:
@@ -206,7 +210,7 @@ def set_logger_handling(
         logr.addHandler(console_hdle)
 
 
-def get_checksums(xresource) -> ty.Dict[str, str]:
+def get_checksums(xresource: xnat.classes.Resource) -> dict[str, str]:
     """
     Downloads the MD5 digests associated with the files in a resource.
 
@@ -260,9 +264,11 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
 HASH_CHUNK_SIZE = 2**20
 
 
-def show_cli_trace(result):
+def show_cli_trace(result: click.testing.Result) -> str:
     """Show the exception traceback from CLIRunner results"""
-    return "".join(traceback.format_exception(*result.exc_info))
+    assert result.exc_info is not None
+    exc_type, exc, tb = result.exc_info
+    return "".join(traceback.format_exception(exc_type, value=exc, tb=tb))
 
 
 class RegexExtractor:
@@ -289,7 +295,7 @@ class RegexExtractor:
         return extracted
 
 
-def add_exc_note(e, note):
+def add_exc_note(e: Exception, note: str) -> Exception:
     """Adds a note to an exception in a Python <3.11 compatible way
 
     Parameters
@@ -352,7 +358,7 @@ def transform_paths(
     group_count: Counter[str] = Counter()
 
     # Create regex groups for string template args
-    def str_templ_to_regex_group(match) -> str:
+    def str_templ_to_regex_group(match: re.Match[str]) -> str:
         fieldname = match.group(0)[1:-1]
         if "." in fieldname:
             fieldname, attr_name = fieldname.split(".")
@@ -374,7 +380,8 @@ def transform_paths(
     transform_path_re = re.compile(transform_path_pattern + "$")
 
     # Define a custom replacement function
-    def replace_named_groups(match):
+    def replace_named_groups(match: re.Match[str]) -> str:
+        assert match.lastgroup is not None
         return new_values.get(match.lastgroup, match.group())
 
     transformed = []
@@ -432,22 +439,22 @@ _escaped_glob_tokens_to_re = dict(
         # W/o leading or trailing ``/`` two consecutive asterisks will be treated as literals.
         # Edge-case #1. Catches recursive globs in the middle of path. Requires edge
         # case #2 handled after this case.
-        ("/\*\*", "(?:/.+?)*"),
+        (r"/\*\*", "(?:/.+?)*"),
         # Edge-case #2. Catches recursive globs at the start of path. Requires edge
         # case #1 handled before this case. ``^`` is used to ensure proper location for ``**/``.
-        ("\*\*/", "(?:^.+?/)*"),
+        (r"\*\*/", "(?:^.+?/)*"),
         # ``[^/]*`` is used to ensure that ``*`` won't match subdirs, as with naive
         # ``.*?`` solution.
-        ("\*", "[^/]*"),
-        ("\?", "."),
-        ("\[\*\]", "\*"),  # Escaped special glob character.
-        ("\[\?\]", "\?"),  # Escaped special glob character.
+        (r"\*", "[^/]*"),
+        (r"\?", "."),
+        (r"\[\*\]", r"\*"),  # Escaped special glob character.
+        (r"\[\?\]", r"\?"),  # Escaped special glob character.
         # Requires ordered dict, so that ``\[!`` preceded ``\[`` in RE pattern. Needed
         # mostly to differentiate between ``!`` used within character class ``[]`` and
         # outside of it, to avoid faulty conversion.
-        ("\[!", "[^"),
-        ("\[", "["),
-        ("\]", "]"),
+        (r"\[!", "[^"),
+        (r"\[", "["),
+        (r"\]", "]"),
     )
 )
 

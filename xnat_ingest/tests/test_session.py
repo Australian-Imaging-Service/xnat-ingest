@@ -189,9 +189,8 @@ def test_session_select_resources(
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
 
-    staged_session = imaging_session.stage(
-        staging_dir,
-        associated_file_groups=[
+    imaging_session.associate_files(
+        patterns=[
             AssociatedFiles(
                 Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
                 str(assoc_dir)
@@ -201,6 +200,8 @@ def test_session_select_resources(
         ],
         spaces_to_underscores=True,
     )
+
+    staged_session = imaging_session.save(staging_dir)
 
     resources = list(staged_session.select_resources(dataset))
 
@@ -257,22 +258,22 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
     assert loaded_no_manifest == saved
 
 
-def test_stage_raw_data_directly(dataset: FrameSet, tmp_path: Path):
+def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
 
-    raw_data_dir = tmp_path / "assoc"
+    raw_data_dir = tmp_path / "raw"
     raw_data_dir.mkdir()
 
     num_sessions = 2
 
     for i in range(num_sessions):
-        raw_data_dir = raw_data_dir / str(i)
-        raw_data_dir.mkdir()
+        sess_dir = raw_data_dir / str(i)
+        sess_dir.mkdir()
         get_raw_data_files(
-            out_dir=raw_data_dir,
+            out_dir=sess_dir,
             first_name=FIRST_NAME + str(i),
             last_name=LAST_NAME + str(i),
-            Study=f"Study{i}",
-            Patient=f"Patient{i}",
+            StudyID=f"Study{i}",
+            PatientID=f"Patient{i}",
             AccessionNumber=f"AccessionNumber{i}",
             StudyInstanceUID=f"StudyInstanceUID{i}",
         )
@@ -285,25 +286,30 @@ def test_stage_raw_data_directly(dataset: FrameSet, tmp_path: Path):
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
 
+    staged_sessions = []
+
     for imaging_session in imaging_sessions:
-        staged_session = imaging_session.stage(
-            staging_dir,
+        staged_sessions.append(
+            imaging_session.save(
+                staging_dir,
+            )
         )
 
-    resources = list(staged_session.select_resources(dataset))
+    for staged_session in staged_sessions:
+        resources = list(staged_session.select_resources(raw_frameset))
 
-    assert len(resources) == 5
-    ids, descs, resource_names, scans = zip(*resources)
-    assert set(ids) == set(("602",))
-    assert set(descs) == set(
-        [
-            "602",
-        ]
-    )
-    assert set(resource_names) == set(("LISTMODE", "COUNTRATE"))
-    assert set(type(s) for s in scans) == set(
-        [
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
-        ]
-    )
+        assert len(resources) == 5
+        ids, descs, resource_names, scans = zip(*resources)
+        assert set(ids) == set(("602",))
+        assert set(descs) == set(
+            [
+                "602",
+            ]
+        )
+        assert set(resource_names) == set(("LISTMODE", "COUNTRATE"))
+        assert set(type(s) for s in scans) == set(
+            [
+                Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+                Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+            ]
+        )

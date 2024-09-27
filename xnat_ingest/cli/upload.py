@@ -11,13 +11,13 @@ import subprocess as sp
 import click
 from tqdm import tqdm
 from natsort import natsorted
-import xnat  # type: ignore[import-untyped]
+import xnat
 import boto3
 import paramiko
 from fileformats.generic import File
-from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
-from frametree.xnat import Xnat  # type: ignore[import-untyped]
-from xnat.exceptions import XNATResponseError  # type: ignore[import-untyped]
+from frametree.core.frameset import FrameSet
+from frametree.xnat import Xnat
+from xnat.exceptions import XNATResponseError
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.utils import (
@@ -146,13 +146,10 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
-    "--use-manifest/--dont-use-manifest",
+    "--require-manifest/--dont-require-manifest",
     default=None,
     envvar="XNAT_INGEST_UPLOAD_REQUIRE_MANIFEST",
-    help=(
-        "Whether to use the manifest file in the staged sessions to load the "
-        "directory structure. By default it is used if present and ignore if not there"
-    ),
+    help=("Whether to require manifest files in the staged resources or not"),
     type=bool,
 )
 @click.option(
@@ -204,14 +201,14 @@ def upload(
     always_include: ty.Sequence[str],
     add_logger: ty.List[str],
     raise_errors: bool,
-    store_credentials: ty.Tuple[str, str],
+    store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
-    use_manifest: bool,
+    require_manifest: bool,
     clean_up_older_than: int,
     verify_ssl: bool,
     use_curl_jsession: bool,
     method: str,
-):
+) -> None:
 
     set_logger_handling(
         log_level=log_level,
@@ -249,7 +246,9 @@ def upload(
 
     with xnat_repo.connection:
 
-        def xnat_session_exists(project_id, subject_id, visit_id):
+        def xnat_session_exists(
+            project_id: str, subject_id: str, visit_id: str
+        ) -> bool:
             try:
                 xnat_repo.connection.projects[project_id].subjects[
                     subject_id
@@ -269,6 +268,7 @@ def upload(
 
         project_ids = set()
 
+        sessions: ty.Iterable[Path]
         if staged.startswith("s3://"):
             # List sessions stored in s3 bucket
             s3 = boto3.resource(
@@ -305,7 +305,7 @@ def upload(
             else:
                 tmp_download_dir = Path(tempfile.mkdtemp())
 
-            def iter_staged_sessions():
+            def iter_staged_sessions() -> ty.Iterator[Path]:
                 for ids, objs in session_objs.items():
                     # Just in case the manifest file is not included in the list of objects
                     # we recreate the project/subject/sesssion directory structure
@@ -369,7 +369,7 @@ def upload(
             desc=f"Processing staged sessions found in '{staged}'",
         ):
             session = ImagingSession.load(
-                session_staging_dir, use_manifest=use_manifest
+                session_staging_dir, require_manifest=require_manifest
             )
             try:
                 if "MR" in session.modalities:
@@ -559,7 +559,7 @@ def upload(
             assert False
 
 
-def remove_old_files_on_s3(remote_store: str, threshold: int):
+def remove_old_files_on_s3(remote_store: str, threshold: int) -> None:
     # Parse S3 bucket and prefix from remote store
     bucket_name, prefix = remote_store[5:].split("/", 1)
 
@@ -579,7 +579,7 @@ def remove_old_files_on_s3(remote_store: str, threshold: int):
             s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
 
 
-def remove_old_files_on_ssh(remote_store: str, threshold: int):
+def remove_old_files_on_ssh(remote_store: str, threshold: int) -> None:
     # Parse SSH server and directory from remote store
     server, directory = remote_store.split("@", 1)
 
