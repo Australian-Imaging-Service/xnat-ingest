@@ -39,7 +39,9 @@ class ImagingScan:
 
     id: str
     type: str = attrs.field(converter=scan_type_converter)
-    resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
+    resources: ty.Dict[str, ImagingResource] = attrs.field(
+        factory=dict, converter=scan_resources_converter
+    )
     associated: AssociatedFiles | None = None
 
     def __contains__(self, resource_name: str) -> bool:

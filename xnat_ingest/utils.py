@@ -8,10 +8,8 @@ import typing as ty
 import hashlib
 import attrs
 import click.types
-import xnat
 import click.testing
 from fileformats.core import DataType, FileSet, from_mime
-from .dicom import DicomField  # noqa
 
 
 logger = logging.getLogger("xnat-ingest")
@@ -39,7 +37,7 @@ class CliType(click.types.ParamType):
 
     def __init__(
         self,
-        type_: ty.Type["CliTyped" | "MultiCliTyped"],
+        type_: ty.Type[ty.Union["CliTyped", "MultiCliTyped"]],
         multiple: bool = False,
     ):
         self.type = type_
@@ -210,7 +208,7 @@ def set_logger_handling(
         logr.addHandler(console_hdle)
 
 
-def get_checksums(xresource: xnat.classes.Resource) -> dict[str, str]:
+def get_checksums(xresource: ty.Any) -> dict[str, str]:
     """
     Downloads the MD5 digests associated with the files in a resource.
 
