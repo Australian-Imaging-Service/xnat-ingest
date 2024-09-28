@@ -17,9 +17,7 @@ from xnat_ingest.session import ImagingSession
 from xnat_ingest.resource import ImagingResource
 from xnat_ingest.utils import (
     logger,
-    LogFile,
-    LogEmail,
-    MailServer,
+    LoggerConfig,
     set_logger_handling,
     StoreCredentials,
 )
@@ -55,41 +53,19 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.argument("user", type=str, envvar="XINGEST_USER")
 @click.option("--password", default=None, type=str, envvar="XINGEST_PASS")
 @click.option(
-    "--log-level",
-    default="info",
-    type=str,
-    envvar="XINGEST_LOGLEVEL",
-    help=("The level of the logging printed to stdout"),
-)
-@click.option(
-    "--log-file",
-    "log_files",
-    default=None,
-    type=LogFile.cli_type,
-    nargs=2,
-    metavar="<path> <loglevel>",
+    "--logger",
+    "loggers",
     multiple=True,
-    envvar="XINGEST_LOGFILE",
-    help=(
-        'Location to write the output logs to, defaults to "upload-logs" in the '
-        "export directory"
-    ),
-)
-@click.option(
-    "--log-email",
-    "log_emails",
-    type=LogEmail.cli_type,
+    type=LoggerConfig.cli_type,
+    envvar="XINGEST_LOGGERS",
     nargs=3,
-    metavar="<address> <loglevel> <subject-preamble>",
-    multiple=True,
-    envvar="XINGEST_LOGEMAIL",
-    help=(
-        "Email(s) to send logs to. When provided in an environment variable, "
-        "mail and log level are delimited by ',' and separate destinations by ';'"
-    ),
+    default=(),
+    metavar="<logtype> <loglevel> <location>",
+    help=("Setup handles to capture logs that are generated"),
 )
 @click.option(
-    "--add-logger",
+    "--additional-logger",
+    "additional_loggers",
     type=str,
     multiple=True,
     default=(),
@@ -98,17 +74,6 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
         "specified here"
-    ),
-)
-@click.option(
-    "--mail-server",
-    type=MailServer.cli_type,
-    metavar="<host> <sender-email> <user> <password>",
-    default=None,
-    envvar="XINGEST_MAILSERVER",
-    help=(
-        "the mail server to send logger emails to. When provided in an environment variable, "
-        "args are delimited by ';'"
     ),
 )
 @click.option(
@@ -215,12 +180,9 @@ def upload(
     server: str,
     user: str,
     password: str,
-    log_level: str,
-    log_files: ty.List[LogFile],
-    log_emails: ty.List[LogEmail],
-    mail_server: MailServer,
+    loggers: ty.List[LoggerConfig],
+    additional_loggers: ty.List[str],
     always_include: ty.Sequence[str],
-    add_logger: ty.List[str],
     raise_errors: bool,
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
@@ -234,11 +196,8 @@ def upload(
 ) -> None:
 
     set_logger_handling(
-        log_level=log_level,
-        log_emails=log_emails,
-        log_files=log_files,
-        mail_server=mail_server,
-        add_logger=add_logger,
+        logger_configs=loggers,
+        additional_loggers=additional_loggers,
     )
 
     # Set the directory to create temporary files/directories in away from system default

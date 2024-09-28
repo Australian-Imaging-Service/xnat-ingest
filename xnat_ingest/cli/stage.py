@@ -13,9 +13,7 @@ from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
     AssociatedFiles,
     logger,
-    LogFile,
-    LogEmail,
-    MailServer,
+    LoggerConfig,
     XnatLogin,
     set_logger_handling,
 )
@@ -145,61 +143,27 @@ are uploaded to XNAT
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
-    "--log-level",
-    default="info",
-    type=str,
-    envvar="XINGEST_LOGLEVEL",
-    help=("The level of the logging printed to stdout"),
-)
-@click.option(
-    "--log-file",
-    "log_files",
-    default=None,
-    type=LogFile.cli_type,
+    "--logger",
+    "loggers",
     multiple=True,
-    nargs=2,
-    metavar="<path> <loglevel>",
-    envvar="XINGEST_LOGFILE",
-    help=(
-        'Location to write the output logs to, defaults to "upload-logs" in the '
-        "export directory"
-    ),
-)
-@click.option(
-    "--log-email",
-    "log_emails",
-    type=LogEmail.cli_type,
+    type=LoggerConfig.cli_type,
+    envvar="XINGEST_LOGGERS",
     nargs=3,
-    metavar="<address> <loglevel> <subject-preamble>",
-    multiple=True,
-    envvar="XINGEST_LOGEMAIL",
-    help=(
-        "Email(s) to send logs to. When provided in an environment variable, "
-        "mail and log level are delimited by ',' and separate destinations by ';'"
-    ),
+    default=(),
+    metavar="<logtype> <loglevel> <location>",
+    help=("Setup handles to capture logs that are generated"),
 )
 @click.option(
-    "--add-logger",
+    "--additional-logger",
+    "additional_loggers",
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_LOGGERS",
+    envvar="XINGEST_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
         "specified here"
-    ),
-)
-@click.option(
-    "--mail-server",
-    type=MailServer.cli_type,
-    nargs=4,
-    metavar="<host> <sender-email> <user> <password>",
-    default=None,
-    envvar="XINGEST_MAILSERVER",
-    help=(
-        "the mail server to send logger emails to. When provided in an environment variable, "
-        "args are delimited by ';'"
     ),
 )
 @click.option(
@@ -297,11 +261,8 @@ def stage(
     resource_field: str,
     project_id: str | None,
     delete: bool,
-    log_level: str,
-    log_files: ty.List[LogFile],
-    log_emails: ty.List[LogEmail],
-    add_logger: ty.List[str],
-    mail_server: MailServer,
+    loggers: ty.List[LoggerConfig],
+    additional_loggers: ty.List[str],
     raise_errors: bool,
     deidentify: bool,
     xnat_login: XnatLogin,
@@ -315,11 +276,8 @@ def stage(
     work_dir: Path | None = None,
 ) -> None:
     set_logger_handling(
-        log_level=log_level,
-        log_emails=log_emails,
-        log_files=log_files,
-        mail_server=mail_server,
-        add_logger=add_logger,
+        logger_configs=loggers,
+        additional_loggers=additional_loggers,
     )
 
     if xnat_login:

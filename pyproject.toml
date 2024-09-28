@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "click >=8.1",
+    "discord",
     "fileformats-medimage-extras",
     "pydicom >=2.3.1",
     "tqdm >=4.64.1",

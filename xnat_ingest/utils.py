@@ -8,6 +8,7 @@ import typing as ty
 import attrs
 import click.types
 import click.testing
+import discord
 from fileformats.core import DataType, FileSet, from_mime
 
 
@@ -80,40 +81,20 @@ class MultiCliTyped:
         return CliType(cls, multiple=True)  # type: ignore[arg-type]
 
 
-@attrs.define
-class LogEmail(CliTyped):
+def to_upper(value: str) -> str:
+    return value.upper()
 
-    address: str
+
+@attrs.define
+class LoggerConfig(MultiCliTyped):
+
+    type: str
     loglevel: str
-    subject: str
+    location: str
 
-    def __str__(self) -> str:
-        return self.address
-
-
-@attrs.define
-class LogFile(MultiCliTyped):
-
-    path: Path = attrs.field(converter=Path)
-    loglevel: str
-
-    def __bool__(self) -> bool:
-        return bool(self.path)
-
-    def __str__(self) -> str:
-        return str(self.path)
-
-    def __fspath__(self) -> str:
-        return str(self.path)
-
-
-@attrs.define
-class MailServer(CliTyped):
-
-    host: str
-    sender_email: str
-    user: str
-    password: str
+    @property
+    def loglevel_int(self) -> int:
+        return getattr(logging, self.loglevel.upper())  # type: ignore[no-any-return]
 
 
 @attrs.define
@@ -140,71 +121,39 @@ class StoreCredentials(CliTyped):
 
 
 def set_logger_handling(
-    log_level: str,
-    log_emails: ty.List[LogEmail] | None,
-    log_files: ty.List[LogFile] | None,
-    mail_server: MailServer,
-    add_logger: ty.Sequence[str] = (),
+    logger_configs: ty.Sequence[LoggerConfig],
+    additional_loggers: ty.Sequence[str] = (),
 ) -> None:
+    """Set up logging for the application"""
 
     loggers = [logger]
-    for log in add_logger:
+    for log in additional_loggers:
         loggers.append(logging.getLogger(log))
 
-    levels = [log_level]
-    if log_emails:
-        levels.extend(le.loglevel for le in log_emails)
-    if log_files:
-        levels.extend(lf.loglevel for lf in log_files)
-
-    min_log_level = min(getattr(logging, ll.upper()) for ll in levels)
+    min_log_level = min(ll.loglevel_int for ll in logger_configs)
 
     for logr in loggers:
         logr.setLevel(min_log_level)
 
-    # Configure the email logger
-    if log_emails:
-        if not mail_server:
-            raise ValueError(
-                "Mail server needs to be provided, either by `--mail-server` option or "
-                "XNAT_INGEST_MAILSERVER environment variable if logger emails "
-                "are provided: " + ", ".join(str(le) for le in log_emails)
-            )
-        for log_email in log_emails:
-            smtp_hdle = logging.handlers.SMTPHandler(
-                mailhost=mail_server.host,
-                fromaddr=mail_server.sender_email,
-                toaddrs=[log_email.address],
-                subject=log_email.subject,
-                credentials=(mail_server.user, mail_server.password),
-                secure=None,
-            )
-            smtp_hdle.setLevel(getattr(logging, log_email.loglevel.upper()))
-            for logr in loggers:
-                logr.addHandler(smtp_hdle)
-
     # Configure the file logger
-    if log_files:
-        for log_file in log_files:
-            log_file.path.parent.mkdir(exist_ok=True)
-            log_file_hdle = logging.FileHandler(log_file)
-            if log_file.loglevel:
-                log_file_hdle.setLevel(getattr(logging, log_file.loglevel.upper()))
-            log_file_hdle.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-                )
-            )
-            for logr in loggers:
-                logr.addHandler(log_file_hdle)
-
-    console_hdle = logging.StreamHandler(sys.stdout)
-    console_hdle.setLevel(getattr(logging, log_level.upper()))
-    console_hdle.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    )
-    for logr in loggers:
-        logr.addHandler(console_hdle)
+    for config in logger_configs:
+        log_handle: logging.Handler
+        if config.type == "file":
+            Path(config.location).parent.mkdir(exist_ok=True)
+            log_handle = logging.FileHandler(config.location)
+        elif config.type == "stream":
+            stream = sys.stdout if config.location == "stdout" else sys.stderr
+            log_handle = logging.StreamHandler(stream)
+        elif config.type == "discord":
+            log_handle = DiscordHandler(config.location)
+        else:
+            raise ValueError(f"Unknown logger type: {config.type}")
+        log_handle.setLevel(config.loglevel_int)
+        log_handle.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+        for logr in loggers:
+            logr.addHandler(log_handle)
 
 
 def show_cli_trace(result: click.testing.Result) -> str:
@@ -212,6 +161,18 @@ def show_cli_trace(result: click.testing.Result) -> str:
     assert result.exc_info is not None
     exc_type, exc, tb = result.exc_info
     return "".join(traceback.format_exception(exc_type, value=exc, tb=tb))
+
+
+class DiscordHandler(logging.Handler):
+    """A logging handler that sends log messages to a Discord webhook"""
+
+    def __init__(self, webhook_url: str):
+        super().__init__()
+        self.webhook_url = webhook_url
+        self.client = discord.Webhook.from_url(webhook_url)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.client.send(record.msg)
 
 
 class RegexExtractor:
