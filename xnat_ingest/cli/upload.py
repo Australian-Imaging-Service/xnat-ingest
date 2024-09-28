@@ -69,7 +69,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_LOGGERS",
+    envvar="XINGEST_ADDITIONALLOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "

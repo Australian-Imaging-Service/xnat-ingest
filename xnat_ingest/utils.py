@@ -139,10 +139,10 @@ def set_logger_handling(
     for config in logger_configs:
         log_handle: logging.Handler
         if config.type == "file":
-            Path(config.location).parent.mkdir(exist_ok=True)
+            Path(config.location).parent.mkdir(parents=True, exist_ok=True)
             log_handle = logging.FileHandler(config.location)
         elif config.type == "stream":
-            stream = sys.stdout if config.location == "stdout" else sys.stderr
+            stream = sys.stderr if config.location == "stderr" else sys.stdout
             log_handle = logging.StreamHandler(stream)
         elif config.type == "discord":
             log_handle = DiscordHandler(config.location)
