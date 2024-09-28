@@ -37,38 +37,36 @@ STAGING_DIR is the directory that the files for each session are collated to bef
 are uploaded to XNAT
 """,
 )
-@click.argument("files_path", type=str, envvar="XNAT_INGEST_STAGE_DICOMS_PATH")
-@click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XNAT_INGEST_STAGE_DIR"
-)
+@click.argument("files_path", type=str, envvar="XINGEST_DICOMS_PATH")
+@click.argument("output_dir", type=click.Path(path_type=Path), envvar="XINGEST_DIR")
 @click.option(
     "--datatype",
     type=str,
     metavar="<mime-type>",
     multiple=True,
     default=["medimage/dicom-series"],
-    envvar="XNAT_INGEST_STAGE_DATATYPE",
+    envvar="XINGEST_DATATYPE",
     help="The datatype of the primary files to to upload",
 )
 @click.option(
     "--project-field",
     type=str,
     default="StudyID",
-    envvar="XNAT_INGEST_STAGE_PROJECT",
+    envvar="XINGEST_PROJECT",
     help=("The keyword of the metadata field to extract the XNAT project ID from "),
 )
 @click.option(
     "--subject-field",
     type=str,
     default="PatientID",
-    envvar="XNAT_INGEST_STAGE_SUBJECT",
+    envvar="XINGEST_SUBJECT",
     help=("The keyword of the metadata field to extract the XNAT subject ID from "),
 )
 @click.option(
     "--visit-field",
     type=str,
     default="AccessionNumber",
-    envvar="XNAT_INGEST_STAGE_VISIT",
+    envvar="XINGEST_VISIT",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
     ),
@@ -77,7 +75,7 @@ are uploaded to XNAT
     "--session-field",
     type=str,
     default=None,
-    envvar="XNAT_INGEST_STAGE_SESSION",
+    envvar="XINGEST_SESSION",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
     ),
@@ -86,7 +84,7 @@ are uploaded to XNAT
     "--scan-id-field",
     type=str,
     default="SeriesNumber",
-    envvar="XNAT_INGEST_STAGE_SCAN_ID",
+    envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from "
     ),
@@ -95,7 +93,7 @@ are uploaded to XNAT
     "--scan-desc-field",
     type=str,
     default="SeriesDescription",
-    envvar="XNAT_INGEST_STAGE_SCAN_DESC",
+    envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from "
     ),
@@ -104,7 +102,7 @@ are uploaded to XNAT
     "--resource-field",
     type=str,
     default="ImageType[-1]",
-    envvar="XNAT_INGEST_STAGE_RESOURCE",
+    envvar="XINGEST_RESOURCE",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging resource ID from "
     ),
@@ -121,7 +119,7 @@ are uploaded to XNAT
     nargs=3,
     default=None,
     multiple=True,
-    envvar="XNAT_INGEST_STAGE_ASSOCIATED",
+    envvar="XINGEST_ASSOCIATED",
     metavar="<datatype> <glob> <id-pattern>",
     help=(
         'The "glob" arg is a glob pattern by which to detect associated files to be '
@@ -143,14 +141,14 @@ are uploaded to XNAT
 @click.option(
     "--delete/--dont-delete",
     default=False,
-    envvar="XNAT_INGEST_STAGE_DELETE",
+    envvar="XINGEST_DELETE",
     help="Whether to delete the session directories after they have been uploaded or not",
 )
 @click.option(
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_STAGE_LOGLEVEL",
+    envvar="XINGEST_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -161,7 +159,7 @@ are uploaded to XNAT
     multiple=True,
     nargs=2,
     metavar="<path> <loglevel>",
-    envvar="XNAT_INGEST_STAGE_LOGFILE",
+    envvar="XINGEST_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -174,7 +172,7 @@ are uploaded to XNAT
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_STAGE_LOGEMAIL",
+    envvar="XINGEST_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -185,7 +183,7 @@ are uploaded to XNAT
     type=str,
     multiple=True,
     default=(),
-    envvar="XNAT_INGEST_UPLOAD_LOGGERS",
+    envvar="XINGEST_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
@@ -198,7 +196,7 @@ are uploaded to XNAT
     nargs=4,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_STAGE_MAILSERVER",
+    envvar="XINGEST_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -214,7 +212,7 @@ are uploaded to XNAT
     "--deidentify/--dont-deidentify",
     default=False,
     type=bool,
-    envvar="XNAT_INGEST_STAGE_DEIDENTIFY",
+    envvar="XINGEST_DEIDENTIFY",
     help="whether to deidentify the file names and DICOM metadata before staging",
 )
 @click.option(
@@ -230,14 +228,14 @@ are uploaded to XNAT
     "--spaces-to-underscores/--no-spaces-to-underscores",
     default=False,
     help="Whether to replace spaces with underscores in the filenames of associated files",
-    envvar="XNAT_INGEST_STAGE_SPACES_TO_UNDERSCORES",
+    envvar="XINGEST_SPACES_TO_UNDERSCORES",
     type=bool,
 )
 @click.option(
     "--work-dir",
     type=click.Path(path_type=Path),
     default=None,
-    envvar="XNAT_INGEST_STAGE_WORK_DIR",
+    envvar="XINGEST_WORK_DIR",
     help=(
         "The working directory to use for temporary files. Should be on the same "
         "physical disk as the staging directory for optimal performance"
@@ -247,36 +245,42 @@ are uploaded to XNAT
     "--copy-mode",
     type=FileSet.CopyMode,
     default=FileSet.CopyMode.hardlink_or_copy,
+    envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files",
 )
 @click.option(
     "--loop",
     type=int,
     default=None,
+    envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds",
 )
 @click.option(
     "--pre-stage-dir-name",
     type=str,
     default=PRE_STAGE_NAME_DEFAULT,
+    envvar="XINGEST_PRE_STAGE_DIR_NAME",
     help="The name of the directory to use for pre-staging the files",
 )
 @click.option(
     "--staged-dir-name",
     type=str,
     default=STAGED_NAME_DEFAULT,
+    envvar="XINGEST_STAGED_DIR_NAME",
     help="The name of the directory to use for staging the files",
 )
 @click.option(
     "--invalid-dir-name",
     type=str,
     default=INVALID_NAME_DEFAULT,
+    envvar="XINGEST_INVALID_DIR_NAME",
     help="The name of the directory to use for invalid files",
 )
 @click.option(
     "--deidentified-dir-name",
     type=str,
     default=DEIDENTIFIED_NAME_DEFAULT,
+    envvar="XINGEST_DEIDENTIFIED_DIR_NAME",
     help="The name of the directory to use for deidentified files",
 )
 def stage(

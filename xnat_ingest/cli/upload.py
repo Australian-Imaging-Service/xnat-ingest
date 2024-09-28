@@ -12,7 +12,6 @@ from fileformats.generic import File
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
-from fileformats.application import Json
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.resource import ImagingResource
@@ -51,15 +50,15 @@ USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env.
 PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
 """,
 )
-@click.argument("staged", type=str, envvar="XNAT_INGEST_UPLOAD_STAGED")
-@click.argument("server", type=str, envvar="XNAT_INGEST_UPLOAD_HOST")
-@click.argument("user", type=str, envvar="XNAT_INGEST_UPLOAD_USER")
-@click.option("--password", default=None, type=str, envvar="XNAT_INGEST_UPLOAD_PASS")
+@click.argument("staged", type=str, envvar="XINGEST_STAGED")
+@click.argument("server", type=str, envvar="XINGEST_HOST")
+@click.argument("user", type=str, envvar="XINGEST_USER")
+@click.option("--password", default=None, type=str, envvar="XINGEST_PASS")
 @click.option(
     "--log-level",
     default="info",
     type=str,
-    envvar="XNAT_INGEST_UPLOAD_LOGLEVEL",
+    envvar="XINGEST_LOGLEVEL",
     help=("The level of the logging printed to stdout"),
 )
 @click.option(
@@ -70,7 +69,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     nargs=2,
     metavar="<path> <loglevel>",
     multiple=True,
-    envvar="XNAT_INGEST_UPLOAD_LOGFILE",
+    envvar="XINGEST_LOGFILE",
     help=(
         'Location to write the output logs to, defaults to "upload-logs" in the '
         "export directory"
@@ -83,7 +82,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     nargs=3,
     metavar="<address> <loglevel> <subject-preamble>",
     multiple=True,
-    envvar="XNAT_INGEST_UPLOAD_LOGEMAIL",
+    envvar="XINGEST_LOGEMAIL",
     help=(
         "Email(s) to send logs to. When provided in an environment variable, "
         "mail and log level are delimited by ',' and separate destinations by ';'"
@@ -94,7 +93,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=str,
     multiple=True,
     default=(),
-    envvar="XNAT_INGEST_UPLOAD_LOGGERS",
+    envvar="XINGEST_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
@@ -106,7 +105,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=MailServer.cli_type,
     metavar="<host> <sender-email> <user> <password>",
     default=None,
-    envvar="XNAT_INGEST_UPLOAD_MAILSERVER",
+    envvar="XINGEST_MAILSERVER",
     help=(
         "the mail server to send logger emails to. When provided in an environment variable, "
         "args are delimited by ';'"
@@ -118,7 +117,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     default=(),
     type=str,
     multiple=True,
-    envvar="XNAT_INGEST_UPLOAD_ALWAYSINCLUDE",
+    envvar="XINGEST_ALWAYSINCLUDE",
     help=(
         "Scan types to always include in the upload, regardless of whether they are"
         "specified in a column or not. Specified using the scan types IANA mime-type or "
@@ -137,7 +136,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--store-credentials",
     type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
-    envvar="XNAT_INGEST_UPLOAD_STORE_CREDENTIALS",
+    envvar="XINGEST_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
@@ -146,13 +145,13 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XNAT_INGEST_UPLOAD_TEMPDIR",
+    envvar="XINGEST_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
     default=None,
-    envvar="XNAT_INGEST_UPLOAD_REQUIRE_MANIFEST",
+    envvar="XINGEST_REQUIRE_MANIFEST",
     help=("Whether to require manifest files in the staged resources or not"),
     type=bool,
 )
@@ -160,7 +159,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--clean-up-older-than",
     type=int,
     metavar="<days>",
-    envvar="XNAT_INGEST_UPLOAD_CLEANUP_OLDER_THAN",
+    envvar="XINGEST_CLEANUP_OLDER_THAN",
     default=0,
     help="The number of days to keep files in the remote store for",
 )
@@ -168,14 +167,14 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
     default=True,
-    envvar="XNAT_INGEST_UPLOAD_VERIFY_SSL",
+    envvar="XINGEST_VERIFY_SSL",
     help="Whether to verify the SSL certificate of the XNAT server",
 )
 @click.option(
     "--use-curl-jsession/--dont-use-curl-jsession",
     type=bool,
     default=False,
-    envvar="XNAT_INGEST_UPLOAD_USE_CURL_JSESSION",
+    envvar="XINGEST_USE_CURL_JSESSION",
     help=(
         "Whether to use CURL to create a JSESSION token to authenticate with XNAT. This is "
         "used to work around a strange authentication issue when running within a Kubernetes "
@@ -186,7 +185,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--method",
     type=click.Choice(["per_file", "tar_memory", "tgz_memory", "tar_file", "tgz_file"]),
     default="tgz_file",
-    envvar="XNAT_INGEST_UPLOAD_METHOD",
+    envvar="XINGEST_METHOD",
     help=(
         "The method to use to upload the files to XNAT. Passed through to XNATPy and controls "
         "whether directories are tarred and/or gzipped before they are uploaded, by default "
@@ -197,6 +196,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--wait-period",
     type=int,
     default=0,
+    envvar="XINGEST_WAIT_PERIOD",
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
@@ -207,6 +207,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "--loop",
     type=int,
     default=None,
+    envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds",
 )
 def upload(

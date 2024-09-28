@@ -235,9 +235,9 @@ def test_stage_and_upload(
             "0",
         ],
         env={
-            "XNAT_INGEST_UPLOAD_HOST": xnat_server,
-            "XNAT_INGEST_UPLOAD_USER": "admin",
-            "XNAT_INGEST_UPLOAD_PASS": "admin",
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
         },
     )
 

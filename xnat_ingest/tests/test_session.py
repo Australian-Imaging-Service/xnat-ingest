@@ -305,7 +305,7 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
 
         assert len(resources) == 2
         assert set([r.scan.id for r in resources]) == set(["602"])
-        assert set([r.scan.type for r in resources]) == set(["PET_Raw_Data"])
+        assert set([r.scan.type for r in resources]) == set(["PET Raw Data"])
         assert set(r.name for r in resources) == set(("PET_LISTMODE", "PET_COUNTRATE"))
         assert set(type(r.fileset) for r in resources) == set(
             [
