@@ -2,71 +2,30 @@ import typing as ty
 import re
 from glob import glob
 import logging
-import os.path
-import subprocess as sp
 from functools import cached_property
-import shutil
 import random
 import string
-import platform
-from copy import deepcopy
 from itertools import chain
 from collections import defaultdict, Counter
 from pathlib import Path
 from typing_extensions import Self
 import attrs
 from tqdm import tqdm
-import yaml
-import pydicom
-from fileformats.application import Dicom
-from fileformats.medimage import DicomSeries
-from fileformats.core import from_paths, FileSet, DataType, from_mime, to_mime
+from fileformats.medimage import MedicalImage, DicomSeries
+from fileformats.core import from_paths, FileSet, from_mime
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
-from frametree.core.axes import Axes  # type: ignore[import-untyped]
-from frametree.core.row import DataRow  # type: ignore[import-untyped]
-from frametree.core.store import Store  # type: ignore[import-untyped]
-from frametree.core.entry import DataEntry  # type: ignore[import-untyped]
-from frametree.core.tree import DataTree  # type: ignore[import-untyped]
 from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[import-untyped]
 from .exceptions import ImagingSessionParseError, StagingError
-from .utils import add_exc_note, transform_paths, AssociatedFiles
-from .dicom import dcmedit_path
+from .utils import AssociatedFiles, invalid_path_chars_re
+from .scan import ImagingScan
+from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")
 
 
-def scan_type_converter(scan_type: str) -> str:
-    "Ensure there aren't any special characters that aren't valid file/dir paths"
-    return re.sub(r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+", "", scan_type)
-
-
-@attrs.define
-class ImagingScan:
-    """Representation of a scan to be uploaded to XNAT
-
-    Parameters
-    ----------
-    id: str
-        the ID of the scan on XNAT
-    type: str
-        the scan type/description
-    """
-
-    id: str
-    type: str = attrs.field(converter=scan_type_converter)
-    resources: ty.Dict[str, FileSet] = attrs.field()
-    associated: bool = False
-
-    def __contains__(self, resource_name):
-        return resource_name in self.resources
-
-    def __getitem__(self, resource_name):
-        return self.resources[resource_name]
-
-
 def scans_converter(
     scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]]
-):
+) -> dict[str, ImagingScan]:
     if isinstance(scans, ty.Sequence):
         duplicates = [i for i, c in Counter(s.id for s in scans).items() if c > 1]
         if duplicates:
@@ -86,17 +45,21 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
 
+    def __attrs_post_init__(self) -> None:
+        for scan in self.scans.values():
+            scan.session = self
+
     id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
 
     @property
-    def name(self):
+    def name(self) -> str:
         return f"{self.project_id}-{self.subject_id}-{self.visit_id}"
 
     @property
-    def invalid_ids(self):
+    def invalid_ids(self) -> bool:
         return (
             self.project_id.startswith("INVALID")
             or self.subject_id.startswith("INVALID")
@@ -104,37 +67,46 @@ class ImagingSession:
         )
 
     @property
-    def staging_relpath(self):
-        return [self.project_id, self.subject_id, self.visit_id]
+    def path(self) -> str:
+        return ":".join([self.project_id, self.subject_id, self.visit_id])
 
     @property
-    def session_id(self):
+    def staging_relpath(self) -> list[str]:
+        return ["-".join([self.project_id, self.subject_id, self.visit_id])]
+
+    @property
+    def session_id(self) -> str:
         return self.make_session_id(self.project_id, self.subject_id, self.visit_id)
 
     @classmethod
-    def make_session_id(cls, project_id, subject_id, visit_id):
+    def make_session_id(cls, project_id: str, subject_id: str, visit_id: str) -> str:
         return f"{subject_id}_{visit_id}"
 
     @cached_property
-    def modalities(self) -> ty.Set[str]:
-        modalities = self.metadata["Modality"]
-        if not isinstance(modalities, str):
-            modalities = set(
-                tuple(m) if not isinstance(m, str) else m for m in modalities
-            )
-        return modalities
+    def modalities(self) -> str | tuple[str, ...]:
+        modalities_metadata = self.metadata["Modality"]
+        if isinstance(modalities_metadata, str):
+            return modalities_metadata
+        modalities: set[str] = set()
+        for modality in modalities_metadata:
+            if isinstance(modality, str):
+                modalities.add(modality)
+            else:
+                assert isinstance(modality, ty.Iterable)
+                modalities.update(modality)
+        return tuple(modalities)
 
     @property
-    def parent_dirs(self) -> ty.Set[Path]:
+    def primary_parents(self) -> ty.Set[Path]:
         "Return parent directories for all resources in the session"
-        return set(r.parent for r in self.resources)
+        return set(r.fileset.parent for r in self.primary_resources)
 
     @property
-    def resources(self) -> ty.List[FileSet]:
+    def resources(self) -> ty.List[ImagingResource]:
         return [r for p in self.scans.values() for r in p.resources.values()]
 
     @property
-    def primary_resources(self) -> ty.List[FileSet]:
+    def primary_resources(self) -> ty.List[ImagingResource]:
         return [
             r
             for s in self.scans.values()
@@ -142,11 +114,19 @@ class ImagingSession:
             if not s.associated
         ]
 
+    def new_empty(self) -> Self:
+        """Return a new empty session with the same IDs as the current session"""
+        return type(self)(
+            project_id=self.project_id,
+            subject_id=self.subject_id,
+            visit_id=self.visit_id,
+        )
+
     def select_resources(
         self,
         dataset: ty.Optional[FrameSet],
         always_include: ty.Sequence[str] = (),
-    ) -> ty.Iterator[ty.Tuple[str, str, str, FileSet]]:
+    ) -> ty.Iterator[ImagingResource]:
         """Returns selected resources that match the columns in the dataset definition
 
         Parameters
@@ -174,7 +154,7 @@ class ImagingSession:
                 "Either 'dataset' or 'always_include' must be specified to select "
                 f"appropriate resources to upload from {self.name} session"
             )
-        store = MockStore(self)
+        store = ImagingSessionMockStore(self)
 
         uploaded = set()
         for mime_like in always_include:
@@ -187,10 +167,10 @@ class ImagingSession:
                         f"{mime_like!r} does not correspond to a file format ({fileformat})"
                     )
             for scan in self.scans.values():
-                for resource_name, fileset in scan.resources.items():
-                    if isinstance(fileset, fileformat):
-                        uploaded.add((scan.id, resource_name))
-                        yield scan.id, scan.type, resource_name, fileset
+                for resource in scan.resources.values():
+                    if isinstance(resource.fileset, fileformat):
+                        uploaded.add((scan.id, resource.name))
+                        yield resource
         if dataset is not None:
             for column in dataset.columns.values():
                 try:
@@ -212,12 +192,18 @@ class ImagingSession:
                             always_include,
                         )
                         continue
-                    fileset = column.datatype(scan.resources[resource_name])
+                    resource = scan.resources[resource_name]
+                    if not isinstance(resource.fileset, column.datatype):
+                        resource = ImagingResource(
+                            name=resource_name,
+                            fileset=column.datatype(resource.fileset),
+                            scan=scan,
+                        )
                     uploaded.add((scan.id, resource_name))
-                yield scan_id, scan.type, entry.uri[1], column.datatype(entry.item)
+                yield resource
 
     @cached_property
-    def metadata(self):
+    def metadata(self) -> dict[str, ty.Any]:
         primary_resources = self.primary_resources
         all_keys = [list(d.metadata.keys()) for d in primary_resources if d.metadata]
         common_keys = [
@@ -337,12 +323,6 @@ class ImagingSession:
         multiple_sessions: ty.DefaultDict[str, ty.Set[ty.Tuple[str, str, str]]] = (
             defaultdict(set)
         )
-        multiple_scan_types: ty.DefaultDict[
-            ty.Tuple[str, str, str, str], ty.Set[str]
-        ] = defaultdict(set)
-        multiple_resources: ty.DefaultDict[
-            ty.Tuple[str, str, str, str, str], ty.Set[str]
-        ] = defaultdict(set)
         for resource in tqdm(
             resources,
             "Sorting resources into XNAT tree structure...",
@@ -356,13 +336,13 @@ class ImagingSession:
                 else:
                     index = None
                 try:
-                    value = str(resource.metadata[field_name])
+                    value = resource.metadata[field_name]
                 except KeyError:
                     if session_uid and field_type in ("project", "subject", "visit"):
                         value = (
-                            "INVALID-MISSING-"
+                            "INVALID_MISSING_"
                             + field_type.upper()
-                            + "-"
+                            + "_"
                             + "".join(
                                 random.choices(
                                     string.ascii_letters + string.digits, k=8
@@ -375,7 +355,9 @@ class ImagingSession:
                     )
                 if index is not None:
                     value = value[index]
-                return value
+                value_str = str(value)
+                value_str = invalid_path_chars_re.sub("_", value_str)
+                return value_str
 
             if not project_id:
                 project_id = get_id("project", project_field)
@@ -412,58 +394,173 @@ class ImagingSession:
                     multiple_sessions[session_uid].add(
                         (session.project_id, session.subject_id, session.visit_id)
                     )
-
-            try:
-                scan = session.scans[scan_id]
-            except KeyError:
-                scan = ImagingScan(id=scan_id, type=scan_type, resources={})
-                session.scans[scan_id] = scan
-            else:
-                if scan.type != scan_type:
-                    # Record all issues with the scan types for raising exception at the end
-                    multiple_scan_types[
-                        (project_id, subject_id, visit_id, scan_id)
-                    ].add(scan_type)
-
-            if resource_id in scan.resources:
-                multiple_resources[
-                    (project_id, subject_id, visit_id, scan_id, scan_type)
-                ].add(resource_id)
-            scan.resources[resource_id] = resource
-
+            session.add_resource(scan_id, scan_type, resource_id, resource)
         if multiple_sessions:
             raise ImagingSessionParseError(
-                "Multiple sessions found with the same project/subject/visit ID triplets: "
+                "Multiple session UIDs found with the same project/subject/visit ID triplets: "
                 + "\n".join(
                     f"{i} -> {p}:{s}:{v}" for i, (p, s, v) in multiple_sessions.items()
                 )
             )
-
-        if multiple_scan_types:
-            raise ImagingSessionParseError(
-                "Multiple scans found with the same project/subject/visit/scan ID "
-                "quadruplets: "
-                + "\n".join(
-                    f"{p}:{s}:{v}:{sc} -> " + ", ".join(st)
-                    for (p, s, v, sc), st in multiple_scan_types.items()
-                )
-            )
-        if multiple_resources:
-            raise ImagingSessionParseError(
-                "Multiple resources found with the same project/subject/visit/scan/resource "
-                "ID quintuplets: "
-                + "\n".join(
-                    f"{p}:{s}:{v}:{sc}:{r} -> " + ", ".join(rs)
-                    for (p, s, v, sc, r), rs in multiple_resources.items()
-                )
-            )
-
         return list(sessions.values())
+
+    def deidentify(
+        self, dest_dir: Path, copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy
+    ) -> Self:
+        """Creates a new session with deidentified images
+
+        Parameters
+        ----------
+        dest_dir : Path
+            the directory to save the deidentified files into
+        copy_mode : FileSet.CopyMode, optional
+            the mode to use to copy the files that don't need to be deidentified,
+            by default FileSet.CopyMode.copy
+
+        Returns
+        -------
+        ImagingSession
+            a new session with deidentified images
+        """
+        # Create a new session to save the deidentified files into
+        deidentified = self.new_empty()
+        for scan in self.scans.values():
+            for resource_name, resource in scan.resources.items():
+                resource_dest_dir = dest_dir / scan.id / resource_name
+                if not isinstance(resource.fileset, MedicalImage):
+                    deid_resource = resource.fileset.copy(
+                        resource_dest_dir, mode=copy_mode, new_stem=resource_name
+                    )
+                else:
+                    deid_resource = resource.fileset.deidentify(
+                        resource_dest_dir, copy_mode=copy_mode, new_stem=resource_name
+                    )
+                deidentified.add_resource(
+                    scan.id,
+                    scan.type,
+                    resource_name,
+                    deid_resource,
+                )
+        return deidentified
+
+    def associate_files(
+        self,
+        patterns: ty.List[AssociatedFiles],
+        spaces_to_underscores: bool = True,
+    ) -> None:
+        """Adds files associated with the primary files to the session
+
+        Parameters
+        ----------
+        patterns : list[AssociatedFiles]
+            list of patterns to associate files with the primary files in the session
+        spaces_to_underscores : bool, optional
+            when building associated file globs, convert spaces underscores in fields
+            extracted from source file metadata, false by default
+        """
+        for associated_files in patterns:
+            # substitute string templates int the glob template with values from the
+            # DICOM metadata to construct a glob pattern to select files associated
+            # with current session
+            associated_fspaths: ty.Set[Path] = set()
+            for parent_dir in self.primary_parents:
+                assoc_glob = str(
+                    parent_dir / associated_files.glob.format(**self.metadata)
+                )
+                if spaces_to_underscores:
+                    assoc_glob = assoc_glob.replace(" ", "_")
+                # Select files using the constructed glob pattern
+                associated_fspaths.update(
+                    Path(p) for p in glob(assoc_glob, recursive=True)
+                )
+
+            logger.info(
+                "Found %s associated file paths matching '%s'",
+                len(associated_fspaths),
+                associated_files.glob,
+            )
+
+            # Identify scan id, type and resource names from deidentified file paths
+            assoc_re = re.compile(associated_files.identity_pattern)
+            for fspath in tqdm(associated_fspaths, "sorting files into resources"):
+                match = assoc_re.match(str(fspath))
+                if not match:
+                    raise RuntimeError(
+                        f"Regular expression '{associated_files.identity_pattern}' "
+                        f"did not match file path {fspath}"
+                    )
+                scan_id = match.group("id")
+                resource_name = match.group("resource")
+                try:
+                    scan_type = match.group("type")
+                except IndexError:
+                    scan_type = scan_id
+                self.add_resource(
+                    scan_id,
+                    scan_type,
+                    resource_name,
+                    associated_files.datatype(fspath),
+                    associated=associated_files,
+                )
+
+    def add_resource(
+        self,
+        scan_id: str,
+        scan_type: str,
+        resource_name: str,
+        fileset: FileSet,
+        overwrite: bool = False,
+        associated: AssociatedFiles | None = None,
+    ) -> None:
+        """Adds a resource to the imaging session
+
+        Parameters
+        ----------
+        scan_id : str
+            the ID of the scan to add the resource to
+        scan_type : str
+            short description of the type of the scan
+        resource_name: str
+            the name of the resource to add
+        fileset : FileSet
+            the fileset to add as the resource
+        overwrite : bool
+            whether to overwrite existing resource
+        associated : bool, optional
+            whether the resource is primary or associated to a primary resource
+        """
+        try:
+            scan = self.scans[scan_id]
+        except KeyError:
+            scan = self.scans[scan_id] = ImagingScan(
+                id=scan_id, type=scan_type, associated=associated, session=self
+            )
+        else:
+            if scan.type != scan_type:
+                raise ValueError(
+                    f"Non-matching scan types ({scan.type} and {scan_type}) "
+                    f"for scan ID {scan_id}"
+                )
+            if associated != scan.associated:
+                raise ValueError(
+                    f"Non-matching associated files ({scan.associated} and {associated}) "
+                    f"for scan ID {scan_id}"
+                )
+        if resource_name in scan.resources and not overwrite:
+            raise KeyError(
+                f"Clash between resource names ('{resource_name}') for {scan_id} scan"
+            )
+        scan.resources[resource_name] = ImagingResource(
+            name=resource_name, fileset=fileset, scan=scan
+        )
 
     @classmethod
     def load(
-        cls, session_dir: Path, use_manifest: ty.Optional[bool] = None
-    ) -> "ImagingSession":
+        cls,
+        session_dir: Path,
+        require_manifest: bool = True,
+        check_checksums: bool = True,
+    ) -> Self:
         """Loads a session from a directory. Assumes that the name of the directory is
         the name of the session dir and the parent directory is the subject ID and the
         grandparent directory is the project ID. The scan information is loaded from a YAML
@@ -475,158 +572,38 @@ class ImagingSession:
         ----------
         session_dir : Path
             the path to the directory where the session is saved
-        use_manifest: bool, optional
-            determines whether to load the session based on YAML manifest or to infer
-            it from the directory structure. If True the manifest is expected and an error
-            will be raised if it isn't present, if False the manifest is ignored and if
-            None the manifest is used if present, otherwise the directory structure is used.
+        require_manifiest: bool, optional
+            whether a manifest file is required to load the resources in the session,
+            if true, resources will only be loaded if the manifest file is found,
+            if false, resources will be loaded as FileSet types and checksums will not
+            be checked, by default True
+        check_checksums: bool, optional
+            whether to check the checksums of the files in the session, by default True
 
         Returns
         -------
         ImagingSession
             the loaded session
         """
-        project_id = session_dir.parent.parent.name
-        subject_id = session_dir.parent.name
-        visit_id = session_dir.name
-        yaml_file = session_dir / cls.MANIFEST_FILENAME
-        if yaml_file.exists() and use_manifest is not False:
-            # Load session from YAML file metadata
-            try:
-                with open(yaml_file) as f:
-                    dct = yaml.load(f, Loader=yaml.SafeLoader)
-            except Exception as e:
-                add_exc_note(
-                    e,
-                    f"Loading saved session from {yaml_file}, please check that it "
-                    "is a valid YAML file",
-                )
-                raise e
-            scans = []
-            for scan_id, scan_dict in dct["scans"].items():
-                scans.append(
-                    ImagingScan(
-                        id=scan_id,
-                        type=scan_dict["type"],
-                        resources={
-                            n: from_mime(d["datatype"])(  # type: ignore[call-arg, misc]
-                                session_dir.joinpath(*p.split("/"))
-                                for p in d["fspaths"]
-                            )
-                            for n, d in scan_dict["resources"].items()
-                        },
-                    )
-                )
-            dct["scans"] = scans
-            session = cls(
-                project_id=project_id,
-                subject_id=subject_id,
-                visit_id=visit_id,
-                **dct,
-            )
-        elif use_manifest is not True:
-            # Load session based on directory structure
-            scans = []
-            for scan_dir in session_dir.iterdir():
-                if not scan_dir.is_dir():
-                    continue
-                scan_id, scan_type = scan_dir.name.split("-", 1)
-                scan_resources = {}
-                for resource_dir in scan_dir.iterdir():
-                    scan_resources[resource_dir.name] = FileSet(resource_dir.iterdir())
-                scans.append(
-                    ImagingScan(
-                        id=scan_id,
-                        type=scan_type,
-                        resources=scan_resources,
-                    )
-                )
-            session = cls(
-                scans=scans,
-                project_id=project_id,
-                subject_id=subject_id,
-                visit_id=visit_id,
-            )
-        else:
-            raise FileNotFoundError(
-                f"Did not find manifest file '{yaml_file}' in session directory "
-                f"{session_dir}. If you want to fallback to load the session based on "
-                "the directory structure instead, set `use_manifest` to None."
-            )
+        project_id, subject_id, visit_id = session_dir.name.split("-")
+        session = cls(
+            project_id=project_id,
+            subject_id=subject_id,
+            visit_id=visit_id,
+        )
+        for scan_dir in session_dir.iterdir():
+            if scan_dir.is_dir():
+                scan = ImagingScan.load(scan_dir, require_manifest=require_manifest)
+                scan.session = session
+                session.scans[scan.id] = scan
         return session
 
-    def save(self, save_dir: Path, just_manifest: bool = False) -> "ImagingSession":
-        """Save the project/subject/session IDs loaded from the session to a YAML file,
-        so they can be manually overridden.
-
-        Parameters
-        ----------
-        save_dir: Path
-            the path to save the session metadata into (NB: the data is typically also
-            stored in the directory structure of the session, but this is not necessary)
-        just_manifest : bool, optional
-            just save the manifest file, not the data, false by default
-
-        Returns
-        -------
-        saved : ImagingSession
-            a copy of the session with updated paths
-        """
-        scans = {}
-        saved = deepcopy(self)
-        session_dir = (
-            save_dir / self.project_id / self.subject_id / self.visit_id
-        ).absolute()
-        session_dir.mkdir(parents=True, exist_ok=True)
-        for scan in self.scans.values():
-            resources_dict = {}
-            for resource_name, fileset in scan.resources.items():
-                resource_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
-                if not just_manifest:
-                    # If data is not already in the save directory, copy it there
-                    logger.debug(
-                        "Checking whether fileset paths %s already inside "
-                        "the save directory %s",
-                        str(fileset.parent),
-                        resource_dir,
-                    )
-                    if not fileset.parent.absolute().is_relative_to(
-                        resource_dir.absolute()
-                    ):
-                        resource_dir.mkdir(parents=True, exist_ok=True)
-                        fileset = fileset.copy(
-                            resource_dir, mode=fileset.CopyMode.hardlink_or_copy
-                        )
-                        saved.scans[scan.id].resources[resource_name] = fileset
-                resources_dict[resource_name] = {
-                    "datatype": to_mime(type(fileset), official=False),
-                    "fspaths": [
-                        # Ensure it is a relative path using POSIX forward slashes
-                        str(p.absolute().relative_to(session_dir)).replace("\\", "/")
-                        for p in fileset.fspaths
-                    ],
-                }
-            scans[scan.id] = {
-                "type": scan.type,
-                "resources": resources_dict,
-            }
-        yaml_file = session_dir / self.MANIFEST_FILENAME
-        with open(yaml_file, "w") as f:
-            yaml.dump(
-                {"scans": scans},
-                f,
-            )
-        return saved
-
-    def stage(
+    def save(
         self,
         dest_dir: Path,
-        associated_file_groups: ty.Collection[AssociatedFiles] = (),
-        remove_original: bool = False,
-        deidentify: bool = True,
-        project_list: ty.Optional[ty.List[str]] = None,
-        spaces_to_underscores: bool = False,
-    ) -> Self:
+        available_projects: ty.Optional[ty.List[str]] = None,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    ) -> tuple[Self, Path]:
         r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
         replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
 
@@ -667,416 +644,29 @@ class ImagingSession:
         -------
         ImagingSession
             a deidentified session with updated paths
+        Path
+            the path to the directory where the session is saved
         """
-        if not dcmedit_path:
-            logger.warning(
-                "Did not find `dcmedit` tool from the MRtrix package on the system path, "
-                "de-identification will be performed by pydicom instead and may be slower"
-            )
-
-        staged_scans = []
-        staged_metadata = {}
-        if project_list is None or self.project_id in project_list:
-            project_dir = self.project_id
+        saved = self.new_empty()
+        if available_projects is None or self.project_id in available_projects:
+            project_id = self.project_id
         else:
-            project_dir = "INVALID-UNRECOGNISED-PROJECT-" + self.project_id
-        session_dir = dest_dir / project_dir / self.subject_id / self.visit_id
-        session_dir.mkdir(parents=True)
-        session_metadata = self.metadata
-        for scan in tqdm(
-            self.scans.values(), f"Staging DICOM sessions to {session_dir}"
-        ):
-            staged_resources: ty.Dict[str, FileSet] = {}
-            for resource_name, fileset in scan.resources.items():
-                # Ensure scan type is a valid directory name
-                scan_dir = session_dir / f"{scan.id}-{scan.type}" / resource_name
-                scan_dir.mkdir(parents=True, exist_ok=True)
-                if isinstance(fileset, DicomSeries):
-                    staged_dicom_paths = []
-                    for dicom in fileset.contents:
-                        if deidentify:
-                            dicom_ext = dicom.decomposed_fspaths()[0][-1]
-                            staged_fspath = self.deidentify_dicom(
-                                dicom,
-                                scan_dir
-                                / (dicom.metadata["SOPInstanceUID"] + dicom_ext),
-                                remove_original=remove_original,
-                            )
-                        elif remove_original:
-                            staged_fspath = dicom.move(scan_dir)
-                        else:
-                            staged_fspath = dicom.copy(scan_dir)
-                        staged_dicom_paths.append(staged_fspath)
-                    staged_resource = DicomSeries(staged_dicom_paths)
-                    # Add to the combined metadata dictionary
-                    staged_metadata.update(staged_resource.metadata)
-                else:
-                    continue  # associated files will be staged later
-                staged_resources[resource_name] = staged_resource
-            staged_scans.append(
-                ImagingScan(id=scan.id, type=scan.type, resources=staged_resources)
-            )
-        for associated_files in associated_file_groups:
-            # substitute string templates int the glob template with values from the
-            # DICOM metadata to construct a glob pattern to select files associated
-            # with current session
-            associated_fspaths: ty.Set[Path] = set()
-            for parent_dir in self.parent_dirs:
-                assoc_glob = str(
-                    parent_dir / associated_files.glob.format(**session_metadata)
-                )
-                if spaces_to_underscores:
-                    assoc_glob = assoc_glob.replace(" ", "_")
-                # Select files using the constructed glob pattern
-                associated_fspaths.update(
-                    Path(p) for p in glob(assoc_glob, recursive=True)
-                )
-
-            logger.info(
-                "Found %s associated file paths matching '%s'",
-                len(associated_fspaths),
-                associated_files.glob,
-            )
-
-            tmpdir = session_dir / ".tmp"
-            tmpdir.mkdir()
-
-            if deidentify:
-                # Transform the names of the paths to remove any identiable information
-                if associated_files.glob.startswith("/") or (
-                    platform.system() == "Windows"
-                    and re.match(r"[a-zA-Z]:\\", associated_files.glob)
-                ):
-                    assoc_glob_pattern = associated_files.glob
-                else:
-                    assoc_glob_pattern = (
-                        str(parent_dir) + os.path.sep + associated_files.glob
-                    )
-                transformed_fspaths = transform_paths(
-                    list(associated_fspaths),
-                    assoc_glob_pattern,
-                    session_metadata,
-                    staged_metadata,
-                    spaces_to_underscores=spaces_to_underscores,
-                )
-                staged_associated_fspaths = []
-
-                for old, new in tqdm(
-                    zip(associated_fspaths, transformed_fspaths),
-                    "Anonymising associated file names",
-                ):
-                    dest_path = tmpdir / new.name
-                    if Dicom.matches(old):
-                        self.deidentify_dicom(
-                            old, dest_path, remove_original=remove_original
-                        )
-                    elif remove_original:
-                        logger.debug("Moving %s to %s", old, dest_path)
-                        old.rename(dest_path)
-                    else:
-                        logger.debug("Copying %s to %s", old, dest_path)
-                        shutil.copyfile(old, dest_path)
-                    staged_associated_fspaths.append(dest_path)
-            else:
-                staged_associated_fspaths = list(associated_fspaths)
-
-            # Identify scan id, type and resource names from deidentified file paths
-            assoc_scans = {}
-            assoc_re = re.compile(associated_files.identity_pattern)
-            for fspath in tqdm(
-                staged_associated_fspaths, "sorting files into resources"
-            ):
-                match = assoc_re.match(str(fspath))
-                if not match:
-                    raise RuntimeError(
-                        f"Regular expression '{associated_files.identity_pattern}' "
-                        f"did not match file path {fspath}"
-                    )
-                scan_id = match.group("id")
-                resource = match.group("resource")
-                try:
-                    scan_type = match.group("type")
-                except IndexError:
-                    scan_type = scan_id
-                if scan_id not in assoc_scans:
-                    assoc_resources: ty.DefaultDict[str, ty.List[Path]] = defaultdict(
-                        list
-                    )
-                    assoc_scans[scan_id] = (scan_type, assoc_resources)
-                else:
-                    prev_scan_type, assoc_resources = assoc_scans[scan_id]
-                    if scan_type != prev_scan_type:
-                        raise RuntimeError(
-                            f"Mismatched scan types '{scan_type}' and "
-                            f"'{prev_scan_type}' for scan ID '{scan_id}'"
-                        )
-                assoc_resources[resource].append(fspath)
-            for scan_id, (scan_type, scan_resources_dict) in tqdm(
-                assoc_scans.items(), "moving associated files to staging directory"
-            ):
-                scan_resources = {}
-                for resource_name, fspaths in scan_resources_dict.items():
-                    if resource_name in self.scans.get(scan_id, []):
-                        raise RuntimeError(
-                            f"Conflict between existing resource and associated files "
-                            f"to stage {scan_id}:{resource_name}"
-                        )
-                    resource_dir = session_dir / scan_id / resource_name
-                    resource_dir.mkdir(parents=True)
-                    resource_fspaths = []
-                    for fspath in fspaths:
-                        dest_path = resource_dir / fspath.name
-                        if remove_original or deidentify:
-                            # If deidentify is True then the files will have been copied
-                            # to a temp folder and we can just rename them to their
-                            # final destination
-                            fspath.rename(dest_path)
-                        else:
-                            shutil.copyfile(fspath, dest_path)
-                        resource_fspaths.append(dest_path)
-                    scan_resources[resource_name] = associated_files.datatype(
-                        resource_fspaths
-                    )
-                staged_scans.append(
-                    ImagingScan(
-                        id=scan_id,
-                        type=scan_type,
-                        resources=scan_resources,
-                        associated=True,
-                    )
-                )
-            os.rmdir(tmpdir)  # Should be empty
-        staged = type(self)(
-            project_id=self.project_id,
-            subject_id=self.subject_id,
-            visit_id=self.visit_id,
-            scans=staged_scans,
-        )
-        staged.save(dest_dir, just_manifest=True)
-        # If original scans have been moved clear the scans dictionary
-        if remove_original:
-            self.scans = {}
-        return staged
-
-    def deidentify_dicom(
-        self, dicom_file: Path, new_path: Path, remove_original: bool = False
-    ) -> Path:
-        if dcmedit_path:
-            # Copy to new path
-            shutil.copyfile(dicom_file, new_path)
-            # Replace date of birth date with 1st of Jan
-            args = [
-                dcmedit_path,
-                "-quiet",
-                "-anonymise",
-                str(new_path),
-            ]
-            sp.check_call(args)
-        else:
-            dcm = pydicom.dcmread(dicom_file)
-            dcm.PatientBirthDate = ""  # dcm.PatientBirthDate[:4] + "0101"
-            for field in self.FIELDS_TO_CLEAR:
-                try:
-                    elem = dcm[field]  # type: ignore
-                except KeyError:
-                    pass
-                else:
-                    elem.value = ""
-            dcm.save_as(new_path)
-        if remove_original:
-            os.unlink(dicom_file)
-        return new_path
-
-    FIELDS_TO_CLEAR = [
-        ("0008", "0014"),  # Instance Creator UID
-        ("0008", "1111"),  # Referenced Performed Procedure Step SQ
-        ("0008", "1120"),  # Referenced Patient SQ
-        ("0008", "1140"),  # Referenced Image SQ
-        ("0008", "0096"),  # Referring Physician Identification SQ
-        ("0008", "1032"),  # Procedure Code SQ
-        ("0008", "1048"),  # Physician(s) of Record
-        ("0008", "1049"),  # Physician(s) of Record Identification SQ
-        ("0008", "1050"),  # Performing Physicians' Name
-        ("0008", "1052"),  # Performing Physician Identification SQ
-        ("0008", "1060"),  # Name of Physician(s) Reading Study
-        ("0008", "1062"),  # Physician(s) Reading Study Identification SQ
-        ("0008", "1110"),  # Referenced Study SQ
-        ("0008", "1111"),  # Referenced Performed Procedure Step SQ
-        ("0008", "1250"),  # Related Series SQ
-        ("0008", "9092"),  # Referenced Image Evidence SQ
-        ("0008", "0080"),  # Institution Name
-        ("0008", "0081"),  # Institution Address
-        ("0008", "0082"),  # Institution Code Sequence
-        ("0008", "0092"),  # Referring Physician's Address
-        ("0008", "0094"),  # Referring Physician's Telephone Numbers
-        ("0008", "009C"),  # Consulting Physician's Name
-        ("0008", "1070"),  # Operators' Name
-        ("0010", "4000"),  # Patient Comments
-        ("0010", "0010"),  # Patient's Name
-        ("0010", "0021"),  # Issuer of Patient ID
-        ("0010", "0032"),  # Patient's Birth Time
-        ("0010", "0050"),  # Patient's Insurance Plan Code SQ
-        ("0010", "0101"),  # Patient's Primary Language Code SQ
-        ("0010", "1000"),  # Other Patient IDs
-        ("0010", "1001"),  # Other Patient Names
-        ("0010", "1002"),  # Other Patient IDs SQ
-        ("0010", "1005"),  # Patient's Birth Name
-        ("0010", "1010"),  # Patient's Age
-        ("0010", "1040"),  # Patient's Address
-        ("0010", "1060"),  # Patient's Mother's Birth Name
-        ("0010", "1080"),  # Military Rank
-        ("0010", "1081"),  # Branch of Service
-        ("0010", "1090"),  # Medical Record Locator
-        ("0010", "2000"),  # Medical Alerts
-        ("0010", "2110"),  # Allergies
-        ("0010", "2150"),  # Country of Residence
-        ("0010", "2152"),  # Region of Residence
-        ("0010", "2154"),  # Patient's Telephone Numbers
-        ("0010", "2160"),  # Ethnic Group
-        ("0010", "2180"),  # Occupation
-        ("0010", "21A0"),  # Smoking Status
-        ("0010", "21B0"),  # Additional Patient History
-        ("0010", "21C0"),  # Pregnancy Status
-        ("0010", "21D0"),  # Last Menstrual Date
-        ("0010", "21F0"),  # Patient's Religious Preference
-        ("0010", "2203"),  # Patient's Sex Neutered
-        ("0010", "2297"),  # Responsible Person
-        ("0010", "2298"),  # Responsible Person Role
-        ("0010", "2299"),  # Responsible Organization
-        ("0020", "9221"),  # Dimension Organization SQ
-        ("0020", "9222"),  # Dimension Index SQ
-        ("0038", "0010"),  # Admission ID
-        ("0038", "0011"),  # Issuer of Admission ID
-        ("0038", "0060"),  # Service Episode ID
-        ("0038", "0061"),  # Issuer of Service Episode ID
-        ("0038", "0062"),  # Service Episode Description
-        ("0038", "0500"),  # Patient State
-        ("0038", "0100"),  # Pertinent Documents SQ
-        ("0040", "0260"),  # Performed Protocol Code SQ
-        ("0088", "0130"),  # Storage Media File-Set ID
-        ("0088", "0140"),  # Storage Media File-Set UID
-        ("0400", "0561"),  # Original Attributes Sequence
-        ("5200", "9229"),  # Shared Functional Groups SQ
-    ]
+            project_id = "INVALID_UNRECOGNISED_" + self.project_id
+        session_dir = dest_dir / "-".join((project_id, self.subject_id, self.visit_id))
+        session_dir.mkdir(parents=True, exist_ok=True)
+        for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
+            saved_scan = scan.save(session_dir, copy_mode=copy_mode)
+            saved_scan.session = saved
+            saved.scans[saved_scan.id] = saved_scan
+        return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
 
-
-@attrs.define
-class MockStore(Store):
-    """Mock data store so we can use the column.match_entry method on the "entries" in
-    the data row
-    """
-
-    session: ImagingSession
-
-    @property
-    def row(self):
-        return DataRow(
-            ids={DummyAxes._: None},
-            frameset=FrameSet(id=None, store=self, hierarchy=[], axes=DummyAxes),
-            frequency=DummyAxes._,
-        )
-
-    def populate_row(self, row: DataRow):
-        """
-        Populate a row with all data entries found in the corresponding node in the data
-        store (e.g. files within a directory, scans within an XNAT session) using the
-        ``DataRow.add_entry`` method. Within a node/row there are assumed to be two types
-        of entries, "primary" entries (e.g. acquired scans) common to all analyses performed
-        on the dataset and "derivative" entries corresponding to intermediate outputs
-        of previously performed analyses. These types should be stored in separate
-        namespaces so there is no chance of a derivative overriding a primary data item.
-
-        The name of the dataset/analysis a derivative was generated by is appended to
-        to a base path, delimited by "@", e.g. "brain_mask@my_analysis". The dataset
-        name is left blank by default, in which case "@" is just appended to the
-        derivative path, i.e. "brain_mask@".
-
-        Parameters
-        ----------
-        row : DataRow
-            The row to populate with entries
-        """
-        for scan_id, scan in self.session.scans.items():
-            for resource_name, resource in scan.resources.items():
-                row.add_entry(
-                    path=scan.type + "/" + resource_name,
-                    datatype=type(resource),
-                    uri=(scan_id, resource_name),
-                )
-
-    def get(self, entry: DataEntry, datatype: type) -> DataType:
-        """
-        Gets the data item corresponding to the given entry
-
-        Parameters
-        ----------
-        entry : DataEntry
-            the data entry to update
-        datatype : type
-            the datatype to interpret the entry's item as
-
-        Returns
-        -------
-        item : DataType
-            the item stored within the specified entry
-        """
-        scan_id, resource_name = entry.uri
-        return datatype(self.session.scans[scan_id][resource_name])
-
-    ######################################
-    # The following methods can be empty #
-    ######################################
-
-    def populate_tree(self, tree: DataTree):
-        pass
-
-    def connect(self) -> ty.Any:
-        pass
-
-    def disconnect(self, session: ty.Any):
-        pass
-
-    def create_data_tree(
-        self,
-        id: str,
-        leaves: ty.List[ty.Tuple[str, ...]],
-        hierarchy: ty.List[str],
-        axes: type,
-        **kwargs,
-    ):
-        raise NotImplementedError
-
-    ###################################
-    # The following shouldn't be used #
-    ###################################
-
-    def put(self, item: DataType, entry: DataEntry) -> DataType:
-        raise NotImplementedError
-
-    def put_provenance(self, provenance: ty.Dict[str, ty.Any], entry: DataEntry):
-        raise NotImplementedError
-
-    def get_provenance(self, entry: DataEntry) -> ty.Dict[str, ty.Any]:
-        raise NotImplementedError
-
-    def save_frameset_definition(
-        self, dataset_id: str, definition: ty.Dict[str, ty.Any], name: str
-    ):
-        raise NotImplementedError
-
-    def load_frameset_definition(
-        self, dataset_id: str, name: str
-    ) -> ty.Dict[str, ty.Any]:
-        raise NotImplementedError
-
-    def site_licenses_dataset(self):
-        raise NotImplementedError
-
-    def create_entry(self, path: str, datatype: type, row: DataRow) -> DataEntry:
-        raise NotImplementedError
+    def unlink(self) -> None:
+        """Unlink all resources in the session"""
+        for scan in self.scans.values():
+            for resource in scan.resources.values():
+                resource.unlink()
 
 
-class DummyAxes(Axes):
-    _ = 0b0
+from .store import ImagingSessionMockStore  # noqa: E402

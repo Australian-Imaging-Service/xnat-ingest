@@ -12,12 +12,14 @@ from fileformats.medimage import DicomSeries
 
 @pytest.fixture
 def dicom_series(scope="module") -> DicomSeries:
-    return DicomSeries(get_pet_image().iterdir())
+    return DicomSeries(
+        get_pet_image(first_name="GivenName", last_name="FamilyName").iterdir()
+    )
 
 
-@pytest.mark.xfail(
-    condition=(platform.system() == "Linux"), reason="Not working on ubuntu"
-)
+# @pytest.mark.xfail(
+#     condition=(platform.system() == "Linux"), reason="Not working on ubuntu"
+# )
 def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     keys = [
         "AccessionNumber",
@@ -30,7 +32,7 @@ def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     dicom_series = DicomSeries(dicom_series, specific_tags=keys)
 
     assert not (set(keys + ["SpecificCharacterSet"]) - set(dicom_series.metadata))
-    assert dicom_series.metadata["PatientName"] == "GivenName^FamilyName"
+    assert dicom_series.metadata["PatientName"] == "FamilyName^GivenName"
     assert dicom_series.metadata["AccessionNumber"] == "987654321"
     assert dicom_series.metadata["PatientID"] == "Session Label"
     assert dicom_series.metadata["StudyID"] == "PROJECT_ID"

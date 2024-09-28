@@ -9,6 +9,7 @@ from frametree.core.cli import (  # type: ignore[import-untyped]
 import xnat4tests  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from xnat_ingest.cli import stage, upload
+from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
 from xnat_ingest.utils import show_cli_trace
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
@@ -199,10 +200,11 @@ def test_stage_and_upload(
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
-            "--log-file",
-            str(log_file),
+            "--logger",
+            "file",
             "info",
-            "--add-logger",
+            str(log_file),
+            "--additional-logger",
             "xnat",
             "--raise-errors",
             "--delete",
@@ -218,11 +220,12 @@ def test_stage_and_upload(
     result = cli_runner(
         upload,
         [
-            str(staging_dir),
-            "--log-file",
-            str(log_file),
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--logger",
+            "file",
             "info",
-            "--add-logger",
+            str(log_file),
+            "--additional-logger",
             "xnat",
             "--always-include",
             "medimage/dicom-series",
@@ -230,11 +233,13 @@ def test_stage_and_upload(
             "--method",
             "tar_file",
             "--use-curl-jsession",
+            "--wait-period",
+            "0",
         ],
         env={
-            "XNAT_INGEST_UPLOAD_HOST": xnat_server,
-            "XNAT_INGEST_UPLOAD_USER": "admin",
-            "XNAT_INGEST_UPLOAD_PASS": "admin",
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
         },
     )
 
