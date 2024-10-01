@@ -339,23 +339,23 @@ class ImagingSession:
                     value = resource.metadata[field_name]
                 except KeyError:
                     value = ""
-                if (
-                    not value
-                    and session_uid
-                    and field_type in ("project", "subject", "visit")
-                ):
-                    value = (
-                        "INVALID_MISSING_"
-                        + field_type.upper()
-                        + "_"
-                        + "".join(
-                            random.choices(string.ascii_letters + string.digits, k=8)
+                if not value:
+                    if session_uid and field_type in ("project", "subject", "visit"):
+                        value = (
+                            "INVALID_MISSING_"
+                            + field_type.upper()
+                            + "_"
+                            + "".join(
+                                random.choices(
+                                    string.ascii_letters + string.digits, k=8
+                                )
+                            )
                         )
-                    )
-                    raise ImagingSessionParseError(
-                        f"Did not find '{field_name}' field in {resource}, "
-                        "cannot uniquely identify the resource"
-                    )
+                    else:
+                        raise ImagingSessionParseError(
+                            f"Did not find '{field_name}' field in {resource}, "
+                            "cannot uniquely identify the resource"
+                        )
                 if index is not None:
                     value = value[index]
                 value_str = str(value)
