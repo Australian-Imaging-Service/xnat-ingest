@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 import typing as ty
-from fileformats.core import from_mime, FileSet
+from fileformats.core import from_mime
 from fileformats.medimage import (
     DicomSeries,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
@@ -10,22 +10,17 @@ from fileformats.medimage import (
 )
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.common import FileSystem  # type: ignore[import-untyped]
-from medimages4tests.dummy.dicom.base import default_dicom_dir  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_pet_image,
-    __file__ as pet_src_file,
 )
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_ac_image,
-    __file__ as ac_src_file,
 )
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_topogram_image,
-    __file__ as topogram_src_file,
 )
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
     get_image as get_statistics_image,
-    __file__ as statistics_src_file,
 )
 from xnat_ingest.session import ImagingSession, ImagingScan
 from xnat_ingest.store import DummyAxes
@@ -66,26 +61,18 @@ def imaging_session() -> ImagingSession:
         DicomSeries(d.iterdir())
         for d in (
             get_pet_image(
-                out_dir=default_dicom_dir(pet_src_file).with_suffix(".with-spaces"),
                 first_name=FIRST_NAME,
                 last_name=LAST_NAME,
             ),
             get_ac_image(
-                out_dir=default_dicom_dir(ac_src_file).with_suffix(".with-spaces"),
                 first_name=FIRST_NAME,
                 last_name=LAST_NAME,
             ),
             get_topogram_image(
-                out_dir=default_dicom_dir(topogram_src_file).with_suffix(
-                    ".with-spaces"
-                ),
                 first_name=FIRST_NAME,
                 last_name=LAST_NAME,
             ),
             get_statistics_image(
-                out_dir=default_dicom_dir(statistics_src_file).with_suffix(
-                    ".with-spaces"
-                ),
                 first_name=FIRST_NAME,
                 last_name=LAST_NAME,
             ),
