@@ -127,7 +127,7 @@ def set_logger_handling(
     """Set up logging for the application"""
 
     if not logger_configs:
-        return
+        logger_configs = [LoggerConfig("stream", "info", "stdout")]
 
     loggers = [logger]
     for log in additional_loggers:
