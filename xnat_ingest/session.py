@@ -399,12 +399,16 @@ class ImagingSession:
                     )
             session.add_resource(scan_id, scan_type, resource_id, resource)
         if multiple_sessions:
-            raise ImagingSessionParseError(
-                "Multiple session UIDs found with the same project/subject/visit ID triplets: "
-                + "\n".join(
-                    f"{i} -> {p}:{s}:{v}" for i, (p, s, v) in multiple_sessions.items()
+            try:
+                raise ImagingSessionParseError(
+                    "Multiple session UIDs found with the same project/subject/visit ID triplets: "
+                    + "\n".join(
+                        f"{i} -> {p}:{s}:{v}"
+                        for i, (p, s, v) in multiple_sessions.items()
+                    )
                 )
-            )
+            except ValueError:
+                raise Exception(str(multiple_sessions))
         return list(sessions.values())
 
     def deidentify(
