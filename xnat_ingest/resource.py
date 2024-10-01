@@ -27,7 +27,9 @@ class ImagingResource:
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
-        return self.fileset.hash_files(crypto=hashlib.md5)
+        return self.fileset.hash_files(
+            crypto=hashlib.md5, relative_to=self.fileset.parent
+        )
 
     @property
     def datatype(self) -> ty.Type[FileSet]:
