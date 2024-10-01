@@ -287,7 +287,7 @@ def stage(
         additional_loggers=additional_loggers,
     )
     datatypes: list[ty.Type[FileSet]]
-    if datatype is None:
+    if not datatype:
         datatypes = [DicomSeries]
     else:
         datatypes = [FileSet.from_mime(dt) for dt in datatype]  # type: ignore[misc]

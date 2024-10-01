@@ -357,8 +357,9 @@ class ImagingSession:
                             )
                     else:
                         raise ImagingSessionParseError(
-                            f"Did not find '{field_name}' field in {resource}, "
-                            "cannot uniquely identify the resource"
+                            f"Did not find '{field_name}' field in {resource!r}, "
+                            "cannot uniquely identify the resource, found:\n"
+                            + "\n".join(resource.metadata)
                         )
                 if index is not None:
                     value = value[index]
