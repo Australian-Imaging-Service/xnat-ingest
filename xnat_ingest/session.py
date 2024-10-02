@@ -323,6 +323,7 @@ class ImagingSession:
         multiple_sessions: ty.DefaultDict[str, ty.Set[ty.Tuple[str, str, str]]] = (
             defaultdict(set)
         )
+        missing_ids: dict[str, dict[str, str]] = defaultdict(dict)
         for resource in tqdm(
             resources,
             "Sorting resources into XNAT tree structure...",
@@ -338,21 +339,28 @@ class ImagingSession:
                 try:
                     value = resource.metadata[field_name]
                 except KeyError:
+                    value = ""
+                if not value:
                     if session_uid and field_type in ("project", "subject", "visit"):
-                        value = (
-                            "INVALID_MISSING_"
-                            + field_type.upper()
-                            + "_"
-                            + "".join(
-                                random.choices(
-                                    string.ascii_letters + string.digits, k=8
+                        try:
+                            value = missing_ids[session_uid][field_type]
+                        except KeyError:
+                            value = missing_ids[session_uid][field_type] = (
+                                "INVALID_MISSING_"
+                                + field_type.upper()
+                                + "_"
+                                + "".join(
+                                    random.choices(
+                                        string.ascii_letters + string.digits, k=8
+                                    )
                                 )
                             )
+                    else:
+                        raise ImagingSessionParseError(
+                            f"Did not find '{field_name}' field in {resource!r}, "
+                            "cannot uniquely identify the resource, found:\n"
+                            + "\n".join(resource.metadata)
                         )
-                    raise ImagingSessionParseError(
-                        f"Did not find '{field_name}' field in {resource}, "
-                        "cannot uniquely identify the resource"
-                    )
                 if index is not None:
                     value = value[index]
                 value_str = str(value)
@@ -399,7 +407,8 @@ class ImagingSession:
             raise ImagingSessionParseError(
                 "Multiple session UIDs found with the same project/subject/visit ID triplets: "
                 + "\n".join(
-                    f"{i} -> {p}:{s}:{v}" for i, (p, s, v) in multiple_sessions.items()
+                    f"{i} -> " + str(["{p}:{s}:{v}" for p, s, v in sess])
+                    for i, sess in multiple_sessions.items()
                 )
             )
         return list(sessions.values())

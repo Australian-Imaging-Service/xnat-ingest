@@ -7,6 +7,7 @@ import time
 import tempfile
 from tqdm import tqdm
 from fileformats.core import FileSet
+from fileformats.medimage import DicomSeries
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from frametree.xnat import Xnat  # type: ignore[import-untyped]
@@ -25,13 +26,13 @@ DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
 @cli.command(
-    help="""Stages DICOM and associated files found in the input directories into separate
-directories for each session
+    help="""Stages images found in the input directories into separate directories for each
+imaging acquisition session
 
-DICOMS_PATH is either the path to a directory containing the DICOM files to upload, or
-a glob pattern that selects the DICOM paths directly
+FILES_PATH is either the path to a directory containing the files to upload, or
+a glob pattern that selects the paths directly
 
-STAGING_DIR is the directory that the files for each session are collated to before they
+OUTPUT_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
 """,
 )
@@ -42,9 +43,15 @@ are uploaded to XNAT
     type=str,
     metavar="<mime-type>",
     multiple=True,
-    default=["medimage/dicom-series"],
-    envvar="XINGEST_DATATYPE",
-    help="The datatype of the primary files to to upload",
+    default=None,
+    envvar="XINGEST_DATATYPES",
+    help=(
+        'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
+        "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
+        "Any formats implemented in the FileFormats Python package "
+        "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
+        '"extra" are supported, see FF docs on how to add support for new formats.'
+    ),
 )
 @click.option(
     "--project-field",
@@ -250,7 +257,7 @@ are uploaded to XNAT
 def stage(
     files_path: str,
     output_dir: Path,
-    datatype: str,
+    datatype: list[str] | None,
     associated_files: ty.List[AssociatedFiles],
     project_field: str,
     subject_field: str,
@@ -279,6 +286,11 @@ def stage(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
     )
+    datatypes: list[ty.Type[FileSet]]
+    if not datatype:
+        datatypes = [DicomSeries]
+    else:
+        datatypes = [FileSet.from_mime(dt) for dt in datatype]  # type: ignore[misc]
 
     if xnat_login:
         xnat_repo = Xnat(
@@ -292,10 +304,10 @@ def stage(
     else:
         project_list = None
 
-    if session_field is None and datatype == "medimage/dicom-series":
+    if session_field is None and DicomSeries in datatypes:
         session_field = "StudyInstanceUID"
 
-    msg = f"Loading {datatype} sessions from '{files_path}'"
+    msg = f"Loading {list(datatypes)} sessions from '{files_path}'"
 
     for assoc_files in associated_files:
         msg += f" with associated files selected from '{assoc_files.glob}'"
@@ -319,6 +331,7 @@ def stage(
     def do_stage() -> None:
         sessions = ImagingSession.from_paths(
             files_path=files_path,
+            datatypes=datatypes,
             project_field=project_field,
             subject_field=subject_field,
             visit_field=visit_field,
