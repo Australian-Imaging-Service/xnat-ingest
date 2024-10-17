@@ -416,7 +416,7 @@ def upload(
             else:
                 assert False
 
-    if loop:
+    if loop is not None:
         while True:
             start_time = datetime.datetime.now()
             do_upload()

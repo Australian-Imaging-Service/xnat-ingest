@@ -383,7 +383,7 @@ def stage(
                 else:
                     raise
 
-    if loop:
+    if loop is not None:
         while True:
             start_time = datetime.datetime.now()
             do_stage()
