@@ -4,6 +4,8 @@ from glob import glob
 import logging
 from functools import cached_property
 import random
+import hashlib
+from datetime import datetime
 import string
 from itertools import chain
 from collections import defaultdict, Counter
@@ -44,6 +46,7 @@ class ImagingSession:
         converter=scans_converter,
         validator=attrs.validators.instance_of(dict),
     )
+    run_uid: ty.Optional[str] = attrs.field(default=None)
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -296,6 +299,16 @@ class ImagingSession:
         else:
             fspaths = [Path(p) for p in glob(files_path, recursive=True)]
 
+        # Create a UID out of the paths that session was created from and the
+        # timestamp
+        crypto = hashlib.sha256()
+        for fspath in fspaths:
+            crypto.update(str(fspath.absolute()).encode())
+        run_uid: str = crypto.hexdigest()[:6] + datetime.strftime(
+            datetime.now(),
+            "%Y%m%d%H%M%S",
+        )
+
         from_paths_kwargs = {}
         if datatypes is DicomSeries:
             from_paths_kwargs["specific_tags"] = [
@@ -387,6 +400,7 @@ class ImagingSession:
                     project_id=project_id,
                     subject_id=subject_id,
                     visit_id=visit_id,
+                    run_uid=run_uid,
                 )
                 sessions[session_uid] = session
             else:
@@ -594,11 +608,17 @@ class ImagingSession:
         ImagingSession
             the loaded session
         """
-        project_id, subject_id, visit_id = session_dir.name.split("-")
+        parts = session_dir.name.split("-")
+        if len(parts) == 4:
+            project_id, subject_id, visit_id, run_uid = parts
+        else:
+            project_id, subject_id, visit_id = parts
+            run_uid = None
         session = cls(
             project_id=project_id,
             subject_id=subject_id,
             visit_id=visit_id,
+            run_uid=run_uid,
         )
         for scan_dir in session_dir.iterdir():
             if scan_dir.is_dir():
@@ -661,7 +681,10 @@ class ImagingSession:
             project_id = self.project_id
         else:
             project_id = "INVALID_UNRECOGNISED_" + self.project_id
-        session_dir = dest_dir / "-".join((project_id, self.subject_id, self.visit_id))
+        session_dirname = "-".join((project_id, self.subject_id, self.visit_id))
+        if self.run_uid:
+            session_dirname += f"-{self.run_uid}"
+        session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(session_dir, copy_mode=copy_mode)
