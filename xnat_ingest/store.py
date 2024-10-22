@@ -91,7 +91,7 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
         id: str,
         leaves: ty.List[ty.Tuple[str, ...]],
         hierarchy: ty.List[str],
-        axes: type,
+        axes: ty.Type[Axes],
         **kwargs: ty.Any,
     ) -> DataTree:
         raise NotImplementedError
