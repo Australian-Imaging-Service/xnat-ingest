@@ -200,10 +200,10 @@ def test_stage_and_upload(
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
-            "--logger",
-            "file",
-            "info",
-            str(log_file),
+            # "--logger",
+            # "file",
+            # "info",
+            # str(log_file),
             "--additional-logger",
             "xnat",
             "--raise-errors",
@@ -213,6 +213,9 @@ def test_stage_and_upload(
             "admin",
             "admin",
         ],
+        env={
+            "XINGEST_LOGGERS": "file,info,/tmp/logging.log;stream,debug,stdout",
+        },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)

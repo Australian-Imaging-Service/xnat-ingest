@@ -371,4 +371,4 @@ _escaped_glob_replacement = re.compile(
 
 _str_templ_replacement = re.compile(r"\{[\w\.]+\}")
 
-invalid_path_chars_re = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+invalid_path_chars_re = re.compile(r'[\-<>:"/\\|?*\x00-\x1F]')
