@@ -36,8 +36,8 @@ OUTPUT_DIR is the directory that the files for each session are collated to befo
 are uploaded to XNAT
 """,
 )
-@click.argument("files_path", type=str, envvar="XINGEST_DICOMS_PATH")
-@click.argument("output_dir", type=click.Path(path_type=Path), envvar="XINGEST_DIR")
+@click.argument("files_path", type=str)
+@click.argument("output_dir", type=click.Path(path_type=Path))
 @click.option(
     "--datatype",
     type=str,
@@ -193,7 +193,7 @@ are uploaded to XNAT
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
-    envvar="XNAT_INGEST_TRANSFER_XNAT_LOGIN",
+    envvar="XINGEST_XNAT_LOGIN",
 )
 @click.option(
     "--spaces-to-underscores/--no-spaces-to-underscores",
