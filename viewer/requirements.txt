@@ -1,0 +1,6 @@
+flet==0.25.1
+sqlalchemy==2.0.36
+pandas==2.2.3
+pydicom==3.0.1
+brukerapi==0.1.9
+python-magic==0.4.27

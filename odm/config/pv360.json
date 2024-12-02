@@ -1,0 +1,84 @@
+{
+    "AdjProtocols": {
+        "description": "Adjusted or additional protocol settings.",
+        "required": false,
+        "type": "DIRECTORY",
+        "mapping": "adj_protocols"
+    },
+    "AdjResult": {
+        "description": "Results derived from adjusted or supplementary analyses.",
+        "required": false,
+        "type": "DIRECTORY",
+        "mapping": "adj_result"
+    },
+    "AdjStatePerStudy": {
+        "description": "State information for the study that includes adjustments or specifics not captured in the standard protocol or result folders.",
+        "required": false,
+        "type": "JCAMPDX",
+        "mapping": "adj_state_per_study"
+    },
+    "ResultState": {
+        "description": "This folder could contain information or metadata summarizing the results of the study as a whole, including final states of the imaging parameters and outputs.",
+        "required": false,
+        "type": "JCAMPDX",
+        "mapping": "result_state"
+    },
+    "ScanProgram.scanProgram": {
+        "description": "This file likely contains scripting or programming information used to control the scan sequences during the imaging session.",
+        "required": false,
+        "type": "JCAMPDX",
+        "mapping": "scan_program"
+    },
+    "study.MR": {
+        "description": "This file or folder typically contains metadata or comprehensive details about the MRI study itself.",
+        "required": false,
+        "type": "JCAMPDX",
+        "mapping": "study"
+    },
+    "subject": {
+        "description": "This file holds information specific to the subject or sample imaged during the study. ",
+        "required": true,
+        "type": "JCAMPDX",
+        "mapping": "subject"
+    },
+    "scans": {
+        "mapping": "scans",
+        "scan": {
+            "acqp": {
+                "description": "This file contains acquisition parameters for the scan.",
+                "required": false,
+                "type": "JCAMPDX",
+                "mapping": "acqp"
+            },
+            "AdjStatePerScan": null,
+            "configscan": {
+                "description": "This file contains configuration information for the scan.",
+                "required": false,
+                "type": "JCAMPDX",
+                "mapping": "configscan"
+            },
+            "FreqAdjustment": null,
+            "method": {
+                "description": "This file contains the method or protocol used for the scan.",
+                "required": true,
+                "type": "JCAMPDX",
+                "mapping": "method"
+            },
+            "pdata": {
+                "metadata": [],
+                "dicom": {
+                    "description": "This folder contains the DICOM files for the scan.",
+                    "required": false,
+                    "type": "DIRECTORY",
+                    "mapping": "dicom"
+                }
+            },
+            "pulseprogram": null,
+            "pulseprogram.precomp": null,
+            "specpar": null,
+            "spnam0": null,
+            "uxnmr.info": null,
+            "uxnmr.par": null
+        }
+    }
+}
