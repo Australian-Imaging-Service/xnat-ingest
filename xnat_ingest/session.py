@@ -642,9 +642,6 @@ class ImagingSession:
             destination directory to save the deidentified files. The session will be saved
             to a directory with the project, subject and session IDs as subdirectories of
             this directory, along with the scans manifest
-        work_dir : Path, optional
-            the directory the staged sessions are created in before they are moved into
-            the staging directory
         associated_file_groups : Collection[AssociatedFiles], optional
             Glob pattern used to select the non-dicom files to include in the session. Note
             that the pattern is relative to the parent directory containing the DICOM files

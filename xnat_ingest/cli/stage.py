@@ -203,16 +203,6 @@ are uploaded to XNAT
     type=bool,
 )
 @click.option(
-    "--work-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    envvar="XINGEST_WORK_DIR",
-    help=(
-        "The working directory to use for temporary files. Should be on the same "
-        "physical disk as the staging directory for optimal performance"
-    ),
-)
-@click.option(
     "--copy-mode",
     type=FileSet.CopyMode,
     default=FileSet.CopyMode.hardlink_or_copy,
@@ -280,7 +270,6 @@ def stage(
     invalid_dir_name: str,
     deidentified_dir_name: str,
     loop: int | None,
-    work_dir: Path | None = None,
 ) -> None:
     set_logger_handling(
         logger_configs=loggers,
