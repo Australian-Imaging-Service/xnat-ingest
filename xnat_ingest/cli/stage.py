@@ -25,6 +25,21 @@ INVALID_NAME_DEFAULT = "INVALID"
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
+class CopyModeParamType(click.ParamType):
+    name = "copy_mode"
+
+    def convert(
+        self, value: str, param: ty.Optional[click.Parameter], ctx: ty.Optional[click.Context]
+    ) -> FileSet.CopyMode:
+        if isinstance(value, FileSet.CopyMode):
+            return value
+        try:
+            # Allow case-insensitive matching on enum member names.
+            return FileSet.CopyMode[value.lower()]
+        except KeyError:
+            self.fail(f"{value!r} is not a valid copy mode", param, ctx)
+
+
 @cli.command(
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -204,7 +219,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--copy-mode",
-    type=FileSet.CopyMode,
+    type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
     envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files",
