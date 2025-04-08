@@ -18,7 +18,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 ADD . /app
 
 # Install application
-RUN pip3 install /app
+RUN pip3 install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
