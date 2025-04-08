@@ -29,7 +29,10 @@ class CopyModeParamType(click.ParamType):
     name = "copy_mode"
 
     def convert(
-        self, value: str, param: ty.Optional[click.Parameter], ctx: ty.Optional[click.Context]
+        self,
+        value: str,
+        param: ty.Optional[click.Parameter],
+        ctx: ty.Optional[click.Context],
     ) -> FileSet.CopyMode:
         if isinstance(value, FileSet.CopyMode):
             return value
@@ -304,7 +307,7 @@ def stage(
             cache_dir=Path(tempfile.mkdtemp()),
         )
         with xnat_repo.connection:
-            project_list = list(xnat_repo.connection.projects)
+            project_list = [p.name for p in xnat_repo.connection.projects]
     else:
         project_list = None
 

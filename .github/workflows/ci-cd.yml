@@ -21,7 +21,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]  # , macos-latest, windows-latest]
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.13"]
       fail-fast: false
     runs-on: ${{ matrix.os }}
     defaults:
@@ -109,7 +109,7 @@ jobs:
         echo "TAG=$IMAGE:$VERSION" >> $GITHUB_OUTPUT
 
     - name: Build and push Docker image
-      uses: docker/build-push-action@v3
+      uses: docker/build-push-action@v6
       with:
         cache-from: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache
         cache-to: type=registry,ref=${{ steps.versions.outputs.IMAGE }}:buildcache,mode=max

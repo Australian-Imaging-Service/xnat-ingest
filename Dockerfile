@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:latest
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -7,8 +7,7 @@ RUN apt-get update && apt-get install -y \
   git \
   mrtrix3 \
   curl \
-  zip \
-  && rm -rf /var/lib/apt/lists/*
+  zip
 
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
   && unzip awscliv2.zip \
@@ -18,7 +17,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 ADD . /app
 
 # Install application
-RUN pip3 install /app
+RUN pip3 install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
