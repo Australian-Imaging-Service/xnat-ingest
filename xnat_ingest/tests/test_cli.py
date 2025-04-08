@@ -252,7 +252,7 @@ def test_stage_and_upload(
         xproject = xnat_login.projects[xnat_project]
         for session_id in session_ids:
             xsession = xproject.experiments[session_id]
-            scan_ids = sorted(xsession.scans)
+            scan_ids = sorted(s.name for s in xsession.scans)
 
             assert scan_ids == [
                 "1",
