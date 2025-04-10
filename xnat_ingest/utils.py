@@ -16,7 +16,7 @@ logger = logging.getLogger("xnat-ingest")
 
 
 def datatype_converter(
-    datatype_str: ty.Union[str, ty.Type[DataType]]
+    datatype_str: ty.Union[str, ty.Type[DataType]],
 ) -> ty.Type[DataType]:
     if isinstance(datatype_str, str):
         return from_mime(datatype_str)
@@ -118,6 +118,10 @@ class StoreCredentials(CliTyped):
 
     access_key: str
     access_secret: str
+
+
+class DatatypeStr(str, CliTyped):
+    pass
 
 
 def set_logger_handling(

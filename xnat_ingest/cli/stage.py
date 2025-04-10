@@ -13,6 +13,7 @@ from xnat_ingest.session import ImagingSession
 from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
     AssociatedFiles,
+    DatatypeStr,
     logger,
     LoggerConfig,
     XnatLogin,
@@ -58,7 +59,7 @@ are uploaded to XNAT
 @click.argument("output_dir", type=click.Path(path_type=Path))
 @click.option(
     "--datatype",
-    type=str,
+    type=DatatypeStr.cli_type,
     metavar="<mime-type>",
     multiple=True,
     default=None,
