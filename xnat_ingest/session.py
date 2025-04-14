@@ -15,8 +15,8 @@ import attrs
 from tqdm import tqdm
 from fileformats.medimage import MedicalImage, DicomSeries
 from fileformats.core import from_paths, FileSet, from_mime
-from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
-from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[import-untyped]
+from frametree.core.frameset import FrameSet
+from frametree.core.exceptions import FrameTreeDataMatchError
 from .exceptions import ImagingSessionParseError, StagingError
 from .utils import AssociatedFiles, invalid_path_chars_re
 from .scan import ImagingScan
@@ -26,7 +26,7 @@ logger = logging.getLogger("xnat-ingest")
 
 
 def scans_converter(
-    scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]]
+    scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]],
 ) -> dict[str, ImagingScan]:
     if isinstance(scans, ty.Sequence):
         duplicates = [i for i, c in Counter(s.id for s in scans).items() if c > 1]
