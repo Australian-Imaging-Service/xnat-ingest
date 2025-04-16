@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:22.04
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -16,8 +16,10 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 # Add application code
 ADD . /app
 
-# Install application
-RUN pip3 install --break-system-packages /app
+# Install pipx and then install application using pipx so "xnat-ingest" is on PATH
+RUN pip3 install pipx \
+  && pipx ensurepath \
+  && pipx install /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
