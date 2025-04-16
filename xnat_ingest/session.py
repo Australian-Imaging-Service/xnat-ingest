@@ -15,8 +15,8 @@ import attrs
 from tqdm import tqdm
 from fileformats.medimage import MedicalImage, DicomSeries
 from fileformats.core import from_paths, FileSet, from_mime
-from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
-from frametree.core.exceptions import FrameTreeDataMatchError  # type: ignore[import-untyped]
+from frametree.core.frameset import FrameSet
+from frametree.core.exceptions import FrameTreeDataMatchError
 from .exceptions import ImagingSessionParseError, StagingError
 from .utils import AssociatedFiles, invalid_path_chars_re
 from .scan import ImagingScan
@@ -26,7 +26,7 @@ logger = logging.getLogger("xnat-ingest")
 
 
 def scans_converter(
-    scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]]
+    scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]],
 ) -> dict[str, ImagingScan]:
     if isinstance(scans, ty.Sequence):
         duplicates = [i for i, c in Counter(s.id for s in scans).items() if c > 1]
@@ -213,9 +213,11 @@ class ImagingSession:
             k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
         ]
         collated = {k: primary_resources[0].metadata[k] for k in common_keys}
-        for i, series in enumerate(primary_resources[1:], start=1):
+        for i, resource in enumerate(primary_resources[1:], start=1):
             for key in common_keys:
-                val = series.metadata[key]
+                if not resource.metadata:
+                    continue
+                val = resource.metadata[key]
                 if val != collated[key]:
                     # Check whether the value is the same as the values in the previous
                     # images in the series
@@ -525,7 +527,7 @@ class ImagingSession:
                     scan_id,
                     scan_type,
                     resource_name,
-                    associated_files.datatype(fspath),
+                    from_paths([fspath], associated_files.datatype)[0],
                     associated=associated_files,
                 )
 
