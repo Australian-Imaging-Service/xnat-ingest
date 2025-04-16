@@ -196,7 +196,7 @@ def test_stage_and_upload(
             str(dicoms_dir),
             str(staging_dir),
             "--associated-files",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-raw-data",
+            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate,medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",

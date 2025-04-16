@@ -272,7 +272,10 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
 
     imaging_sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
-        datatypes=[Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData],
+        datatypes=[
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+        ],
     )
 
     staging_dir = tmp_path / "staging"
