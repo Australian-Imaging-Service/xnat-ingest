@@ -1,8 +1,10 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
   python3-pip \
+  python3-venv \
+  pipx \
   wget \
   git \
   mrtrix3 \
@@ -17,8 +19,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 ADD . /app
 
 # Install pipx and then install application using pipx so "xnat-ingest" is on PATH
-RUN pip3 install pipx \
-  && pipx ensurepath \
+RUN pipx ensurepath \
   && pipx install /app
 
 # Set application entrypoint to docker entrypoint
