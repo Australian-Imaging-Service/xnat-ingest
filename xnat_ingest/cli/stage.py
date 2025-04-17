@@ -13,7 +13,7 @@ from xnat_ingest.session import ImagingSession
 from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
     AssociatedFiles,
-    DatatypeStr,
+    MimeType,
     logger,
     LoggerConfig,
     XnatLogin,
@@ -59,7 +59,7 @@ are uploaded to XNAT
 @click.argument("output_dir", type=click.Path(path_type=Path))
 @click.option(
     "--datatype",
-    type=DatatypeStr.cli_type,
+    type=MimeType.cli_type,
     metavar="<mime-type>",
     multiple=True,
     default=None,
@@ -266,7 +266,7 @@ are uploaded to XNAT
 def stage(
     files_path: str,
     output_dir: Path,
-    datatype: list[str] | None,
+    datatype: list[MimeType] | None,
     associated_files: ty.List[AssociatedFiles],
     project_field: str,
     subject_field: str,
@@ -298,7 +298,7 @@ def stage(
     if not datatype:
         datatypes = [DicomSeries]
     else:
-        datatypes = [FileSet.from_mime(dt) for dt in datatype]  # type: ignore[misc]
+        datatypes = [dt.datatype for dt in datatype]  # type: ignore[misc]
 
     if xnat_login:
         xnat_repo = Xnat(

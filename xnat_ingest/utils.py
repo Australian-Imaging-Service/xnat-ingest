@@ -60,9 +60,12 @@ class CliType(click.types.ParamType):
 
     def split_envvar_value(self, envvar: str) -> ty.Any:
         if self.multiple:
-            return [self.type(*entry.split(",")) for entry in envvar.split(";")]
+            return [
+                self.type(*entry.split(",", maxsplit=self.arity - 1))
+                for entry in envvar.split(";")
+            ]
         else:
-            return self.type(*envvar.split(","))
+            return self.type(*envvar.split(",", maxsplit=self.arity - 1))
 
 
 @attrs.define
@@ -120,8 +123,14 @@ class StoreCredentials(CliTyped):
     access_secret: str
 
 
-class DatatypeStr(str, CliTyped):
-    pass
+@attrs.define
+class MimeType(str, MultiCliTyped):
+
+    mime: str
+
+    @property
+    def datatype(self) -> ty.Type[FileSet]:
+        return from_mime(self.mime)
 
 
 def set_logger_handling(
