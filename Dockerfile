@@ -15,12 +15,28 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
   && unzip awscliv2.zip \
   && ./aws/install
 
+RUN pipx ensurepath
+
+# Pre-install some dependencies before adding the application to use the docker cache
+RUN pipx install \
+    click >=8.1 \
+    discord \
+    fileformats-medimage>=0.10.1 \
+    fileformats-medimage-extras>=0.10.1 \
+    pydicom>=2.3.1 \
+    tqdm>=4.64.1 \
+    boto3 \
+    natsort \
+    paramiko \
+    xnat \
+    frametree \
+    frametree-xnat
+
 # Add application code
 ADD . /app
 
 # Install pipx and then install application using pipx so "xnat-ingest" is on PATH
-RUN pipx ensurepath \
-  && pipx install /app
+RUN pipx install /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
