@@ -34,7 +34,7 @@ RUN pip install --break-system-packages \
 ADD . /app
 
 # Install pipx and then install application using pipx so "xnat-ingest" is on PATH
-RUN pipx install --break-system-packages /app
+RUN pip install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
