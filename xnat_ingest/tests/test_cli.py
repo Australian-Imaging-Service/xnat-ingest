@@ -1,11 +1,14 @@
 import os
 import shutil
 from datetime import datetime
+import typing as ty
 from pathlib import Path
 from frametree.core.cli import (  # type: ignore[import-untyped]
     define as dataset_define,
     add_source as dataset_add_source,
 )
+import click
+from xnat_ingest.utils import MimeType, XnatLogin  # type: ignore[import-untyped]
 import xnat4tests  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from xnat_ingest.cli import stage, upload
@@ -25,9 +28,141 @@ from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b im
     get_image as get_statistics_image,
 )
 from conftest import get_raw_data_files
+from unittest.mock import patch
 
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
+
+
+@click.command(
+    help="""Stages images found in the input directories into separate directories for each
+imaging acquisition session
+
+FILES_PATH is either the path to a directory containing the files to upload, or
+a glob pattern that selects the paths directly
+
+OUTPUT_DIR is the directory that the files for each session are collated to before they
+are uploaded to XNAT
+""",
+)
+@click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+@click.option(
+    "--datatype",
+    type=MimeType.cli_type,
+    metavar="<mime-type>",
+    multiple=True,
+    default=None,
+    envvar="XINGEST_DATATYPES",
+    help=(
+        'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
+        "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
+        "Any formats implemented in the FileFormats Python package "
+        "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
+        '"extra" are supported, see FF docs on how to add support for new formats.'
+    ),
+)
+@click.option(
+    "--xnat-login",
+    nargs=3,
+    type=XnatLogin.cli_type,
+    default=None,
+    metavar="<host> <user> <password>",
+    help="The XNAT server to upload to plus the user and password to use",
+    envvar="XINGEST_XNAT_LOGIN",
+)
+def test_cli_types(out_file: Path, datatype: ty.List[MimeType]):
+    fileformats = [m.datatype for m in datatype]
+    with open(out_file, "w") as f:
+        f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
+
+
+def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
+
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--datatype",
+        type=MimeType.cli_type,
+        metavar="<mime-type>",
+        multiple=True,
+        default=None,
+        envvar="XINGEST_DATATYPES",
+        help=(
+            'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
+            "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
+            "Any formats implemented in the FileFormats Python package "
+            "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
+            '"extra" are supported, see FF docs on how to add support for new formats.'
+        ),
+    )
+    def test_cli_types(out_file: Path, datatype: ty.List[MimeType]):
+        fileformats = [m.datatype for m in datatype]
+        with open(out_file, "w") as f:
+            f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
+
+    out_file = tmp_path / "out.txt"
+
+    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_DATATYPES": (
+                "medimage/dicom-series;"
+                "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode"
+            )
+        },
+    ):
+        result = cli_runner(test_cli_types, [str(out_file)])
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assert out_file.read_text().split("\n") == [
+        "fileformats.medimage.dicom.DicomSeries",
+        "fileformats.medimage.raw.pet.siemens.Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode",
+    ]
+
+
+def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner):
+
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--xnat-login",
+        nargs=3,
+        type=XnatLogin.cli_type,
+        default=None,
+        metavar="<host> <user> <password>",
+        help="The XNAT server to upload to plus the user and password to use",
+        envvar="XINGEST_XNAT_LOGIN",
+    )
+    def test_cli_types(out_file: Path, xnat_login: XnatLogin):
+        with open(out_file, "w") as f:
+            f.write(xnat_login.host + "\n")
+            f.write(xnat_login.user + "\n")
+            f.write(xnat_login.password)
+
+    out_file = tmp_path / "out.txt"
+
+    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_XNAT_LOGIN": (
+                "https://xnat.example.com:8888,a_user,a_passwordwithspecialchars*#%,;##@"
+            )
+        },
+    ):
+        result = cli_runner(test_cli_types, [str(out_file)])
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assert out_file.read_text().split("\n") == [
+        "https://xnat.example.com:8888",
+        "a_user",
+        "a_passwordwithspecialchars*#%,;##@",
+    ]
 
 
 def test_stage_and_upload(
