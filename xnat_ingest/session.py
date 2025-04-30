@@ -576,7 +576,8 @@ class ImagingSession:
                 )
         if resource_name in scan.resources and not overwrite:
             raise KeyError(
-                f"Clash between resource names ('{resource_name}') for {scan_id} scan"
+                f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
+                f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource"
             )
         scan.resources[resource_name] = ImagingResource(
             name=resource_name, fileset=fileset, scan=scan
