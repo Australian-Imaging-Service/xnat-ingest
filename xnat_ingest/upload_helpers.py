@@ -3,7 +3,6 @@ import shutil
 import os
 import datetime
 import typing as ty
-import timezone
 from collections import defaultdict
 import tempfile
 from tqdm import tqdm
@@ -80,9 +79,9 @@ def iterate_s3_sessions(
             if last_modified is None or obj.last_modified > last_modified:
                 last_modified = obj.last_modified
         assert last_modified is not None
-        if (datetime.datetime.now(timezone.utc) - last_modified) >= datetime.timedelta(
-            seconds=wait_period
-        ):
+        if (
+            datetime.datetime.now(datetime.timezone.utc) - last_modified
+        ) >= datetime.timedelta(seconds=wait_period):
             for relpath, obj in tqdm(
                 objs,
                 desc=f"Downloading scans in '{session_name}' session from S3 bucket",
