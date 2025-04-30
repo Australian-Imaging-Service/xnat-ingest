@@ -8,7 +8,7 @@ import tempfile
 from tqdm import tqdm
 import hashlib
 import pprint
-import boto3
+import boto3.resources.base
 import paramiko
 from xnat_ingest.utils import (
     logger,
@@ -39,7 +39,7 @@ def iterate_s3_sessions(
         the number of seconds after the last write before considering a session complete
     """
     # List sessions stored in s3 bucket
-    s3 = boto3.resource(
+    s3: boto3.resources.base.ServiceResource = boto3.resource(
         "s3",
         aws_access_key_id=store_credentials.access_key,
         aws_secret_access_key=store_credentials.access_secret,
@@ -79,9 +79,9 @@ def iterate_s3_sessions(
             if last_modified is None or obj.last_modified > last_modified:
                 last_modified = obj.last_modified
         assert last_modified is not None
-        if (datetime.datetime.now() - last_modified) >= datetime.timedelta(
-            seconds=wait_period
-        ):
+        if (
+            datetime.datetime.now(datetime.timezone.utc) - last_modified
+        ) >= datetime.timedelta(seconds=wait_period):
             for relpath, obj in tqdm(
                 objs,
                 desc=f"Downloading scans in '{session_name}' session from S3 bucket",
