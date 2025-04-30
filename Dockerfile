@@ -17,12 +17,12 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 
 # Pre-install some dependencies before adding the application to use the docker cache
 RUN pip install --break-system-packages \
-    click >=8.1 \
-    discord \
-    fileformats-medimage>=0.10.1 \
-    fileformats-medimage-extras>=0.10.1 \
-    pydicom>=2.3.1 \
-    tqdm>=4.64.1 \
+    'click>=8.1' \
+    'discord' \
+    'fileformats-medimage>=0.10.1' \
+    'fileformats-medimage-extras>=0.10.1' \
+    'pydicom>=2.3.1' \
+    'tqdm>=4.64.1' \
     boto3 \
     natsort \
     paramiko \
