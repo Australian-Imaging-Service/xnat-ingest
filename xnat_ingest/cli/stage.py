@@ -290,6 +290,13 @@ def stage(
     deidentified_dir_name: str,
     loop: int | None,
 ) -> None:
+
+    if raise_errors and loop:
+        raise ValueError(
+            "Cannot use --raise-errors and --loop together as the loop will "
+            "continue to run even if an error occurs"
+        )
+
     set_logger_handling(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
@@ -394,7 +401,13 @@ def stage(
     if loop is not None:
         while True:
             start_time = datetime.datetime.now()
-            do_stage()
+            try:
+                do_stage()
+            except Exception as e:
+                logger.error(
+                    f'Error attempting to prepare stage of sessions: "{e}"'
+                    f"\n{traceback.format_exc()}\n\n"
+                )
             end_time = datetime.datetime.now()
             elapsed_seconds = (end_time - start_time).total_seconds()
             sleep_time = loop - elapsed_seconds
@@ -407,7 +420,16 @@ def stage(
             )
             time.sleep(loop)
     else:
-        do_stage()
+        try:
+            do_stage()
+        except Exception as e:
+            if not raise_errors:
+                logger.error(
+                    f'Error attempting to prepare stage of sessions: "{e}"'
+                    f"\n{traceback.format_exc()}\n\n"
+                )
+            else:
+                raise
 
 
 if __name__ == "__main__":

@@ -195,6 +195,12 @@ def upload(
     loop: int | None,
 ) -> None:
 
+    if raise_errors and loop:
+        raise ValueError(
+            "Cannot use --raise-errors and --loop together as the loop will "
+            "continue to run even if an error occurs"
+        )
+
     set_logger_handling(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
@@ -270,6 +276,9 @@ def upload(
                 )
                 try:
                     # Create corresponding session on XNAT
+                    logger.debug(
+                        "Creating XNAT session for '%s' in project '%s'",
+                    )
                     xproject = xnat_repo.connection.projects[session.project_id]
 
                     # Access Arcana frameset associated with project
@@ -318,8 +327,20 @@ def upload(
                                 resource.path,
                             )
                             continue  # skipping as resource already exists
+                        else:
+                            logger.debug(
+                                "Uploading '%s' resource to '%s'",
+                                resource.path,
+                                xresource,
+                            )
                         if isinstance(resource.fileset, File):
                             for fspath in resource.fileset.fspaths:
+                                logger.debug(
+                                    "Uploading '%s' to '%s' in %s",
+                                    fspath,
+                                    fspath.name,
+                                    xresource,
+                                )
                                 xresource.upload(str(fspath), fspath.name)
                         else:
                             # Temporarily move the manifest file out of the way so it
@@ -334,29 +355,48 @@ def upload(
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
                             # Upload the contents of the resource to XNAT
+                            logger.debug(
+                                "Uploading directory '%s' to %s with '%s' method",
+                                resource.fileset.parent,
+                                xresource,
+                                method,
+                            )
                             xresource.upload_dir(resource.fileset.parent, method=method)
                             # Move the manifest file back again
                             if moved_manifest_file.exists():
                                 moved_manifest_file.rename(manifest_file)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
-                        logger.debug("calculating checksums for %s", xresource)
-                        calc_checksums = calculate_checksums(resource.fileset)
-                        if remote_checksums != calc_checksums:
-                            extra_keys = set(remote_checksums) - set(calc_checksums)
-                            missing_keys = set(calc_checksums) - set(remote_checksums)
-                            mismatching = [
-                                k
-                                for k, v in calc_checksums.items()
-                                if v != remote_checksums[k]
-                            ]
-                            raise RuntimeError(
-                                "Checksums do not match after upload of "
-                                f"'{resource.path}' resource.\n"
-                                f"Extra keys were {extra_keys}\n"
-                                f"Missing keys were {missing_keys}\n"
-                                f"Mismatching files were {mismatching}"
+                        if any(remote_checksums.values()):
+                            logger.debug("calculating checksums for %s", xresource)
+                            calc_checksums = calculate_checksums(resource.fileset)
+                            if remote_checksums != calc_checksums:
+                                extra_keys = set(remote_checksums) - set(calc_checksums)
+                                missing_keys = set(calc_checksums) - set(
+                                    remote_checksums
+                                )
+                                mismatching = [
+                                    k
+                                    for k, v in calc_checksums.items()
+                                    if v != remote_checksums[k]
+                                ]
+                                raise RuntimeError(
+                                    "Checksums do not match after upload of "
+                                    f"'{resource.path}' resource.\n"
+                                    f"Extra keys were {extra_keys}\n"
+                                    f"Missing keys were {missing_keys}\n"
+                                    f"Mismatching files were {mismatching}\n"
+                                    f"Remote checksums were {remote_checksums}\n"
+                                    f"Calculated checksums were {calc_checksums}\n"
+                                )
+                        else:
+                            logger.debug(
+                                "Remote checksums were not calculted for %s "
+                                "(requires `enableChecksums` to be set site-wide), "
+                                "assuming upload was successful",
+                                xresource,
                             )
+
                         logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
                     # Extract DICOM metadata
@@ -389,7 +429,7 @@ def upload(
                 except Exception as e:
                     if not raise_errors:
                         logger.error(
-                            f"Skipping '{session.name}' session due to error in staging: \"{e}\""
+                            f"Skipping '{session.name}' session due to error uploading: \"{e}\""
                             f"\n{traceback.format_exc()}\n\n"
                         )
                         continue
@@ -419,7 +459,13 @@ def upload(
     if loop is not None:
         while True:
             start_time = datetime.datetime.now()
-            do_upload()
+            try:
+                do_upload()
+            except Exception as e:
+                logger.error(
+                    f'Error attempting to prepare upload of sessions: "{e}"'
+                    f"\n{traceback.format_exc()}\n\n"
+                )
             end_time = datetime.datetime.now()
             elapsed_seconds = (end_time - start_time).total_seconds()
             sleep_time = loop - elapsed_seconds
@@ -432,7 +478,16 @@ def upload(
             )
             time.sleep(loop)
     else:
-        do_upload()
+        try:
+            do_upload()
+        except Exception as e:
+            if not raise_errors:
+                logger.error(
+                    f'Error attempting to prepare upload of sessions: "{e}"'
+                    f"\n{traceback.format_exc()}\n\n"
+                )
+            else:
+                raise
 
 
 if __name__ == "__main__":
