@@ -276,6 +276,9 @@ def upload(
                 )
                 try:
                     # Create corresponding session on XNAT
+                    logger.debug(
+                        "Creating XNAT session for '%s' in project '%s'",
+                    )
                     xproject = xnat_repo.connection.projects[session.project_id]
 
                     # Access Arcana frameset associated with project
@@ -324,8 +327,20 @@ def upload(
                                 resource.path,
                             )
                             continue  # skipping as resource already exists
+                        else:
+                            logger.debug(
+                                "Uploading '%s' resource to '%s'",
+                                resource.path,
+                                xresource,
+                            )
                         if isinstance(resource.fileset, File):
                             for fspath in resource.fileset.fspaths:
+                                logger.debug(
+                                    "Uploading '%s' to '%s' in %s",
+                                    fspath,
+                                    fspath.name,
+                                    xresource,
+                                )
                                 xresource.upload(str(fspath), fspath.name)
                         else:
                             # Temporarily move the manifest file out of the way so it
@@ -340,6 +355,12 @@ def upload(
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
                             # Upload the contents of the resource to XNAT
+                            logger.debug(
+                                "Uploading directory '%s' to %s with '%s' method",
+                                resource.fileset.parent,
+                                xresource,
+                                method,
+                            )
                             xresource.upload_dir(resource.fileset.parent, method=method)
                             # Move the manifest file back again
                             if moved_manifest_file.exists():

@@ -82,6 +82,7 @@ def iterate_s3_sessions(
         if (
             datetime.datetime.now(datetime.timezone.utc) - last_modified
         ) >= datetime.timedelta(seconds=wait_period):
+            logger.info("Downloading session '%s' from S3 bucket", session_name)
             for relpath, obj in tqdm(
                 objs,
                 desc=f"Downloading scans in '{session_name}' session from S3 bucket",
