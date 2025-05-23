@@ -367,25 +367,36 @@ def upload(
                                 moved_manifest_file.rename(manifest_file)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
-                        logger.debug("calculating checksums for %s", xresource)
-                        calc_checksums = calculate_checksums(resource.fileset)
-                        if remote_checksums != calc_checksums:
-                            extra_keys = set(remote_checksums) - set(calc_checksums)
-                            missing_keys = set(calc_checksums) - set(remote_checksums)
-                            mismatching = [
-                                k
-                                for k, v in calc_checksums.items()
-                                if v != remote_checksums[k]
-                            ]
-                            raise RuntimeError(
-                                "Checksums do not match after upload of "
-                                f"'{resource.path}' resource.\n"
-                                f"Extra keys were {extra_keys}\n"
-                                f"Missing keys were {missing_keys}\n"
-                                f"Mismatching files were {mismatching}\n"
-                                f"Remote checksums were {remote_checksums}\n"
-                                f"Calculated checksums were {calc_checksums}\n"
+                        if any(remote_checksums.values()):
+                            logger.debug("calculating checksums for %s", xresource)
+                            calc_checksums = calculate_checksums(resource.fileset)
+                            if remote_checksums != calc_checksums:
+                                extra_keys = set(remote_checksums) - set(calc_checksums)
+                                missing_keys = set(calc_checksums) - set(
+                                    remote_checksums
+                                )
+                                mismatching = [
+                                    k
+                                    for k, v in calc_checksums.items()
+                                    if v != remote_checksums[k]
+                                ]
+                                raise RuntimeError(
+                                    "Checksums do not match after upload of "
+                                    f"'{resource.path}' resource.\n"
+                                    f"Extra keys were {extra_keys}\n"
+                                    f"Missing keys were {missing_keys}\n"
+                                    f"Mismatching files were {mismatching}\n"
+                                    f"Remote checksums were {remote_checksums}\n"
+                                    f"Calculated checksums were {calc_checksums}\n"
+                                )
+                        else:
+                            logger.debug(
+                                "Remote checksums were not calculted for %s "
+                                "(requires `enableChecksums` to be set site-wide), "
+                                "assuming upload was successful",
+                                xresource,
                             )
+
                         logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
                     # Extract DICOM metadata
