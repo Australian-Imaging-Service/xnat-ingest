@@ -382,7 +382,9 @@ def upload(
                                 f"'{resource.path}' resource.\n"
                                 f"Extra keys were {extra_keys}\n"
                                 f"Missing keys were {missing_keys}\n"
-                                f"Mismatching files were {mismatching}"
+                                f"Mismatching files were {mismatching}\n"
+                                f"Remote checksums were {remote_checksums}\n"
+                                f"Calculated checksums were {calc_checksums}\n"
                             )
                         logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
