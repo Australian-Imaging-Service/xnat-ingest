@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 import sys
 import typing as ty
+import itertools
 import attrs
 import click.types
 import click.testing
@@ -60,12 +61,14 @@ class CliType(click.types.ParamType):
 
     def split_envvar_value(self, envvar: str) -> ty.Any:
         if self.multiple:
-            return [
-                self.type(*entry.split(",", maxsplit=self.arity - 1))
-                for entry in envvar.split(";")
-            ]
+            return itertools.chain(
+                *(
+                    entry.split(",", maxsplit=self.arity - 1)
+                    for entry in envvar.split(";")
+                )
+            )
         else:
-            return self.type(*envvar.split(",", maxsplit=self.arity - 1))
+            return envvar.split(",", maxsplit=self.arity - 1)
 
 
 @attrs.define

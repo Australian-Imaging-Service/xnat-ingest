@@ -340,16 +340,10 @@ def test_stage_and_upload(
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
-            "--logger",
-            "file",
-            "info",
-            str(stage_log_file),
-            "--logger",
-            "stream",
-            "info",
-            "stdout",
             "--additional-logger",
             "xnat",
+            "--additional-logger",
+            "fileformats",
             "--raise-errors",
             "--delete",
             "--xnat-login",
@@ -358,28 +352,20 @@ def test_stage_and_upload(
             "admin",
         ],
         env={
-            "XINGEST_LOGGERS": "file,info,/tmp/logging.log;stream,debug,stdout",
+            "XINGEST_LOGGERS": f"file,info,{stage_log_file};stream,info,stdout",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "Staging completed successfully" in logs, show_cli_trace(result)
-    stdout_logs = capsys.readouterr().out
+    stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
     result = cli_runner(
         upload,
         [
             str(staging_dir / STAGED_NAME_DEFAULT),
-            "--logger",
-            "file",
-            "info",
-            str(upload_log_file),
-            "--logger",
-            "stream",
-            "info",
-            "stdout",
             "--additional-logger",
             "xnat",
             "--always-include",
@@ -395,13 +381,14 @@ def test_stage_and_upload(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file,info,{upload_log_file};stream,info,stdout",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = upload_log_file.read_text()
     assert "Upload completed successfully" in file_logs, show_cli_trace(result)
-    stdout_logs = capsys.readouterr().out
+    stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
 
     with xnat4tests.connect() as xnat_login:
