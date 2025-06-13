@@ -488,6 +488,7 @@ def upload(
                 )
             else:
                 raise
+        logger.info("Upload completed successfully")
 
 
 if __name__ == "__main__":
