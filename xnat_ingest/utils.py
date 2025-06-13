@@ -49,6 +49,8 @@ class CliType(click.types.ParamType):
     ) -> ty.Any:
         if isinstance(value, self.type):
             return value
+        if len(attrs.fields(self.type)) == 1:
+            return self.type(value)
         return self.type(*value)
 
     @property
@@ -61,10 +63,12 @@ class CliType(click.types.ParamType):
 
     def split_envvar_value(self, envvar: str) -> ty.Any:
         if self.multiple:
-            return itertools.chain(
-                *(
-                    entry.split(",", maxsplit=self.arity - 1)
-                    for entry in envvar.split(";")
+            return list(
+                itertools.chain(
+                    *(
+                        entry.split(",", maxsplit=self.arity - 1)
+                        for entry in envvar.split(";")
+                    )
                 )
             )
         else:
