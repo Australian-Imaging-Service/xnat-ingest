@@ -232,7 +232,7 @@ def upload(
             ).decode("utf-8")
             xnat_repo.connection.depth = 1
             xnat_repo.connection.session = xnat.connect(
-                server, user=user, jsession=jsession
+                server, user=user, jsession=jsession, logger="xnat"
             )
 
         with xnat_repo.connection:
