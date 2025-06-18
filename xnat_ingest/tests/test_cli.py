@@ -352,13 +352,15 @@ def test_stage_and_upload(
             "admin",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,info,{stage_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_DEIDENTIFY": "0",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "Staging completed successfully" in logs, show_cli_trace(result)
+    assert " - fileformats - " in logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
@@ -381,13 +383,14 @@ def test_stage_and_upload(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file,info,{upload_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = upload_log_file.read_text()
     assert "Upload completed successfully" in file_logs, show_cli_trace(result)
+    assert " - xnat - " in file_logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
 
