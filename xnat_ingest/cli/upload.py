@@ -8,6 +8,7 @@ import subprocess as sp
 import click
 from tqdm import tqdm
 import xnat
+import logging
 from fileformats.generic import File
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -232,7 +233,7 @@ def upload(
             ).decode("utf-8")
             xnat_repo.connection.depth = 1
             xnat_repo.connection.session = xnat.connect(
-                server, user=user, jsession=jsession, logger="xnat"
+                server, user=user, jsession=jsession, logger=logging.getLogger("xnat")
             )
 
         with xnat_repo.connection:
