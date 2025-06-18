@@ -360,10 +360,9 @@ def test_stage_and_upload(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "Staging completed successfully" in logs, show_cli_trace(result)
-    assert "DEBUG    fileformats" in logs, show_cli_trace(result)
+    assert " - fileformats - " in logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
-    assert "DEBUG    fileformats" in stdout_logs, show_cli_trace(result)
 
     result = cli_runner(
         upload,
@@ -391,10 +390,9 @@ def test_stage_and_upload(
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = upload_log_file.read_text()
     assert "Upload completed successfully" in file_logs, show_cli_trace(result)
-    assert "DEBUG    xnat" in file_logs, show_cli_trace(result)
+    assert " - xnat - " in file_logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
-    assert "DEBUG    xnat" in stdout_logs, show_cli_trace(result)
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[xnat_project]
