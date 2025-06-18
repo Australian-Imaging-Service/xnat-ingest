@@ -308,6 +308,11 @@ def stage(
         datatypes = [dt.datatype for dt in datatype]  # type: ignore[misc]
 
     if xnat_login:
+        logger.info(
+            "Logging into XNAT server '%s' as user '%s' to check project IDs",
+            xnat_login.host,
+            xnat_login.user,
+        )
         xnat_repo = Xnat(
             server=xnat_login.host,
             user=xnat_login.user,
@@ -317,6 +322,7 @@ def stage(
         with xnat_repo.connection:
             project_list = [p.name for p in xnat_repo.connection.projects]
     else:
+        logger.info("No XNAT login provided, will not check project IDs in XNAT")
         project_list = None
 
     if session_field is None and DicomSeries in datatypes:
