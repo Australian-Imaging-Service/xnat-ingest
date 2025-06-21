@@ -108,6 +108,17 @@ class LoggerConfig(MultiCliTyped):
 
 
 @attrs.define
+class UploadMethod(MultiCliTyped):
+
+    method: str = attrs.field(
+        validator=attrs.validators.in_(
+            {"per_file", "tar_memory", "tgz_memory", "tar_file", "tgz_file"}
+        )
+    )
+    datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+
+
+@attrs.define
 class AssociatedFiles(CliTyped):
 
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
