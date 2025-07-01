@@ -339,6 +339,7 @@ class ImagingSession:
             defaultdict(set)
         )
         missing_ids: dict[str, dict[str, str]] = defaultdict(dict)
+        explicit_project_id = project_id is not None
         for resource in tqdm(
             resources,
             "Sorting resources into XNAT tree structure...",
@@ -385,7 +386,7 @@ class ImagingSession:
                 value_str = invalid_path_chars_re.sub("_", value_str)
                 return value_str
 
-            if not project_id:
+            if not explicit_project_id:
                 project_id = get_id("project", project_field)
             subject_id = get_id("subject", subject_field)
             visit_id = get_id("visit", visit_field)
