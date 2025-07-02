@@ -374,7 +374,7 @@ def test_stage_and_upload(
             "medimage/dicom-series",
             "--raise-errors",
             "--method",
-            "tar_gz",
+            "tgz_file",
             "medimage/dicom-series",
             "--method",
             "tar_file",
