@@ -9,7 +9,7 @@ import click
 from tqdm import tqdm
 import xnat
 import logging
-from fileformats.generic import File
+from fileformats.generic import File, FileSet
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
@@ -19,6 +19,7 @@ from xnat_ingest.resource import ImagingResource
 from xnat_ingest.utils import (
     logger,
     LoggerConfig,
+    UploadMethod,
     set_logger_handling,
     StoreCredentials,
 )
@@ -60,7 +61,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=LoggerConfig.cli_type,
     envvar="XINGEST_LOGGERS",
     nargs=3,
-    default=(),
+    default=[],
     metavar="<logtype> <loglevel> <location>",
     help=("Setup handles to capture logs that are generated"),
 )
@@ -69,7 +70,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     "additional_loggers",
     type=str,
     multiple=True,
-    default=(),
+    default=[],
     envvar="XINGEST_ADDITIONALLOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
@@ -80,7 +81,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--always-include",
     "-i",
-    default=(),
+    default=[],
     type=str,
     multiple=True,
     envvar="XINGEST_ALWAYSINCLUDE",
@@ -149,11 +150,15 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 )
 @click.option(
     "--method",
-    type=click.Choice(["per_file", "tar_memory", "tgz_memory", "tar_file", "tgz_file"]),
-    default="tgz_file",
-    envvar="XINGEST_METHOD",
+    "methods",
+    type=UploadMethod.cli_type,
+    multiple=True,
+    nargs=2,
+    metavar="<method> <datatype>",
+    default=[],
+    envvar="XINGEST_METHODS",
     help=(
-        "The method to use to upload the files to XNAT. Passed through to XNATPy and controls "
+        "The methods to use to upload the file types to XNAT with. Passed through to XNATPy and controls "
         "whether directories are tarred and/or gzipped before they are uploaded, by default "
         "'tgz_file' is used"
     ),
@@ -191,7 +196,7 @@ def upload(
     clean_up_older_than: int,
     verify_ssl: bool,
     use_curl_jsession: bool,
-    method: str,
+    methods: ty.Sequence[UploadMethod],
     wait_period: int,
     loop: int | None,
 ) -> None:
@@ -206,6 +211,13 @@ def upload(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
     )
+
+    def get_method(datatype: ty.Type[FileSet]) -> str:
+        """Get the upload method for the given datatype"""
+        for method in methods:
+            if issubclass(datatype, method.datatype):
+                return method.method
+        return "tgz_file"
 
     # Set the directory to create temporary files/directories in away from system default
     if temp_dir:
@@ -356,6 +368,7 @@ def upload(
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
                             # Upload the contents of the resource to XNAT
+                            method = get_method(type(resource.fileset))
                             logger.debug(
                                 "Uploading directory '%s' to %s with '%s' method",
                                 resource.fileset.parent,

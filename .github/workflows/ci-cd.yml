@@ -51,6 +51,8 @@ jobs:
 
     # - name: Install MRtrix via Conda
     #   run: |
+          # alias shview='ls'
+          # alias mrview='ls'
     #     conda install -c mrtrix3 mrtrix3
     #     mrconvert --version        
 
