@@ -177,7 +177,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--loop",
     type=int,
-    default=None,
+    default=-1,
     envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds",
 )
@@ -201,7 +201,7 @@ def upload(
     loop: int | None,
 ) -> None:
 
-    if raise_errors and loop:
+    if raise_errors and loop >= 0:
         raise ValueError(
             "Cannot use --raise-errors and --loop together as the loop will "
             "continue to run even if an error occurs"
@@ -453,7 +453,7 @@ def upload(
         if use_curl_jsession:
             xnat_repo.connection.exit()
 
-        if clean_up_older_than:
+        if clean_up_older_than > 0:
             logger.info(
                 "Cleaning up files in %s older than %d days",
                 staged,
@@ -470,12 +470,14 @@ def upload(
             else:
                 assert False
 
-    if loop is not None:
+    if loop >= 0:
         while True:
             start_time = datetime.datetime.now()
             try:
                 do_upload()
             except Exception as e:
+                if raise_errors:
+                    raise e
                 logger.error(
                     f'Error attempting to prepare upload of sessions: "{e}"'
                     f"\n{traceback.format_exc()}\n\n"
