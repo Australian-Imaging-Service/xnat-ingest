@@ -22,7 +22,7 @@ result = runner.invoke(
     ],
     env={
         "XINGEST_WAIT_PERIOD": "0",
-        "XINGEST_PASS": "73?Q>J<y9B^8@m5b",
+        "XINGEST_PASS": os.environ["XINGEST_PASS"],
         "XINGEST_VERIFY_SSL": "0",
         "XINGEST_LOGGERS": "stream,debug,stdout;file,debug,/Users/tclo7153/Data/TBP/logs/upload.log",
         "XINGEST_USE_CURL_JSESSION": "0",
