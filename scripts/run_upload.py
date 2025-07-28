@@ -1,4 +1,3 @@
-import os
 from xnat_ingest.cli import upload
 from xnat_ingest.utils import show_cli_trace
 from click.testing import CliRunner
@@ -26,7 +25,6 @@ result = runner.invoke(
         "XINGEST_LOGGERS": "stream,debug,stdout;file,debug,/Users/tclo7153/Data/TBP/logs/upload.log",
         "XINGEST_USE_CURL_JSESSION": "0",
         "XINGEST_CLEANUP_OLDER_THAN": "-1",
-        "XINGEST_STORE_CREDENTIALS": os.environ["XINGEST_STORE_CREDENTIALS"],
         "XINGEST_ALWAYSINCLUDE": "medimage/dicom-series",
         "XINGEST_REQUIRE_MANIFEST": "1",
         "XINGEST_LOOP": "-1",
