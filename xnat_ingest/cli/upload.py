@@ -363,22 +363,24 @@ def upload(
                             )
                             moved_manifest_file = (
                                 resource.fileset.parent.parent
-                                / ImagingResource.MANIFEST_FNAME
+                                / (resource.name + "-" + ImagingResource.MANIFEST_FNAME)
                             )
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
-                            # Upload the contents of the resource to XNAT
-                            method = get_method(type(resource.fileset))
-                            logger.debug(
-                                "Uploading directory '%s' to %s with '%s' method",
-                                resource.fileset.parent,
-                                xresource,
-                                method,
-                            )
-                            xresource.upload_dir(resource.fileset.parent, method=method)
-                            # Move the manifest file back again
-                            if moved_manifest_file.exists():
-                                moved_manifest_file.rename(manifest_file)
+                            try:
+                                # Upload the contents of the resource to XNAT
+                                method = get_method(type(resource.fileset))
+                                logger.debug(
+                                    "Uploading directory '%s' to %s with '%s' method",
+                                    resource.fileset.parent,
+                                    xresource,
+                                    method,
+                                )
+                                xresource.upload_dir(resource.fileset.parent, method=method)
+                            finally:
+                                # Move the manifest file back again
+                                if moved_manifest_file.exists():
+                                    moved_manifest_file.rename(manifest_file)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
                         if any(remote_checksums.values()):
