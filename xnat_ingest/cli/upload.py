@@ -71,7 +71,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=str,
     multiple=True,
     default=[],
-    envvar="XINGEST_ADDITIONALLOGGERS",
+    envvar="XINGEST_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
@@ -361,9 +361,8 @@ def upload(
                             manifest_file = (
                                 resource.fileset.parent / ImagingResource.MANIFEST_FNAME
                             )
-                            moved_manifest_file = (
-                                resource.fileset.parent.parent
-                                / (resource.name + "-" + ImagingResource.MANIFEST_FNAME)
+                            moved_manifest_file = resource.fileset.parent.parent / (
+                                resource.name + "-" + ImagingResource.MANIFEST_FNAME
                             )
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
@@ -376,7 +375,9 @@ def upload(
                                     xresource,
                                     method,
                                 )
-                                xresource.upload_dir(resource.fileset.parent, method=method)
+                                xresource.upload_dir(
+                                    resource.fileset.parent, method=method
+                                )
                             finally:
                                 # Move the manifest file back again
                                 if moved_manifest_file.exists():
