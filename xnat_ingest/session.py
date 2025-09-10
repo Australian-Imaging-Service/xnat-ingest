@@ -87,7 +87,11 @@ class ImagingSession:
 
     @cached_property
     def modalities(self) -> str | tuple[str, ...]:
-        modalities_metadata = self.metadata["Modality"]
+        try:
+            modalities_metadata = self.metadata["Modality"]
+        except KeyError as e:
+            e.add_note(f"Available metadata: {list(self.metadata)}")
+            raise e
         if isinstance(modalities_metadata, str):
             return modalities_metadata
         modalities: set[str] = set()

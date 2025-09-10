@@ -71,7 +71,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     type=str,
     multiple=True,
     default=[],
-    envvar="XINGEST_ADDITIONALLOGGERS",
+    envvar="XINGEST_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
@@ -177,7 +177,7 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
 @click.option(
     "--loop",
     type=int,
-    default=None,
+    default=-1,
     envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds",
 )
@@ -201,7 +201,7 @@ def upload(
     loop: int | None,
 ) -> None:
 
-    if raise_errors and loop:
+    if raise_errors and loop >= 0:
         raise ValueError(
             "Cannot use --raise-errors and --loop together as the loop will "
             "continue to run even if an error occurs"
@@ -361,24 +361,27 @@ def upload(
                             manifest_file = (
                                 resource.fileset.parent / ImagingResource.MANIFEST_FNAME
                             )
-                            moved_manifest_file = (
-                                resource.fileset.parent.parent
-                                / ImagingResource.MANIFEST_FNAME
+                            moved_manifest_file = resource.fileset.parent.parent / (
+                                resource.name + "-" + ImagingResource.MANIFEST_FNAME
                             )
                             if manifest_file.exists():
                                 manifest_file.rename(moved_manifest_file)
-                            # Upload the contents of the resource to XNAT
-                            method = get_method(type(resource.fileset))
-                            logger.debug(
-                                "Uploading directory '%s' to %s with '%s' method",
-                                resource.fileset.parent,
-                                xresource,
-                                method,
-                            )
-                            xresource.upload_dir(resource.fileset.parent, method=method)
-                            # Move the manifest file back again
-                            if moved_manifest_file.exists():
-                                moved_manifest_file.rename(manifest_file)
+                            try:
+                                # Upload the contents of the resource to XNAT
+                                method = get_method(type(resource.fileset))
+                                logger.debug(
+                                    "Uploading directory '%s' to %s with '%s' method",
+                                    resource.fileset.parent,
+                                    xresource,
+                                    method,
+                                )
+                                xresource.upload_dir(
+                                    resource.fileset.parent, method=method
+                                )
+                            finally:
+                                # Move the manifest file back again
+                                if moved_manifest_file.exists():
+                                    moved_manifest_file.rename(manifest_file)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
                         if any(remote_checksums.values()):
@@ -453,7 +456,7 @@ def upload(
         if use_curl_jsession:
             xnat_repo.connection.exit()
 
-        if clean_up_older_than:
+        if clean_up_older_than > 0:
             logger.info(
                 "Cleaning up files in %s older than %d days",
                 staged,
@@ -470,12 +473,14 @@ def upload(
             else:
                 assert False
 
-    if loop is not None:
+    if loop >= 0:
         while True:
             start_time = datetime.datetime.now()
             try:
                 do_upload()
             except Exception as e:
+                if raise_errors:
+                    raise e
                 logger.error(
                     f'Error attempting to prepare upload of sessions: "{e}"'
                     f"\n{traceback.format_exc()}\n\n"
