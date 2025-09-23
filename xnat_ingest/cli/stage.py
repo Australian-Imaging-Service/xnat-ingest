@@ -263,6 +263,17 @@ are uploaded to XNAT
     envvar="XINGEST_DEIDENTIFIED_DIR_NAME",
     help="The name of the directory to use for deidentified files",
 )
+@click.option(
+    "--wait-period",
+    type=int,
+    default=0,
+    envvar="XINGEST_WAIT_PERIOD",
+    help=(
+        "The number of seconds to wait since the last file modification in sessions "
+        "in the S3 bucket or source file-system directory before uploading them to "
+        "avoid uploading partial sessions"
+    ),
+)
 def stage(
     files_path: str,
     output_dir: Path,
@@ -289,6 +300,7 @@ def stage(
     invalid_dir_name: str,
     deidentified_dir_name: str,
     loop: int | None,
+    wait_period: int,
 ) -> None:
 
     if raise_errors and loop:
@@ -366,6 +378,19 @@ def stage(
         logger.info("Staging sessions to '%s'", str(output_dir))
 
         for session in tqdm(sessions, f"Staging resources found in '{files_path}'"):
+
+            if wait_period:
+                last_mod = session.last_modified()
+                if (datetime.datetime.now() - last_mod).total_seconds() < wait_period:
+                    logger.info(
+                        "Skipping staging of session '%s' as it was last modified "
+                        "at %s which is less than %s seconds ago",
+                        session.name,
+                        last_mod,
+                        wait_period,
+                    )
+                    continue
+
             try:
                 if associated_files:
                     session.associate_files(

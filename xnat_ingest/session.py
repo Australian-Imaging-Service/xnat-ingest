@@ -708,5 +708,19 @@ class ImagingSession:
             for resource in scan.resources.values():
                 resource.unlink()
 
+    def last_modified(self) -> float:
+        """Returns the timestamp of the most recently modified file in the session
+
+        Returns
+        -------
+        float
+            the timestamp of the most recently modified file in the session
+        """
+        return max(
+            resource.fileset.last_modified()
+            for scan in self.scans.values()
+            for resource in scan.resources.values()
+        )
+
 
 from .store import ImagingSessionMockStore  # noqa: E402
