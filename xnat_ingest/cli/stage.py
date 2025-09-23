@@ -381,7 +381,7 @@ def stage(
 
             if wait_period:
                 last_mod = session.last_modified()
-                if (datetime.datetime.now() - last_mod).total_seconds() < wait_period:
+                if (time.time_ns() - last_mod) < wait_period * 1e9:
                     logger.info(
                         "Skipping staging of session '%s' as it was last modified "
                         "at %s which is less than %s seconds ago",
@@ -412,6 +412,11 @@ def stage(
                     prestage_dir,
                     available_projects=project_list,
                     copy_mode=copy_mode,
+                )
+                logger.info(
+                    "Successfully staged session '%s' to '%s'",
+                    session.name,
+                    str(saved_dir),
                 )
                 if "INVALID" in saved_dir.name:
                     saved_dir.rename(invalid_dir / saved_dir.relative_to(prestage_dir))

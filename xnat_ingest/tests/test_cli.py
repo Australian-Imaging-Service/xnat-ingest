@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 from datetime import datetime
 import typing as ty
 from pathlib import Path
@@ -412,3 +413,70 @@ def test_stage_and_upload(
                 "602",
                 # "603",
             ]
+
+
+def test_stage_wait_period(
+    cli_runner,
+    tmp_path: Path,
+    capsys,
+):
+    # Get test image data
+
+    staging_dir = tmp_path / "staging"
+    dicoms_path = tmp_path / "dicoms"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir()
+
+    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+
+    stage_log_file = tmp_path / "stage-logs.log"
+    if stage_log_file.exists():
+        os.unlink(stage_log_file)
+
+    # Generate a test DICOM image
+    get_pet_image(dicoms_path)
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert " as it was last modified " in logs, show_cli_trace(result)
+    assert not list(staged_dir.iterdir())
+
+    time.sleep(10)
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())

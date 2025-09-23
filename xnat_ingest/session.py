@@ -708,16 +708,17 @@ class ImagingSession:
             for resource in scan.resources.values():
                 resource.unlink()
 
-    def last_modified(self) -> float:
+    def last_modified(self) -> int:
         """Returns the timestamp of the most recently modified file in the session
+        in nanoseconds
 
         Returns
         -------
-        float
-            the timestamp of the most recently modified file in the session
+        int
+            the mtime of the most recently modified file in the session in nanoseconds
         """
         return max(
-            resource.fileset.last_modified()
+            resource.fileset.last_modified
             for scan in self.scans.values()
             for resource in scan.resources.values()
         )
