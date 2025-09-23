@@ -382,6 +382,8 @@ def test_stage_and_upload(
             "--use-curl-jsession",
             "--wait-period",
             "0",
+            "--num-files-per-batch",
+            "100",
         ],
         env={
             "XINGEST_HOST": xnat_server,
