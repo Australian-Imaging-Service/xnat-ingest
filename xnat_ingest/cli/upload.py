@@ -5,6 +5,7 @@ import tempfile
 import time
 import datetime
 import subprocess as sp
+import shutil
 import click
 from tqdm import tqdm
 import xnat
@@ -181,6 +182,18 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds",
 )
+@click.option(
+    "--num-files-per-batch",
+    type=int,
+    default=0,
+    envvar="XINGEST_NUM_FILES_PER_BATCH",
+    help=(
+        "When uploading files to XNAT, the number of files to upload in each batch. "
+        "The number of files that are uploaded in a single batch can be limited to chunk "
+        "the uploads and avoid overloading the building of the catalog file. If <= 0 (the default), "
+        "then all files are uploaded in a single batch"
+    ),
+)
 def upload(
     staged: str,
     server: str,
@@ -199,6 +212,7 @@ def upload(
     methods: ty.Sequence[UploadMethod],
     wait_period: int,
     loop: int | None,
+    num_files_per_batch: int,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -356,32 +370,42 @@ def upload(
                                 )
                                 xresource.upload(str(fspath), fspath.name)
                         else:
-                            # Temporarily move the manifest file out of the way so it
-                            # doesn't get uploaded
-                            manifest_file = (
-                                resource.fileset.parent / ImagingResource.MANIFEST_FNAME
+                            # Upload the contents of the resource to XNAT
+                            upload_method = get_method(type(resource.fileset))
+                            # Break the files to upload into chunks and hardlink them into
+                            # separate directories so we can use upload_dir
+                            dir_to_upload = resource.fileset.parent
+                            files_to_upload = list(resource.fileset.fspaths)
+                            chunk_size = (
+                                num_files_per_batch
+                                if len(files_to_upload) > num_files_per_batch
+                                or num_files_per_batch <= 0
+                                else len(files_to_upload)
                             )
-                            moved_manifest_file = resource.fileset.parent.parent / (
-                                resource.name + "-" + ImagingResource.MANIFEST_FNAME
+                            upload_dir = dir_to_upload.parent / (
+                                "." + dir_to_upload.name + "-upload"
                             )
-                            if manifest_file.exists():
-                                manifest_file.rename(moved_manifest_file)
-                            try:
-                                # Upload the contents of the resource to XNAT
-                                method = get_method(type(resource.fileset))
+                            for chunk_idx in range(len(files_to_upload) // chunk_size):
+                                # Create a temporary directory to upload the chunk from
+                                upload_dir.mkdir(exist_ok=True)
+                                for fspath in files_to_upload[
+                                    chunk_idx
+                                    * chunk_size : (chunk_idx + 1)
+                                    * chunk_size
+                                ]:
+                                    dest = upload_dir / fspath.relative_to(
+                                        dir_to_upload
+                                    )
+                                    dest.hardlink_to(fspath)
                                 logger.debug(
-                                    "Uploading directory '%s' to %s with '%s' method",
-                                    resource.fileset.parent,
+                                    "Uploading chunk %s of '%s' to %s with '%s' method",
+                                    chunk_idx,
+                                    upload_dir,
                                     xresource,
-                                    method,
+                                    upload_method,
                                 )
-                                xresource.upload_dir(
-                                    resource.fileset.parent, method=method
-                                )
-                            finally:
-                                # Move the manifest file back again
-                                if moved_manifest_file.exists():
-                                    moved_manifest_file.rename(manifest_file)
+                                xresource.upload_dir(upload_dir, method=upload_method)
+                                shutil.rmtree(upload_dir)
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
                         if any(remote_checksums.values()):
