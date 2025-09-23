@@ -189,8 +189,8 @@ PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env
     envvar="XINGEST_NUM_FILES_PER_BATCH",
     help=(
         "When uploading files to XNAT, the number of files to upload in each batch. "
-        "The number of files that are uploaded in a single batch can be limited to chunk "
-        "the uploads and avoid overloading the building of the catalog file. If <= 0 (the default), "
+        "The number of files that are uploaded in a single batch can be limited to "
+        "avoid overloading the building of the catalog file. If <= 0 (the default), "
         "then all files are uploaded in a single batch"
     ),
 )
@@ -376,7 +376,7 @@ def upload(
                             # separate directories so we can use upload_dir
                             dir_to_upload = resource.fileset.parent
                             files_to_upload = list(resource.fileset.fspaths)
-                            chunk_size = (
+                            batch_size = (
                                 num_files_per_batch
                                 if len(files_to_upload) > num_files_per_batch
                                 or num_files_per_batch <= 0
@@ -385,21 +385,21 @@ def upload(
                             upload_dir = dir_to_upload.parent / (
                                 "." + dir_to_upload.name + "-upload"
                             )
-                            for chunk_idx in range(len(files_to_upload) // chunk_size):
-                                # Create a temporary directory to upload the chunk from
+                            for batch_idx in range(len(files_to_upload) // batch_size):
+                                # Create a temporary directory to upload the batch from
                                 upload_dir.mkdir(exist_ok=True)
                                 for fspath in files_to_upload[
-                                    chunk_idx
-                                    * chunk_size : (chunk_idx + 1)
-                                    * chunk_size
+                                    batch_idx
+                                    * batch_size : (batch_idx + 1)
+                                    * batch_size
                                 ]:
                                     dest = upload_dir / fspath.relative_to(
                                         dir_to_upload
                                     )
                                     dest.hardlink_to(fspath)
                                 logger.debug(
-                                    "Uploading chunk %s of '%s' to %s with '%s' method",
-                                    chunk_idx,
+                                    "Uploading batch %s of '%s' to %s with '%s' method",
+                                    batch_idx,
                                     upload_dir,
                                     xresource,
                                     upload_method,
