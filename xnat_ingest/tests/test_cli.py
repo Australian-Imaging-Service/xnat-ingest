@@ -384,7 +384,7 @@ def test_stage_and_upload(
             "--wait-period",
             "0",
             "--num-files-per-batch",
-            "100",
+            "107",
         ],
         env={
             "XINGEST_HOST": xnat_server,
