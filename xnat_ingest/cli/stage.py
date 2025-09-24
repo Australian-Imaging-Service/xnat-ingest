@@ -274,6 +274,15 @@ are uploaded to XNAT
         "avoid uploading partial sessions"
     ),
 )
+@click.option(
+    "--avoid-clashes/--dont-avoid-clashes",
+    default=False,
+    envvar="XINGEST_AVOID_CLASHES",
+    help=(
+        "If a resource with the same name already exists in the scan, increment the "
+        "resource name by appending _1, _2 etc. to the name until a unique name is found"
+    ),
+)
 def stage(
     files_path: str,
     output_dir: Path,
@@ -301,6 +310,7 @@ def stage(
     deidentified_dir_name: str,
     loop: int | None,
     wait_period: int,
+    avoid_clashes: bool = False,
 ) -> None:
 
     if raise_errors and loop:
@@ -373,6 +383,7 @@ def stage(
             scan_desc_field=scan_desc_field,
             resource_field=resource_field,
             project_id=project_id,
+            avoid_clashes=avoid_clashes,
         )
 
         logger.info("Staging sessions to '%s'", str(output_dir))
@@ -396,11 +407,13 @@ def stage(
                     session.associate_files(
                         associated_files,
                         spaces_to_underscores=spaces_to_underscores,
+                        avoid_clashes=avoid_clashes,
                     )
                 if deidentify:
                     deidentified_session = session.deidentify(
                         deidentified_dir,
                         copy_mode=copy_mode,
+                        avoid_clashes=avoid_clashes,
                     )
                     if delete:
                         session.unlink()

@@ -249,6 +249,7 @@ class ImagingSession:
         resource_field: str = "ImageType[-1]",
         session_field: str | None = "StudyInstanceUID",
         project_id: str | None = None,
+        avoid_clashes: bool = False,
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -282,6 +283,10 @@ class ImagingSession:
         project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
+        avoid_clashes : bool, optional
+            if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found,
+            by default False
 
         Returns
         -------
@@ -426,7 +431,13 @@ class ImagingSession:
                     multiple_sessions[session_uid].add(
                         (session.project_id, session.subject_id, session.visit_id)
                     )
-            session.add_resource(scan_id, scan_type, resource_id, resource)
+            session.add_resource(
+                scan_id,
+                scan_type,
+                resource_id,
+                resource,
+                avoid_clashes=avoid_clashes,
+            )
         if multiple_sessions:
             raise ImagingSessionParseError(
                 "Multiple session UIDs found with the same project/subject/visit ID triplets: "
@@ -438,7 +449,10 @@ class ImagingSession:
         return list(sessions.values())
 
     def deidentify(
-        self, dest_dir: Path, copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy
+        self,
+        dest_dir: Path,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+        avoid_clashes: bool = False,
     ) -> Self:
         """Creates a new session with deidentified images
 
@@ -473,6 +487,7 @@ class ImagingSession:
                     scan.type,
                     resource_name,
                     deid_resource,
+                    avoid_clashes=avoid_clashes,
                 )
         return deidentified
 
@@ -480,6 +495,7 @@ class ImagingSession:
         self,
         patterns: ty.List[AssociatedFiles],
         spaces_to_underscores: bool = True,
+        avoid_clashes: bool = False,
     ) -> None:
         """Adds files associated with the primary files to the session
 
@@ -534,6 +550,7 @@ class ImagingSession:
                     resource_name,
                     from_paths([fspath], associated_files.datatype)[0],
                     associated=associated_files,
+                    avoid_clashes=avoid_clashes,
                 )
 
     def add_resource(
@@ -544,6 +561,7 @@ class ImagingSession:
         fileset: FileSet,
         overwrite: bool = False,
         associated: AssociatedFiles | None = None,
+        avoid_clashes: bool = False,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -561,7 +579,22 @@ class ImagingSession:
             whether to overwrite existing resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
+        avoid_clashes : bool, optional
+            if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found,
+            by default False
+
+        Raises
+        ------
+        KeyError
+            if a resource with the same name already exists in the scan and
+            `avoid_clashes` and `overwrite` are both False
         """
+        if overwrite and avoid_clashes:
+            raise ValueError(
+                "Cannot set both 'overwrite' and 'avoid_clashes' to True when adding a "
+                "resource"
+            )
         try:
             scan = self.scans[scan_id]
         except KeyError:
@@ -579,14 +612,55 @@ class ImagingSession:
                     f"Non-matching associated files ({scan.associated} and {associated}) "
                     f"for scan ID {scan_id}"
                 )
-        if resource_name in scan.resources and not overwrite:
-            raise KeyError(
-                f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource"
-            )
-        scan.resources[resource_name] = ImagingResource(
-            name=resource_name, fileset=fileset, scan=scan
-        )
+        resource = ImagingResource(name=resource_name, fileset=fileset, scan=scan)
+        try:
+            existing = scan.resources[resource_name]
+        except KeyError:
+            pass
+        else:
+            if resource.checksums == existing.checksums:
+                logger.info(
+                    "Not adding resource '%s' to %s scan in %s session as it is identical "
+                    "to a resource that is already present %s",
+                    resource_name,
+                    scan_id,
+                    self.name,
+                    existing,
+                )
+                return
+            elif overwrite:
+                logger.warning(
+                    "Overwriting existing resource '%s' in %s scan in %s session",
+                    resource_name,
+                    scan_id,
+                    self.name,
+                )
+                del scan.resources[resource_name]
+            elif avoid_clashes:
+                match = re.match(r"^(.*)__(\d+)$", resource_name)
+                if match:
+                    base_name, num = match.groups()
+                    num = int(num) + 1
+                else:
+                    base_name = resource_name
+                    num = 2
+                while resource_name in scan.resources:
+                    resource_name = f"{base_name}__{num}"
+                    num += 1
+                logger.warning(
+                    "Incremented resource name to '%s' to avoid clash with existing resources",
+                    resource_name,
+                )
+                resource = ImagingResource(
+                    name=resource_name, fileset=fileset, scan=scan
+                )
+            else:
+                raise KeyError(
+                    f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
+                    f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource or "
+                    "'avoid_clashes=True' to increment the resource name",
+                )
+        scan.resources[resource_name] = resource
 
     @classmethod
     def load(
@@ -644,8 +718,9 @@ class ImagingSession:
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     ) -> tuple[Self, Path]:
-        r"""Stages and deidentifies files by removing the fields listed `FIELDS_TO_ANONYMISE` and
-        replacing birth date with 01/01/<BIRTH-YEAR> and returning new imaging session
+        r"""Saves the session to a directory. The session will be saved to a directory
+        with the project, subject and session IDs as subdirectories of this directory,
+        along with the scans manifest
 
         Parameters
         ----------
@@ -653,29 +728,13 @@ class ImagingSession:
             destination directory to save the deidentified files. The session will be saved
             to a directory with the project, subject and session IDs as subdirectories of
             this directory, along with the scans manifest
-        associated_file_groups : Collection[AssociatedFiles], optional
-            Glob pattern used to select the non-dicom files to include in the session. Note
-            that the pattern is relative to the parent directory containing the DICOM files
-            NOT the current working directory.
-            The glob pattern can contain string template placeholders corresponding to DICOM
-            metadata (e.g. '{PatientName.family_name}_{PatientName.given_name}'), which
-            are substituted before the string is used to glob the non-DICOM files. In
-            order to deidentify the filenames, the pattern must explicitly reference all
-            identifiable fields in string template placeholders. By default, None
-
-            Used to extract the scan ID & type/resource from the associated filename. Should
-            be a regular-expression (Python syntax) with named groups called 'id' and 'type', e.g.
-            '[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'
-        remove_original : bool, optional
-            delete original files after they have been staged, false by default
-        deidentify : bool, optional
-            deidentify the scans in the staging process, true by default
-        project_list : list[str], optional
-            list of available projects in the store, used to check whether the project ID
-            is valid
-        spaces_to_underscores : bool, optional
-            when building associated file globs, convert spaces underscores in fields
-            extracted from source file metadata, false by default
+        available_projects : list[str], optional
+            list of available project IDs on the XNAT server, if the project ID of the
+            session is not in this list, it will be prefixed with "INVALID_UNRECOGNISED_"
+            to avoid upload errors, by default None
+        copy_mode : FileSet.CopyMode, optional
+            the mode to use to copy the files that don't need to be deidentified,
+            by default FileSet.CopyMode.hardlink_or_copy
 
         Returns
         -------
