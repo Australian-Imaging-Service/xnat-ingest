@@ -3,6 +3,7 @@ import traceback
 import typing as ty
 import tempfile
 import time
+import math
 import datetime
 import subprocess as sp
 import shutil
@@ -372,26 +373,29 @@ def upload(
                         else:
                             # Upload the contents of the resource to XNAT
                             upload_method = get_method(type(resource.fileset))
-                            # Break the files to upload into chunks and hardlink them into
-                            # separate directories so we can use upload_dir
+                            # Get the directory containing the files to upload
+                            # and create a temporary upload directory alongside it
+                            # to hardlink files to upload in each batch into
                             dir_to_upload = resource.fileset.parent
-                            files_to_upload = list(resource.fileset.fspaths)
-                            batch_size = (
-                                num_files_per_batch
-                                if len(files_to_upload) > num_files_per_batch
-                                or num_files_per_batch <= 0
-                                else len(files_to_upload)
-                            )
                             upload_dir = dir_to_upload.parent / (
                                 "." + dir_to_upload.name + "-upload"
                             )
-                            for batch_idx in range(len(files_to_upload) // batch_size):
+                            # Split the files to upload into batches and hardlink them into
+                            # separate directories so we can use upload_dir
+                            files_to_upload = list(resource.fileset.fspaths)
+                            num_files = len(files_to_upload)
+                            batch_size = (
+                                num_files_per_batch
+                                if num_files_per_batch > 0
+                                else num_files
+                            )
+                            for i in range(int(math.ceil(num_files / batch_size))):
                                 # Create a temporary directory to upload the batch from
-                                upload_dir.mkdir(exist_ok=True)
+                                if upload_dir.exists():
+                                    shutil.rmtree(upload_dir)
+                                upload_dir.mkdir()
                                 for fspath in files_to_upload[
-                                    batch_idx
-                                    * batch_size : (batch_idx + 1)
-                                    * batch_size
+                                    i * batch_size : (i + 1) * batch_size
                                 ]:
                                     dest = upload_dir / fspath.relative_to(
                                         dir_to_upload
@@ -399,7 +403,7 @@ def upload(
                                     dest.hardlink_to(fspath)
                                 logger.debug(
                                     "Uploading batch %s of '%s' to %s with '%s' method",
-                                    batch_idx,
+                                    i,
                                     upload_dir,
                                     xresource,
                                     upload_method,
@@ -416,9 +420,12 @@ def upload(
                                 missing_keys = set(calc_checksums) - set(
                                     remote_checksums
                                 )
+                                intersect_keys = set(calc_checksums) & set(
+                                    remote_checksums
+                                )
                                 mismatching = [
                                     k
-                                    for k, v in calc_checksums.items()
+                                    for k, v in intersect_keys
                                     if v != remote_checksums[k]
                                 ]
                                 raise RuntimeError(
