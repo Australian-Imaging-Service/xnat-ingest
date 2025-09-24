@@ -2,6 +2,7 @@ from pathlib import Path
 import pytest
 import typing as ty
 from fileformats.core import from_mime
+from fileformats.generic import File
 from fileformats.medimage import (
     DicomSeries,
     Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
@@ -26,6 +27,7 @@ from xnat_ingest.session import ImagingSession, ImagingScan
 from xnat_ingest.store import DummyAxes
 from xnat_ingest.utils import AssociatedFiles
 from conftest import get_raw_data_files
+import logging
 
 FIRST_NAME = "Given Name"
 LAST_NAME = "FamilyName"
@@ -303,3 +305,114 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
                 Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
             ]
         )
+
+
+CLASH_SCAN_ID = "1"
+CLASH_SCAN_TYPE = "a-type"
+CLASH_RESOURCE_NAME = "FILE"
+
+
+def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+
+    logger = logging.getLogger("xnat-ingest")
+    logger.setLevel(logging.DEBUG)
+
+    file1 = File.sample(seed=1)
+    file1_cpy = file1.copy(tmp_path / "file1")
+
+    session = ImagingSession(
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        visit_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: file1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=file1_cpy,
+    )
+    assert "as it is identical to a resource that is already present" in caplog.text
+
+
+def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
+
+    logger = logging.getLogger("xnat-ingest")
+    logger.setLevel(logging.DEBUG)
+
+    file1 = File.sample(seed=1)
+    file2 = File.sample(seed=2)
+
+    session = ImagingSession(
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        visit_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: file1},
+            )
+        ],
+    )
+
+    with pytest.raises(KeyError) as exc:
+        session.add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=file2,
+        )
+
+    assert "Clash between resource names" in str(exc.value)
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=file2,
+        overwrite=True,
+    )
+    assert "Overwriting existing resource" in caplog.text
+
+
+def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
+
+    logger = logging.getLogger("xnat-ingest")
+    logger.setLevel(logging.DEBUG)
+
+    file1 = File.sample(seed=1)
+    file2 = File.sample(seed=2)
+
+    session = ImagingSession(
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        visit_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: file1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=file2,
+        avoid_clashes=True,
+    )
+    assert "to avoid clash with existing resources" in caplog.text
+    assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
+        CLASH_RESOURCE_NAME,
+        CLASH_RESOURCE_NAME + "__2",
+    ]

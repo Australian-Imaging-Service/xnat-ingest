@@ -389,7 +389,17 @@ def upload(
                                 if num_files_per_batch > 0
                                 else num_files
                             )
-                            for i in range(int(math.ceil(num_files / batch_size))):
+                            num_batches = math.ceil(num_files / batch_size)
+                            logger.debug(
+                                "Uploading %s files to '%s' in %s in %s batches of %s files using '%s' method",
+                                num_files,
+                                resource.path,
+                                xresource,
+                                num_batches,
+                                batch_size,
+                                upload_method,
+                            )
+                            for i in range(num_batches):
                                 # Create a temporary directory to upload the batch from
                                 if upload_dir.exists():
                                     shutil.rmtree(upload_dir)
@@ -402,8 +412,9 @@ def upload(
                                     )
                                     dest.hardlink_to(fspath)
                                 logger.debug(
-                                    "Uploading batch %s of '%s' to %s with '%s' method",
+                                    "Uploading batch %s of %s of '%s' to %s with '%s' method",
                                     i,
+                                    num_batches,
                                     upload_dir,
                                     xresource,
                                     upload_method,
