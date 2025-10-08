@@ -119,7 +119,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
 
     assert out_file.read_text().split("\n") == [
         "fileformats.medimage.dicom.DicomSeries",
-        "fileformats.vendor.siemens.medimage.SyngoMi_ListMode_Vr20b",
+        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_ListMode_Vr20b",
     ]
 
 
