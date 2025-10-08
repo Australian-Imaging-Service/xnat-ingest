@@ -33,7 +33,7 @@ result = runner.invoke(
         "XINGEST_LOGGERS": "stream,info,stdout;file,debug,/tmp/LOGS/xnat-ingest-stage.log",
         "XINGEST_PRE_STAGE_DIR_NAME": "PRE-STAGE",
         "XINGEST_PROJECT": "PatientComments",
-        "XINGEST_RESOURCE": "ImageType[-1]",
+        "XINGEST_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
         "XINGEST_SCAN_DESC": "SeriesDescription",
         "XINGEST_SCAN_ID": "SeriesNumber",
         "XINGEST_SPACES_TO_UNDERSCORES": "0",

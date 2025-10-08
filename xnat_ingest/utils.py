@@ -142,6 +142,19 @@ class StoreCredentials(CliTyped):
 
 
 @attrs.define
+class ResourceField(MultiCliTyped):
+
+    field: str = attrs.field()
+    datatype: ty.Type[FileSet] = attrs.field(
+        converter=datatype_converter, default=FileSet
+    )
+
+    @property
+    def field_name(self) -> str:
+        return self.field.split("[")[0]
+
+
+@attrs.define
 class MimeType(str, MultiCliTyped):
 
     mime: str

@@ -6,13 +6,14 @@ import datetime
 import time
 import tempfile
 from tqdm import tqdm
-from fileformats.core import FileSet
+from fileformats.core import FileSet, from_mime
 from fileformats.medimage import DicomSeries
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
     AssociatedFiles,
+    ResourceField,
     MimeType,
     logger,
     LoggerConfig,
@@ -124,11 +125,16 @@ are uploaded to XNAT
 )
 @click.option(
     "--resource-field",
-    type=str,
-    default="ImageType[-1]",
+    "resource_fields",
+    type=ResourceField.cli_type,
+    nargs=2,
+    multiple=True,
+    default=None,
+    metavar="<field> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging resource ID from "
+        "The keywords of the metadata field to extract the XNAT imaging resource ID from "
+        "for different datatypes (use `generic/file-set` as a catch-all if required)."
     ),
 )
 @click.option(
@@ -294,7 +300,7 @@ def stage(
     session_field: str | None,
     scan_id_field: str,
     scan_desc_field: str,
-    resource_field: str,
+    resource_fields: list[ResourceField] | None,
     project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
@@ -381,7 +387,7 @@ def stage(
             session_field=session_field,
             scan_id_field=scan_id_field,
             scan_desc_field=scan_desc_field,
-            resource_field=resource_field,
+            resource_fields=resource_fields,
             project_id=project_id,
             avoid_clashes=avoid_clashes,
         )

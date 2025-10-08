@@ -18,7 +18,7 @@ from fileformats.core import from_paths, FileSet, from_mime
 from frametree.core.frameset import FrameSet
 from frametree.core.exceptions import FrameTreeDataMatchError
 from .exceptions import ImagingSessionParseError, StagingError
-from .utils import AssociatedFiles, invalid_path_chars_re
+from .utils import AssociatedFiles, invalid_path_chars_re, ResourceField
 from .scan import ImagingScan
 from .resource import ImagingResource
 
@@ -246,7 +246,7 @@ class ImagingSession:
         visit_field: str = "AccessionNumber",
         scan_id_field: str = "SeriesNumber",
         scan_desc_field: str = "SeriesDescription",
-        resource_field: str = "ImageType[-1]",
+        resource_fields: list[ResourceField] | None = None,
         session_field: str | None = "StudyInstanceUID",
         project_id: str | None = None,
         avoid_clashes: bool = False,
@@ -273,9 +273,9 @@ class ImagingSession:
         scan_desc_field: str
             the metadata field that contains the XNAT scan description for the imaging session,
             by default "SeriesDescription"
-        resource_field: str
+        resource_fields: dict[str, str] | None
             the metadata field that contains the XNAT resource ID for the imaging session,
-            by default "ImageType[-1]"
+            by default {FileSet: "ImageType[-1]"}
         session_field : str, optional
             the name of the metadata field that uniquely identifies the session, used
             to check that the values extracted from the IDs across the DICOM scans are
@@ -299,6 +299,9 @@ class ImagingSession:
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
+
+        if resource_fields is None:
+            resource_fields = [ResourceField("ImageType[-1]")]
         if isinstance(files_path, Path) or "*" not in files_path:
             files_path = Path(files_path)
             if not files_path.exists():
@@ -329,7 +332,6 @@ class ImagingSession:
                 session_field,
                 scan_id_field,
                 scan_desc_field,
-                resource_field,
             ]
 
         if not isinstance(datatypes, ty.Sequence):
@@ -356,9 +358,14 @@ class ImagingSession:
             session_uid = resource.metadata[session_field] if session_field else None
 
             def get_id(field_type: str, field_name: str) -> str:
-                if match := re.match(r"(\w+)\[([\-\d]+)\]", field_name):
+                if match := re.match(r"(\w+)\[([\-\d:]+)\]", field_name):
                     field_name, index = match.groups()
-                    index = int(index)
+                    if ":" in index:
+                        index = slice(
+                            *(int(d) if d else None for d in index.split(":"))
+                        )
+                    else:
+                        index = int(index)
                 else:
                     index = None
                 try:
@@ -388,6 +395,8 @@ class ImagingSession:
                         )
                 if index is not None:
                     value = value[index]
+                if isinstance(value, list):
+                    value = "_".join(value)
                 elif isinstance(value, list):
                     frequency = Counter(value)
                     value = frequency.most_common(1)[0]
@@ -401,11 +410,20 @@ class ImagingSession:
             visit_id = get_id("visit", visit_field)
             scan_id = get_id("scan", scan_id_field)
             scan_type = get_id("scan type", scan_desc_field)
-            if isinstance(resource, DicomSeries):
-                resource_id = "DICOM"
-            else:
-                resource_id = get_id("resource", resource_field)
 
+            def get_resource_label(resource: ImagingResource) -> str:
+                if isinstance(resource, DicomSeries):
+                    return "DICOM"
+                else:
+                    for resource_field in resource_fields:
+                        if isinstance(resource, resource_field.datatype):
+                            return get_id("resource", resource_field.field)
+                raise ValueError(
+                    f"No resource label field specification matches type of {resource}, "
+                    f"provided {resource_fields}"
+                )
+
+            resource_label = get_resource_label(resource)
             if session_uid is None:
                 session_uid = (project_id, subject_id, visit_id)
             try:
@@ -434,7 +452,7 @@ class ImagingSession:
             session.add_resource(
                 scan_id,
                 scan_type,
-                resource_id,
+                resource_label,
                 resource,
                 avoid_clashes=avoid_clashes,
             )
