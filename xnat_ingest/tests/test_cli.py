@@ -109,8 +109,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
         os.environ,
         {
             "XINGEST_DATATYPES": (
-                "medimage/dicom-series;"
-                "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode"
+                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.list-mode.vr20b"
             )
         },
     ):
@@ -120,7 +119,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
 
     assert out_file.read_text().split("\n") == [
         "fileformats.medimage.dicom.DicomSeries",
-        "fileformats.medimage.raw.pet.siemens.Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode",
+        "fileformats.medimage.raw.pet.siemens.SyngoMi_ListMode_Vr20b",
     ]
 
 
@@ -304,17 +303,17 @@ def test_stage_and_upload(
         ("atten_corr", "medimage/dicom-series", "AC CT.*"),
         (
             "listmode",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
+            "medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
             ".*/LISTMODE",
         ),
         # (
         #     "sinogram",
-        #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
+        #     "medimage/vnd.siemens.syngo-mi.sinogram.vr20b",
         #     ".*/EM_SINO",
         # ),
         (
             "countrate",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
+            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b",
             ".*/COUNTRATE",
         ),
     ]:
@@ -337,7 +336,7 @@ def test_stage_and_upload(
             str(dicoms_dir),
             str(staging_dir),
             "--associated-files",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate,medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
+            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b,medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
@@ -379,7 +378,7 @@ def test_stage_and_upload(
             "medimage/dicom-series",
             "--method",
             "tar_file",
-            "medimage/vnd.siemens.biograph128-vision.vr20b.pet-raw-data",
+            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
             "--use-curl-jsession",
             "--wait-period",
             "0",

@@ -15,7 +15,7 @@ result = runner.invoke(
         "XINGEST_ADDITIONAL_LOGGERS": "fileformats.",
         "XINGEST_AWS_BUCKET": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING",
         "XINGEST_COPY_MODE": "hardlink_or_copy",
-        "XINGEST_DATATYPES": "medimage/dicom-series;medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate;medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode;medimage/vnd.siemens.biograph128-vision.vr20b.pet-normalisation;medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram;medimage/vnd.siemens.biograph128-vision.vr20b.pet-dynamic-sinogram-series;medimage/vnd.siemens.biograph128-vision.vr20b.pet-parameterisation;medimage/vnd.siemens.biograph128-vision.vr20b.pet-ct-spl",
+        "XINGEST_DATATYPES": "medimage/dicom-series;medimage/vnd.siemens.syngo-mi.count-rate.vr20b;medimage/vnd.siemens.syngo-mi.list-mode.vr20b;medimage/vnd.siemens.syngo-mi.normalisation.vr20b;medimage/vnd.siemens.syngo-mi.sinogram.vr20b;medimage/vnd.siemens.syngo-mi.dynamic-sinogram-series.vr20b;medimage/vnd.siemens.syngo-mi.parameterisation.vr20b;medimage/vnd.siemens.syngo-mi.ct-spl.vr20b;medimage/vnd.siemens.syngo-mi.physio.vr20b",
         "XINGEST_DEIDENTIFIED_DIR_NAME": "DEIDENTIFIED",
         "XINGEST_DEIDENTIFY": "0",
         "XINGEST_DELETE": "0",

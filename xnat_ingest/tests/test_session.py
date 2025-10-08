@@ -3,11 +3,11 @@ import pytest
 import typing as ty
 from fileformats.core import from_mime
 from fileformats.generic import File
-from fileformats.medimage import (
-    DicomSeries,
-    Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
-    Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
-    Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
+from fileformats.medimage import DicomSeries
+from fileformats.vendor.siemens.medimage import (
+    SyngoMi_RawData_Vr20b,
+    SyngoMi_CountRate_Vr20b,
+    SyngoMi_ListMode_Vr20b,
 )
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.common import FileSystem  # type: ignore[import-untyped]
@@ -41,17 +41,17 @@ DICOM_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
 RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
     (
         "listmode",
-        "medimage/vnd.siemens.biograph128-vision.vr20b.pet-list-mode",
+        "medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
         ".*/PET_LISTMODE",
     ),
     # (
     #     "sinogram",
-    #     "medimage/vnd.siemens.biograph128-vision.vr20b.pet-sinogram",
+    #     "medimage/vnd.siemens.syngo-mi.sinogram.vr20b",
     #     ".*/PET_EM_SINO",
     # ),
     (
         "countrate",
-        "medimage/vnd.siemens.biograph128-vision.vr20b.pet-count-rate",
+        "medimage/vnd.siemens.syngo-mi.count-rate.vr20b",
         ".*/PET_COUNTRATE",
     ),
 ]
@@ -182,7 +182,7 @@ def test_session_select_resources(
     imaging_session.associate_files(
         patterns=[
             AssociatedFiles(
-                Vnd_Siemens_Biograph128Vision_Vr20b_PetRawData,
+                SyngoMi_RawData_Vr20b,
                 str(assoc_dir)
                 + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
                 r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.(?P<resource>[^\.]+).*",
@@ -215,9 +215,9 @@ def test_session_select_resources(
     assert set([r.datatype for r in resources]) == set(
         [
             DicomSeries,
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
-            # Vnd_Siemens_Biograph128Vision_Vr20b_PetSinogram,
+            SyngoMi_ListMode_Vr20b,
+            SyngoMi_CountRate_Vr20b,
+            # SyngoMi_Sinogram_Vr20b,
         ]
     )
 
@@ -275,8 +275,8 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
     imaging_sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
-            Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+            SyngoMi_ListMode_Vr20b,
+            SyngoMi_CountRate_Vr20b,
         ],
     )
 
@@ -301,8 +301,8 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
         assert set(r.name for r in resources) == set(("PET_LISTMODE", "PET_COUNTRATE"))
         assert set(type(r.fileset) for r in resources) == set(
             [
-                Vnd_Siemens_Biograph128Vision_Vr20b_PetListMode,
-                Vnd_Siemens_Biograph128Vision_Vr20b_PetCountRate,
+                SyngoMi_ListMode_Vr20b,
+                SyngoMi_CountRate_Vr20b,
             ]
         )
 
