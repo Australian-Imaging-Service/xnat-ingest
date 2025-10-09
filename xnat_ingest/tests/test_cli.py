@@ -1,36 +1,35 @@
 import os
 import shutil
 import time
-from datetime import datetime
 import typing as ty
+from datetime import datetime
 from pathlib import Path
-from frametree.core.cli import (  # type: ignore[import-untyped]
-    define as dataset_define,
-    add_source as dataset_add_source,
-)
-import click
-from xnat_ingest.utils import MimeType, XnatLogin  # type: ignore[import-untyped]
-import xnat4tests  # type: ignore[import-untyped]
-from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
-from xnat_ingest.cli import stage, upload
-from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
-from xnat_ingest.utils import show_cli_trace
-from fileformats.medimage import DicomSeries
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_pet_image,
-)
-from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_ac_image,
-)
-from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_topogram_image,
-)
-from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_statistics_image,
-)
-from conftest import get_raw_data_files
 from unittest.mock import patch
 
+import click
+import xnat4tests  # type: ignore[import-untyped]
+from fileformats.medimage import DicomSeries
+from frametree.core.cli import add_source as dataset_add_source
+from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
+from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
+    get_image as get_ac_image,
+)  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
+    get_image as get_statistics_image,
+)  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
+    get_image as get_topogram_image,
+)  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+    get_image as get_pet_image,
+)  # type: ignore[import-untyped]
+
+from conftest import get_raw_data_files
+from xnat_ingest.cli import stage, upload
+from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
+from xnat_ingest.utils import MimeType  # type: ignore[import-untyped]
+from xnat_ingest.utils import XnatLogin, show_cli_trace
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -335,6 +334,9 @@ def test_stage_and_upload(
         [
             str(dicoms_dir),
             str(staging_dir),
+            "--resource-field",
+            "ImageType[-1]",
+            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
             "--associated-files",
             "medimage/vnd.siemens.syngo-mi.count-rate.vr20b,medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
             str(associated_files_dir)
@@ -478,6 +480,9 @@ def test_stage_wait_period(
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(staged_dir.iterdir())

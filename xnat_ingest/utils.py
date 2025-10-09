@@ -16,7 +16,7 @@ import discord
 from fileformats.core import DataType, FileSet, from_mime
 
 from .exceptions import ImagingSessionParseError
-from .utils import ImagingResource
+from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -170,7 +170,7 @@ class FieldSpec(MultiCliTyped):
         else:
             index = None
         try:
-            value = resource.metadata[field_name]
+            value = resource.metadata[self.field_name]
         except KeyError:
             value = ""
         if not value:
