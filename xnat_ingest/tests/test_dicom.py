@@ -10,7 +10,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 
 
 @pytest.fixture
-def dicom_series(scope="module") -> DicomSeries:
+def dicom_series(scope: str = "module") -> DicomSeries:
     return DicomSeries(
         get_pet_image(first_name="GivenName", last_name="FamilyName").iterdir()
     )
@@ -19,7 +19,7 @@ def dicom_series(scope="module") -> DicomSeries:
 # @pytest.mark.xfail(
 #     condition=(platform.system() == "Linux"), reason="Not working on ubuntu"
 # )
-def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
+def test_mrtrix_dicom_metadata(dicom_series: DicomSeries) -> None:
     keys = [
         "AccessionNumber",
         "PatientID",

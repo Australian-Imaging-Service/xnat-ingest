@@ -423,5 +423,5 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     assert "to avoid clash with existing resources" in caplog.text
     assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
         CLASH_RESOURCE_NAME,
-        CLASH_RESOURCE_NAME + "_2",
+        CLASH_RESOURCE_NAME + "__2",
     ]
