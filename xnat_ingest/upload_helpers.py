@@ -1,22 +1,22 @@
-from pathlib import Path
-import shutil
-import os
 import datetime
+import hashlib
+import os
+import pprint
+import shutil
+import tempfile
 import typing as ty
 from collections import defaultdict
-import tempfile
-from tqdm import tqdm
-import hashlib
-import pprint
+from pathlib import Path
+
 import boto3.resources.base
 import paramiko
-from xnat_ingest.utils import (
-    logger,
-    StoreCredentials,
-)
 from fileformats.core import FileSet
-from .session import ImagingSession
+from tqdm import tqdm
+
+from xnat_ingest.utils import StoreCredentials, logger
+
 from .resource import ImagingResource
+from .session import ImagingSession
 
 
 def iterate_s3_sessions(
@@ -367,6 +367,9 @@ def dir_older_than(path: Path, period: int) -> bool:
         for file in files:
             mtimes.append((Path(root) / file).stat().st_mtime)
     last_modified = datetime.datetime.fromtimestamp(max(mtimes))
+    return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
+        seconds=period
+    )
     return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
         seconds=period
     )

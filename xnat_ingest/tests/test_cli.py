@@ -486,3 +486,6 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())

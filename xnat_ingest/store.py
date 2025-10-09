@@ -1,12 +1,14 @@
 import typing as ty
+
 import attrs
 from fileformats.core import DataType
-from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.core.axes import Axes  # type: ignore[import-untyped]
+from frametree.core.entry import DataEntry  # type: ignore[import-untyped]
+from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from frametree.core.row import DataRow  # type: ignore[import-untyped]
 from frametree.core.store import Store  # type: ignore[import-untyped]
-from frametree.core.entry import DataEntry  # type: ignore[import-untyped]
 from frametree.core.tree import DataTree  # type: ignore[import-untyped]
+
 from .session import ImagingSession
 
 
@@ -126,6 +128,10 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
 
     def create_entry(self, path: str, datatype: type, row: DataRow) -> DataEntry:
         raise NotImplementedError
+
+
+class DummyAxes(Axes):  # type: ignore[misc]
+    _ = 0b0
 
 
 class DummyAxes(Axes):  # type: ignore[misc]
