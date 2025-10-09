@@ -29,7 +29,7 @@ from conftest import get_raw_data_files
 from xnat_ingest.cli import stage, upload
 from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
 from xnat_ingest.utils import MimeType  # type: ignore[import-untyped]
-from xnat_ingest.utils import XnatLogin, show_cli_trace
+from xnat_ingest.utils import FieldSpec, XnatLogin, show_cli_trace
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -162,6 +162,54 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner):
         "a_user",
         "a_passwordwithspecialchars*#%,;##@",
     ]
+
+
+def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
+
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--field",
+        type=FieldSpec.cli_type,
+        nargs=2,
+        multiple=True,
+        default=[["ImageType[2:]", "generic/file-set"]],
+        metavar="<field> <datatype>",
+        envvar="XINGEST_FIELD",
+        help=(
+            "The keywords of the metadata field to extract the XNAT imaging resource ID from "
+            "for different datatypes (use `generic/file-set` as a catch-all if required)."
+        ),
+    )
+    def test_cli_types(out_file: Path, field: ty.List[FieldSpec]):
+        with open(out_file, "w") as f:
+            for field_spec in field:
+                f.write(f"{field_spec.field},{field_spec.datatype.mime_like}\n")
+
+    out_file = tmp_path / "out.txt"
+
+    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+
+    for val, expected in [
+        ["ImageType[2:]", ["ImageType[2:],core/file-set"]],
+        [
+            "ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b"],
+        ],
+        [
+            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+            [
+                "SeriesNumber,medimage/dicom-series",
+                "UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+            ],
+        ],
+    ]:
+        with patch.dict(os.environ, {"XINGEST_FIELD": val}):
+            result = cli_runner(test_cli_types, [str(out_file)])
+
+        assert result.exit_code == 0, show_cli_trace(result)
+
+        assert out_file.read_text().split("\n")[:-1] == expected
 
 
 def test_stage_and_upload(
@@ -485,6 +533,48 @@ def test_stage_wait_period(
     assert list(staged_dir.iterdir())
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
+    assert list(staged_dir.iterdir())
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())
     assert list(staged_dir.iterdir())
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)

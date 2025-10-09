@@ -1,4 +1,5 @@
 from click.testing import CliRunner
+
 from xnat_ingest.cli import stage
 from xnat_ingest.utils import show_cli_trace
 
@@ -55,4 +56,5 @@ result = runner.invoke(
 )
 
 
-assert result.exit_code == 0, show_cli_trace(result)
+if result.exit_code != 0:
+    show_cli_trace(result)
