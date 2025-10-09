@@ -1,7 +1,8 @@
 import pytest
 from fileformats.medimage import DicomSeries
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import \
-    get_image as get_pet_image  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+    get_image as get_pet_image,
+)  # type: ignore[import-untyped]
 
 # PATIENT_ID = "patient-id"
 # STUDY_ID = "study-id"
@@ -38,5 +39,4 @@ def test_mrtrix_dicom_metadata(dicom_series: DicomSeries):
     assert isinstance(dicom_series.metadata["SOPInstanceUID"], list)
     assert len(dicom_series.metadata["SOPInstanceUID"]) == len(
         list(dicom_series.contents)
-    )
     )
