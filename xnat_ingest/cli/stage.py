@@ -1,22 +1,25 @@
-from pathlib import Path
-import typing as ty
-import traceback
-import click
 import datetime
-import time
 import tempfile
-from tqdm import tqdm
+import time
+import traceback
+import typing as ty
+from pathlib import Path
+
+import click
 from fileformats.core import FileSet
 from fileformats.medimage import DicomSeries
+from frametree.xnat import Xnat  # type: ignore[import-untyped]
+from tqdm import tqdm
+
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
-from frametree.xnat import Xnat  # type: ignore[import-untyped]
 from xnat_ingest.utils import (
     AssociatedFiles,
-    MimeType,
-    logger,
+    FieldSpec,
     LoggerConfig,
+    MimeType,
     XnatLogin,
+    logger,
     set_logger_handling,
 )
 
@@ -74,22 +77,28 @@ are uploaded to XNAT
 )
 @click.option(
     "--project-field",
-    type=str,
-    default="StudyID",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["StudyID", "generic/file-set"]],
     envvar="XINGEST_PROJECT",
     help=("The keyword of the metadata field to extract the XNAT project ID from "),
 )
 @click.option(
     "--subject-field",
-    type=str,
-    default="PatientID",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["PatientID", "generic/file-set"]],
     envvar="XINGEST_SUBJECT",
     help=("The keyword of the metadata field to extract the XNAT subject ID from "),
 )
 @click.option(
     "--visit-field",
-    type=str,
-    default="AccessionNumber",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["AccessionNumber", "generic/file-set"]],
     envvar="XINGEST_VISIT",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
@@ -97,7 +106,9 @@ are uploaded to XNAT
 )
 @click.option(
     "--session-field",
-    type=str,
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
     default=None,
     envvar="XINGEST_SESSION",
     help=(
@@ -106,8 +117,10 @@ are uploaded to XNAT
 )
 @click.option(
     "--scan-id-field",
-    type=str,
-    default="SeriesNumber",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["SeriesNumber", "generic/file-set"]],
     envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from "
@@ -115,8 +128,10 @@ are uploaded to XNAT
 )
 @click.option(
     "--scan-desc-field",
-    type=str,
-    default="SeriesDescription",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["SeriesDescription", "generic/file-set"]],
     envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from "
@@ -124,11 +139,15 @@ are uploaded to XNAT
 )
 @click.option(
     "--resource-field",
-    type=str,
-    default="ImageType[-1]",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=[["ImageType[2:]", "generic/file-set"]],
+    metavar="<field> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging resource ID from "
+        "The keywords of the metadata field to extract the XNAT imaging resource ID from "
+        "for different datatypes (use `generic/file-set` as a catch-all if required)."
     ),
 )
 @click.option(
@@ -288,13 +307,13 @@ def stage(
     output_dir: Path,
     datatype: list[MimeType] | None,
     associated_files: ty.List[AssociatedFiles],
-    project_field: str,
-    subject_field: str,
-    visit_field: str,
-    session_field: str | None,
-    scan_id_field: str,
-    scan_desc_field: str,
-    resource_field: str,
+    project_field: list[FieldSpec],
+    subject_field: list[FieldSpec],
+    visit_field: list[FieldSpec],
+    session_field: list[FieldSpec] | None,
+    scan_id_field: list[FieldSpec],
+    scan_desc_field: list[FieldSpec],
+    resource_field: list[FieldSpec],
     project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
@@ -482,5 +501,7 @@ def stage(
         logger.info("Staging completed successfully")
 
 
+if __name__ == "__main__":
+    stage()
 if __name__ == "__main__":
     stage()

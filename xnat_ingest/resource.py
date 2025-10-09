@@ -1,19 +1,20 @@
-import typing as ty
-import logging
 import hashlib
-from pathlib import Path
-from typing_extensions import Self
+import logging
 import shutil
+import typing as ty
+from pathlib import Path
+
 import attrs
 from fileformats.application import Json
 from fileformats.core import FileSet
-from .exceptions import (
-    IncompleteCheckumsException,
-    DifferingCheckumsException,
-)
-import xnat_ingest.scan
+from typing_extensions import Self
+
+from .exceptions import DifferingCheckumsException, IncompleteCheckumsException
 
 logger = logging.getLogger("xnat-ingest")
+
+if ty.TYPE_CHECKING:
+    from .scan import ImagingScan  # noqa
 
 
 @attrs.define
@@ -21,9 +22,7 @@ class ImagingResource:
     name: str
     fileset: FileSet
     checksums: dict[str, str] = attrs.field(eq=False, repr=False)
-    scan: "xnat_ingest.scan.ImagingScan" = attrs.field(
-        default=None, eq=False, repr=False
-    )
+    scan: "ImagingScan" = attrs.field(default=None, eq=False, repr=False)
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
@@ -192,5 +191,7 @@ class ImagingResource:
     @property
     def path(self) -> str:
         return self.scan.path + ":" + self.name
+
+    MANIFEST_FNAME = "MANIFEST.json"
 
     MANIFEST_FNAME = "MANIFEST.json"

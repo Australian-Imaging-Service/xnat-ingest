@@ -1,17 +1,22 @@
-import re
+import itertools
 import logging
+import random
+import re
+import string
+import sys
 import traceback
+import typing as ty
 from collections import Counter
 from pathlib import Path
-import sys
-import typing as ty
-import itertools
+
 import attrs
-import click.types
 import click.testing
+import click.types
 import discord
 from fileformats.core import DataType, FileSet, from_mime
 
+from .exceptions import ImagingSessionParseError
+from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -38,7 +43,7 @@ class CliType(click.types.ParamType):
 
     def __init__(
         self,
-        type_: ty.Type[ty.Union["CliTyped", "MultiCliTyped"]],
+        type_: ty.Union[ty.Type["CliTyped"], ty.Type["MultiCliTyped"]],
         multiple: bool = False,
     ):
         self.type = type_
@@ -139,6 +144,79 @@ class StoreCredentials(CliTyped):
 
     access_key: str
     access_secret: str
+
+
+@attrs.define
+class FieldSpec(MultiCliTyped):
+
+    field: str = attrs.field()
+    datatype: ty.Type[FileSet] = attrs.field(
+        converter=datatype_converter, default=FileSet
+    )
+
+    @property
+    def field_name(self) -> str:
+        return self.field.split("[")[0]
+
+    def get_value(
+        self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
+    ) -> str:
+        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.field):
+            field_name, index = match.groups()
+            if ":" in index:
+                index = slice(*(int(d) if d else None for d in index.split(":")))
+            else:
+                index = int(index)
+        else:
+            index = None
+        try:
+            value = resource.metadata[self.field_name]
+        except KeyError:
+            value = ""
+        if not value:
+            if missing_ids is not None:
+                try:
+                    value = missing_ids[self.field_name]
+                except KeyError:
+                    value = missing_ids[self.field_name] = (
+                        "INVALID_MISSING_"
+                        + re.sub(r"[^A-Z0-9_]", "_", self.field_name.upper())
+                        + "_"
+                        + "".join(
+                            random.choices(string.ascii_letters + string.digits, k=8)
+                        )
+                    )
+            else:
+                raise ImagingSessionParseError(
+                    f"Did not find '{field_name}' field in {resource!r}, "
+                    "cannot uniquely identify the resource, found:\n"
+                    + "\n".join(resource.metadata)
+                )
+        if index is not None:
+            value = value[index]
+        if isinstance(value, list):
+            value = "_".join(value)
+        elif isinstance(value, list):
+            frequency = Counter(value)
+            value = frequency.most_common(1)[0]
+        value_str = str(value)
+        value_str = invalid_path_chars_re.sub("_", value_str)
+        return value_str
+
+    @classmethod
+    def get_value_from_fields(
+        cls,
+        resource: ImagingResource,
+        id_fields: list["FieldSpec"],
+        missing_ids: dict[str, str] | None = None,
+    ) -> ty.List["FieldSpec"]:
+        for id_field in id_fields:
+            if isinstance(resource, id_field.datatype):
+                return id_field.get_value(resource, missing_ids=missing_ids)
+        raise ValueError(
+            f"No resource label field specification matches type of {resource}, "
+            f"provided {id_fields}"
+        )
 
 
 @attrs.define
@@ -402,4 +480,5 @@ _escaped_glob_replacement = re.compile(
 
 _str_templ_replacement = re.compile(r"\{[\w\.]+\}")
 
+invalid_path_chars_re = re.compile(r'[\-<>:"/\\|?*\x00-\x1F]')
 invalid_path_chars_re = re.compile(r'[\-<>:"/\\|?*\x00-\x1F]')

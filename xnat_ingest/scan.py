@@ -1,13 +1,16 @@
-import typing as ty
-import re
-from pathlib import Path
-from typing_extensions import Self
 import logging
+import re
+import typing as ty
+from pathlib import Path
+
 import attrs
 from fileformats.core import FileSet
+from typing_extensions import Self
+
+import xnat_ingest.session
+
 from .resource import ImagingResource
 from .utils import AssociatedFiles
-import xnat_ingest.session
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -18,7 +21,7 @@ def scan_type_converter(scan_type: str) -> str:
 
 
 def scan_resources_converter(
-    resources: dict[str, ImagingResource | FileSet]
+    resources: dict[str, ImagingResource | FileSet],
 ) -> ty.Dict[str, ImagingResource]:
     return {
         scan_type_converter(k): (
@@ -90,6 +93,10 @@ class ImagingScan:
                 resource.scan = scan
                 scan.resources[resource.name] = resource
         return scan
+
+    @property
+    def path(self) -> str:
+        return self.session.path + ":" + self.id + "-" + self.type
 
     @property
     def path(self) -> str:

@@ -1,39 +1,40 @@
-from pathlib import Path
-import traceback
-import typing as ty
+import datetime
+import logging
+import math
+import shutil
+import subprocess as sp
 import tempfile
 import time
-import math
-import datetime
-import subprocess as sp
-import shutil
+import traceback
+import typing as ty
+from pathlib import Path
+
 import click
-from tqdm import tqdm
 import xnat
-import logging
 from fileformats.generic import File, FileSet
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
+from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
+
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
-from xnat_ingest.resource import ImagingResource
-from xnat_ingest.utils import (
-    logger,
-    LoggerConfig,
-    UploadMethod,
-    set_logger_handling,
-    StoreCredentials,
-)
 from xnat_ingest.upload_helpers import (
-    get_xnat_session,
-    get_xnat_resource,
-    get_xnat_checksums,
     calculate_checksums,
+    dir_older_than,
+    get_xnat_checksums,
+    get_xnat_resource,
+    get_xnat_session,
     iterate_s3_sessions,
     remove_old_files_on_s3,
     remove_old_files_on_ssh,
-    dir_older_than,
+)
+from xnat_ingest.utils import (
+    LoggerConfig,
+    StoreCredentials,
+    UploadMethod,
+    logger,
+    set_logger_handling,
 )
 
 
@@ -552,5 +553,7 @@ def upload(
         logger.info("Upload completed successfully")
 
 
+if __name__ == "__main__":
+    upload()
 if __name__ == "__main__":
     upload()

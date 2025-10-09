@@ -1,26 +1,26 @@
-import typing as ty
-import re
-from glob import glob
-import logging
-from functools import cached_property
-import random
 import hashlib
+import logging
+import re
+import typing as ty
+from collections import Counter, defaultdict
 from datetime import datetime
-import string
+from functools import cached_property
+from glob import glob
 from itertools import chain
-from collections import defaultdict, Counter
 from pathlib import Path
-from typing_extensions import Self
+
 import attrs
-from tqdm import tqdm
-from fileformats.medimage import MedicalImage, DicomSeries
-from fileformats.core import from_paths, FileSet, from_mime
-from frametree.core.frameset import FrameSet
+from fileformats.core import FileSet, from_mime, from_paths
+from fileformats.medimage import DicomSeries, MedicalImage
 from frametree.core.exceptions import FrameTreeDataMatchError
+from frametree.core.frameset import FrameSet
+from tqdm import tqdm
+from typing_extensions import Self
+
 from .exceptions import ImagingSessionParseError, StagingError
-from .utils import AssociatedFiles, invalid_path_chars_re
-from .scan import ImagingScan
 from .resource import ImagingResource
+from .scan import ImagingScan
+from .utils import AssociatedFiles, FieldSpec
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -238,17 +238,15 @@ class ImagingSession:
     def from_paths(
         cls,
         files_path: str | Path,
-        datatypes: ty.Union[
-            ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]
-        ] = DicomSeries,
-        project_field: str = "StudyID",
-        subject_field: str = "PatientID",
-        visit_field: str = "AccessionNumber",
-        scan_id_field: str = "SeriesNumber",
-        scan_desc_field: str = "SeriesDescription",
-        resource_field: str = "ImageType[-1]",
-        session_field: str | None = "StudyInstanceUID",
-        project_id: str | None = None,
+        datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
+        project_field: list[FieldSpec],
+        subject_field: list[FieldSpec],
+        visit_field: list[FieldSpec],
+        scan_id_field: list[FieldSpec],
+        scan_desc_field: list[FieldSpec],
+        resource_field: list[FieldSpec],
+        session_field: list[FieldSpec],
+        project_id: list[FieldSpec] | None = None,
         avoid_clashes: bool = False,
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
@@ -258,25 +256,28 @@ class ImagingSession:
         files_path : str or Path
             Path to a directory containging the resources to load the sessions from, or a
             glob string that selects the paths
-        project_field : str
+        datatypes : type or list[type]
+            the fileformats to load from the paths, e.g. DicomSeries or
+            [DicomSeries, NiftiGz]
+        project_field : list[IdField]
             the metadata field that contains the XNAT project ID for the imaging session,
             by default "StudyID"
-        subject_field : str
+        subject_field : list[IdField]
             the metadata field that contains the XNAT subject ID for the imaging session,
             by default "PatientID"
-        visit_field : str
+        visit_field : list[IdField]
             the metadata field that contains the XNAT visit ID for the imaging session,
             by default "AccessionNumber"
-        scan_id_field: str
+        scan_id_field: list[IdField]
             the metadata field that contains the XNAT scan ID for the imaging session,
             by default "SeriesNumber"
-        scan_desc_field: str
+        scan_desc_field: list[IdField]
             the metadata field that contains the XNAT scan description for the imaging session,
             by default "SeriesDescription"
-        resource_field: str
+        resource_field: list[IdField]
             the metadata field that contains the XNAT resource ID for the imaging session,
-            by default "ImageType[-1]"
-        session_field : str, optional
+            by default {FileSet: "ImageType[-1]"}
+        session_field: list[IdField], optional
             the name of the metadata field that uniquely identifies the session, used
             to check that the values extracted from the IDs across the DICOM scans are
             consistent across DICOM files within the session, by default "StudyInstanceUID"
@@ -299,6 +300,7 @@ class ImagingSession:
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
+
         if isinstance(files_path, Path) or "*" not in files_path:
             files_path = Path(files_path)
             if not files_path.exists():
@@ -320,20 +322,24 @@ class ImagingSession:
             "%Y%m%d%H%M%S",
         )
 
+        if not isinstance(datatypes, ty.Sequence):
+            datatypes = [datatypes]
+
         from_paths_kwargs = {}
-        if datatypes is DicomSeries:
-            from_paths_kwargs["specific_tags"] = [
+        if DicomSeries in datatypes:
+            specific_tags = from_paths_kwargs["specific_tags"] = []
+            for spec in (
                 project_field,
                 subject_field,
                 visit_field,
-                session_field,
                 scan_id_field,
                 scan_desc_field,
                 resource_field,
-            ]
-
-        if not isinstance(datatypes, ty.Sequence):
-            datatypes = [datatypes]
+                session_field,
+            ):
+                for field in spec:
+                    if field.datatype is DicomSeries:
+                        specific_tags.append(field.field_name)
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
@@ -353,59 +359,38 @@ class ImagingSession:
             resources,
             "Sorting resources into XNAT tree structure...",
         ):
-            session_uid = resource.metadata[session_field] if session_field else None
-
-            def get_id(field_type: str, field_name: str) -> str:
-                if match := re.match(r"(\w+)\[([\-\d]+)\]", field_name):
-                    field_name, index = match.groups()
-                    index = int(index)
-                else:
-                    index = None
-                try:
-                    value = resource.metadata[field_name]
-                except KeyError:
-                    value = ""
-                if not value:
-                    if session_uid and field_type in ("project", "subject", "visit"):
-                        try:
-                            value = missing_ids[session_uid][field_type]
-                        except KeyError:
-                            value = missing_ids[session_uid][field_type] = (
-                                "INVALID_MISSING_"
-                                + field_type.upper()
-                                + "_"
-                                + "".join(
-                                    random.choices(
-                                        string.ascii_letters + string.digits, k=8
-                                    )
-                                )
-                            )
-                    else:
-                        raise ImagingSessionParseError(
-                            f"Did not find '{field_name}' field in {resource!r}, "
-                            "cannot uniquely identify the resource, found:\n"
-                            + "\n".join(resource.metadata)
-                        )
-                if index is not None:
-                    value = value[index]
-                elif isinstance(value, list):
-                    frequency = Counter(value)
-                    value = frequency.most_common(1)[0]
-                value_str = str(value)
-                value_str = invalid_path_chars_re.sub("_", value_str)
-                return value_str
+            session_uid = (
+                FieldSpec.get_value_from_fields(resource, session_field)
+                if session_field
+                else None
+            )
+            missing_ids_session = (
+                missing_ids[session_uid] if session_uid is not None else None
+            )
 
             if not explicit_project_id:
-                project_id = get_id("project", project_field)
-            subject_id = get_id("subject", subject_field)
-            visit_id = get_id("visit", visit_field)
-            scan_id = get_id("scan", scan_id_field)
-            scan_type = get_id("scan type", scan_desc_field)
-            if isinstance(resource, DicomSeries):
-                resource_id = "DICOM"
-            else:
-                resource_id = get_id("resource", resource_field)
+                project_id = FieldSpec.get_value_from_fields(
+                    resource, project_field, missing_ids_session
+                )
+            subject_id = FieldSpec.get_value_from_fields(
+                resource, subject_field, missing_ids_session
+            )
+            visit_id = FieldSpec.get_value_from_fields(
+                resource, visit_field, missing_ids_session
+            )
+            scan_id = FieldSpec.get_value_from_fields(
+                resource, scan_id_field, missing_ids_session
+            )
+            scan_type = FieldSpec.get_value_from_fields(
+                resource, scan_desc_field, missing_ids_session
+            )
 
+            if isinstance(resource, DicomSeries):
+                resource_label = "DICOM"  # special case
+            else:
+                resource_label = FieldSpec.get_value_from_fields(
+                    resource, resource_field
+                )
             if session_uid is None:
                 session_uid = (project_id, subject_id, visit_id)
             try:
@@ -434,7 +419,7 @@ class ImagingSession:
             session.add_resource(
                 scan_id,
                 scan_type,
-                resource_id,
+                resource_label,
                 resource,
                 avoid_clashes=avoid_clashes,
             )
