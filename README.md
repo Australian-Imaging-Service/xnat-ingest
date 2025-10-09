@@ -25,4 +25,3 @@ by
 ```
 docker run xnat-ingest --help
 ```
-```
