@@ -1,33 +1,29 @@
-from pathlib import Path
-import pytest
+import logging
 import typing as ty
+from pathlib import Path
+
+import pytest
 from fileformats.core import from_mime
 from fileformats.generic import File
 from fileformats.medimage import DicomSeries
-from fileformats.vendor.siemens.medimage import (
-    SyngoMi_RawData_Vr20b,
-    SyngoMi_CountRate_Vr20b,
-    SyngoMi_ListMode_Vr20b,
-)
-from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
+from fileformats.vendor.siemens.medimage import (SyngoMi_CountRate_Vr20b,
+                                                 SyngoMi_ListMode_Vr20b,
+                                                 SyngoMi_RawData_Vr20b)
 from frametree.common import FileSystem  # type: ignore[import-untyped]
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_pet_image,
-)
-from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_ac_image,
-)
-from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_topogram_image,
-)
-from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_statistics_image,
-)
-from xnat_ingest.session import ImagingSession, ImagingScan
-from xnat_ingest.store import DummyAxes
-from xnat_ingest.utils import AssociatedFiles
+from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import \
+    get_image as get_ac_image  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import \
+    get_image as get_statistics_image  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import \
+    get_image as get_topogram_image  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import \
+    get_image as get_pet_image  # type: ignore[import-untyped]
+
 from conftest import get_raw_data_files
-import logging
+from xnat_ingest.session import ImagingScan, ImagingSession
+from xnat_ingest.store import DummyAxes
+from xnat_ingest.utils import AssociatedFiles, FieldSpec
 
 FIRST_NAME = "Given Name"
 LAST_NAME = "FamilyName"
@@ -278,6 +274,13 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
             SyngoMi_ListMode_Vr20b,
             SyngoMi_CountRate_Vr20b,
         ],
+        project_field_spec=[FieldSpec("StudyID")],
+        subject_field_spec=[FieldSpec("PatientID")],
+        visit_field_spec=[FieldSpec("AccessionNumber")],
+        session_field_spec=[FieldSpec("StudyInstanceUID")],
+        scan_id_field_spec=[FieldSpec("SeriesNumber")],
+        scan_desc_field_spec=[FieldSpec("SeriesDescription")],
+        resource_field_spec=[FieldSpec("ImageType[2:]")],
     )
 
     staging_dir = tmp_path / "staging"
@@ -414,5 +417,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     assert "to avoid clash with existing resources" in caplog.text
     assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
         CLASH_RESOURCE_NAME,
+        CLASH_RESOURCE_NAME + "__2",
+    ]
         CLASH_RESOURCE_NAME + "__2",
     ]
