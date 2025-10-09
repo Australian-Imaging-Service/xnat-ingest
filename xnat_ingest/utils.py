@@ -68,16 +68,30 @@ class CliType(click.types.ParamType):
 
     def split_envvar_value(self, envvar: str) -> ty.Any:
         if self.multiple:
-            return list(
-                itertools.chain(
-                    *(
-                        entry.split(",", maxsplit=self.arity - 1)
-                        for entry in envvar.split(";")
-                    )
-                )
-            )
+            tokens = []
+            for entry in envvar.split(";"):
+                args = entry.split(",", maxsplit=self.arity - 1)
+                # Allow for default values supplied by the attrs type class
+                tokens.extend(self._add_defaults_for_missing_args(args, self.type))
+            return tokens
         else:
-            return envvar.split(",", maxsplit=self.arity - 1)
+            args = envvar.split(",", maxsplit=self.arity - 1)
+            return self._add_defaults_for_missing_args(args, self.type)
+
+    def _add_defaults_for_missing_args(self, args: list[str], type_: type) -> list[str]:
+        fields = attrs.fields(type_)
+        if len(args) < len(fields):
+            for field in fields[len(args) :]:
+                if field.default is not attrs.NOTHING:
+                    args.append(field.default)
+                elif field.default_factory is not attrs.NOTHING:  # type: ignore[attr-defined]
+                    args.append(field.default_factory())  # type: ignore[attr-defined]
+                else:
+                    raise click.BadParameter(
+                        f"Not enough arguments provided for {type_.__name__}, "
+                        f"missing value for '{field.name}'"
+                    )
+        return args
 
 
 @attrs.define
