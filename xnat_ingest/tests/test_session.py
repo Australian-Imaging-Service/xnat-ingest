@@ -7,24 +7,24 @@ from fileformats.core import from_mime
 from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from fileformats.vendor.siemens.medimage import (
-    SyngoMi_CountRate_Vr20b,
-    SyngoMi_ListMode_Vr20b,
-    SyngoMi_RawData_Vr20b,
+    SyngoMi_Vr20b_CountRate,
+    SyngoMi_Vr20b_ListMode,
+    SyngoMi_Vr20b_RawData,
 )
 from frametree.common import FileSystem  # type: ignore[import-untyped]
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,
-)  # type: ignore[import-untyped]
+    get_image as get_ac_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,
-)  # type: ignore[import-untyped]
+    get_image as get_statistics_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,
-)  # type: ignore[import-untyped]
+    get_image as get_topogram_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 
 from conftest import get_raw_data_files
 from xnat_ingest.session import ImagingScan, ImagingSession
@@ -48,7 +48,7 @@ RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
     ),
     # (
     #     "sinogram",
-    #     "medimage/vnd.siemens.syngo-mi.sinogram.vr20b",
+    #     "medimage/vnd.siemens.syngo-mi.vr20b.sinogram",
     #     ".*/PET_EM_SINO",
     # ),
     (
@@ -184,7 +184,7 @@ def test_session_select_resources(
     imaging_session.associate_files(
         patterns=[
             AssociatedFiles(
-                SyngoMi_RawData_Vr20b,
+                SyngoMi_Vr20b_RawData,
                 str(assoc_dir)
                 + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
                 r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.(?P<resource>[^\.]+).*",
@@ -217,9 +217,9 @@ def test_session_select_resources(
     assert set([r.datatype for r in resources]) == set(
         [
             DicomSeries,
-            SyngoMi_ListMode_Vr20b,
-            SyngoMi_CountRate_Vr20b,
-            # SyngoMi_Sinogram_Vr20b,
+            SyngoMi_Vr20b_ListMode,
+            SyngoMi_Vr20b_CountRate,
+            # SyngoMi_Vr20b_Sinogram,
         ]
     )
 
@@ -277,8 +277,8 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
     imaging_sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[
-            SyngoMi_ListMode_Vr20b,
-            SyngoMi_CountRate_Vr20b,
+            SyngoMi_Vr20b_ListMode,
+            SyngoMi_Vr20b_CountRate,
         ],
         project_field=[FieldSpec("StudyID")],
         subject_field=[FieldSpec("PatientID")],
@@ -310,8 +310,8 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
         assert set(r.name for r in resources) == set(("PET_LISTMODE", "PET_COUNTRATE"))
         assert set(type(r.fileset) for r in resources) == set(
             [
-                SyngoMi_ListMode_Vr20b,
-                SyngoMi_CountRate_Vr20b,
+                SyngoMi_Vr20b_ListMode,
+                SyngoMi_Vr20b_CountRate,
             ]
         )
 

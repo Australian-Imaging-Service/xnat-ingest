@@ -20,12 +20,12 @@ result = runner.invoke(
             "medimage/dicom-series;"
             "medimage/vnd.siemens.syngo-mi.count-rate.vr20b;"
             "medimage/vnd.siemens.syngo-mi.list-mode.vr20b;"
-            "medimage/vnd.siemens.syngo-mi.normalisation.vr20b;"
-            "medimage/vnd.siemens.syngo-mi.sinogram.vr20b;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.normalisation;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.sinogram;"
             "medimage/vnd.siemens.syngo-mi.dynamic-sinogram-series.vr20b;"
-            "medimage/vnd.siemens.syngo-mi.parameterisation.vr20b;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.parameterisation;"
             "medimage/vnd.siemens.syngo-mi.ct-spl.vr20b;"
-            "medimage/vnd.siemens.syngo-mi.physio.vr20b"
+            "medimage/vnd.siemens.syngo-mi.vr20b.physio"
         ),
         "XINGEST_DEIDENTIFIED_DIR_NAME": "DEIDENTIFIED",
         "XINGEST_DEIDENTIFY": "0",

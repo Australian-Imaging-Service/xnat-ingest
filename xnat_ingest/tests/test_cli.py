@@ -13,23 +13,27 @@ from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,
-)  # type: ignore[import-untyped]
+    get_image as get_ac_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,
-)  # type: ignore[import-untyped]
+    get_image as get_statistics_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,
-)  # type: ignore[import-untyped]
+    get_image as get_topogram_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 
 from conftest import get_raw_data_files
 from xnat_ingest.cli import stage, upload
 from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
-from xnat_ingest.utils import MimeType  # type: ignore[import-untyped]
-from xnat_ingest.utils import FieldSpec, XnatLogin, show_cli_trace
+from xnat_ingest.utils import (
+    FieldSpec,
+    MimeType,  # type: ignore[import-untyped]
+    XnatLogin,
+    show_cli_trace,
+)
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -118,7 +122,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
 
     assert out_file.read_text().split("\n") == [
         "fileformats.medimage.dicom.DicomSeries",
-        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_ListMode_Vr20b",
+        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_Vr20b_ListMode",
     ]
 
 
@@ -355,7 +359,7 @@ def test_stage_and_upload(
         ),
         # (
         #     "sinogram",
-        #     "medimage/vnd.siemens.syngo-mi.sinogram.vr20b",
+        #     "medimage/vnd.siemens.syngo-mi.vr20b.sinogram",
         #     ".*/EM_SINO",
         # ),
         (
