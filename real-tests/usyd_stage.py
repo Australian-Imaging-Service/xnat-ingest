@@ -18,13 +18,13 @@ result = runner.invoke(
         "XINGEST_COPY_MODE": "hardlink_or_copy",
         "XINGEST_DATATYPES": (
             "medimage/dicom-series;"
-            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b;"
-            "medimage/vnd.siemens.syngo-mi.list-mode.vr20b;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.list-mode;"
             "medimage/vnd.siemens.syngo-mi.vr20b.normalisation;"
             "medimage/vnd.siemens.syngo-mi.vr20b.sinogram;"
-            "medimage/vnd.siemens.syngo-mi.dynamic-sinogram-series.vr20b;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.dynamic-sinogram-series;"
             "medimage/vnd.siemens.syngo-mi.vr20b.parameterisation;"
-            "medimage/vnd.siemens.syngo-mi.ct-spl.vr20b;"
+            "medimage/vnd.siemens.syngo-mi.vr20b.ct-spl;"
             "medimage/vnd.siemens.syngo-mi.vr20b.physio"
         ),
         "XINGEST_DEIDENTIFIED_DIR_NAME": "DEIDENTIFIED",
@@ -34,7 +34,7 @@ result = runner.invoke(
         "XINGEST_LOGGERS": "stream,info,stdout;file,debug,/tmp/LOGS/xnat-ingest-stage.log",
         "XINGEST_PRE_STAGE_DIR_NAME": "PRE-STAGE",
         "XINGEST_PROJECT": "PatientComments",
-        "XINGEST_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
+        "XINGEST_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
         "XINGEST_SCAN_DESC": "SeriesDescription",
         "XINGEST_SCAN_ID": "SeriesNumber",
         "XINGEST_SPACES_TO_UNDERSCORES": "0",

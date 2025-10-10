@@ -43,7 +43,7 @@ DICOM_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
 RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
     (
         "listmode",
-        "medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
+        "medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
         ".*/PET_LISTMODE",
     ),
     # (
@@ -53,7 +53,7 @@ RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
     # ),
     (
         "countrate",
-        "medimage/vnd.siemens.syngo-mi.count-rate.vr20b",
+        "medimage/vnd.siemens.syngo-mi.vr20b.count-rate",
         ".*/PET_COUNTRATE",
     ),
 ]

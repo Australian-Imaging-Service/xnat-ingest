@@ -112,7 +112,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
         os.environ,
         {
             "XINGEST_DATATYPES": (
-                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.list-mode.vr20b"
+                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
             )
         },
     ):
@@ -197,14 +197,14 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
     for val, expected in [
         ["ImageType[2:]", ["ImageType[2:],core/file-set"]],
         [
-            "ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
-            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b"],
+            "ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
+            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data"],
         ],
         [
-            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             [
                 "SeriesNumber,medimage/dicom-series",
-                "UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+                "UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             ],
         ],
     ]:
@@ -354,7 +354,7 @@ def test_stage_and_upload(
         ("atten_corr", "medimage/dicom-series", "AC CT.*"),
         (
             "listmode",
-            "medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             ".*/LISTMODE",
         ),
         # (
@@ -364,7 +364,7 @@ def test_stage_and_upload(
         # ),
         (
             "countrate",
-            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate",
             ".*/COUNTRATE",
         ),
     ]:
@@ -388,9 +388,9 @@ def test_stage_and_upload(
             str(staging_dir),
             "--resource-field",
             "ImageType[-1]",
-            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--associated-files",
-            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b,medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate,medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
@@ -432,7 +432,7 @@ def test_stage_and_upload(
             "medimage/dicom-series",
             "--method",
             "tar_file",
-            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--use-curl-jsession",
             "--wait-period",
             "0",
