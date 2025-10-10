@@ -202,7 +202,7 @@ class FieldSpec(MultiCliTyped):
                     )
             else:
                 raise ImagingSessionParseError(
-                    f"Did not find '{field_name}' field in {resource!r}, "
+                    f"Did not find '{self.field_name}' field in {resource!r}, "
                     "cannot uniquely identify the resource, found:\n"
                     + "\n".join(resource.metadata)
                 )
