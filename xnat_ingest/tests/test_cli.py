@@ -27,7 +27,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 
 from conftest import get_raw_data_files
 from xnat_ingest.cli import stage, upload
-from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
+from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
 from xnat_ingest.utils import (
     FieldSpec,
     MimeType,  # type: ignore[import-untyped]
@@ -583,3 +583,49 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(staged_dir.iterdir())
+
+
+def test_stage_invalid_ids(
+    cli_runner,
+    tmp_path: Path,
+    capsys,
+):
+    # Get test image data
+
+    staging_dir = tmp_path / "staging"
+    dicoms_path = tmp_path / "dicoms"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir()
+
+    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    invalid_dir = staging_dir / INVALID_NAME_DEFAULT
+
+    stage_log_file = tmp_path / "stage-logs.log"
+    if stage_log_file.exists():
+        os.unlink(stage_log_file)
+
+    # Generate a test DICOM image without a patient ID
+    get_pet_image(dicoms_path, PatientID="")
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--subject-field",
+            "PatientID",
+            "generic/file-set",
+            "--raise-errors",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
+    assert not list(staged_dir.iterdir())
+    assert len(list(invalid_dir.iterdir())) == 1

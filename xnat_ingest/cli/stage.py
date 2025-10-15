@@ -109,7 +109,7 @@ are uploaded to XNAT
     type=FieldSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=None,
+    default=[["StudyInstanceUID", "medimage/dicom-collection"]],
     envvar="XINGEST_SESSION",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
@@ -365,9 +365,6 @@ def stage(
     else:
         logger.info("No XNAT login provided, will not check project IDs in XNAT")
         project_list = None
-
-    if session_field is None and DicomSeries in datatypes:
-        session_field = "StudyInstanceUID"
 
     msg = f"Loading {list(datatypes)} sessions from '{files_path}'"
 
