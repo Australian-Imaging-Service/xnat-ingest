@@ -13,23 +13,27 @@ from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,
-)  # type: ignore[import-untyped]
+    get_image as get_ac_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,
-)  # type: ignore[import-untyped]
+    get_image as get_statistics_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,
-)  # type: ignore[import-untyped]
+    get_image as get_topogram_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 
 from conftest import get_raw_data_files
 from xnat_ingest.cli import stage, upload
-from xnat_ingest.cli.stage import STAGED_NAME_DEFAULT
-from xnat_ingest.utils import MimeType  # type: ignore[import-untyped]
-from xnat_ingest.utils import FieldSpec, XnatLogin, show_cli_trace
+from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
+from xnat_ingest.utils import (
+    FieldSpec,
+    MimeType,  # type: ignore[import-untyped]
+    XnatLogin,
+    show_cli_trace,
+)
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -108,7 +112,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
         os.environ,
         {
             "XINGEST_DATATYPES": (
-                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.list-mode.vr20b"
+                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
             )
         },
     ):
@@ -118,7 +122,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
 
     assert out_file.read_text().split("\n") == [
         "fileformats.medimage.dicom.DicomSeries",
-        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_ListMode_Vr20b",
+        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_Vr20b_ListMode",
     ]
 
 
@@ -193,14 +197,14 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
     for val, expected in [
         ["ImageType[2:]", ["ImageType[2:],core/file-set"]],
         [
-            "ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
-            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b"],
+            "ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
+            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data"],
         ],
         [
-            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             [
                 "SeriesNumber,medimage/dicom-series",
-                "UID,medimage/vnd.siemens.syngo-mi.large-raw-data.vr20b",
+                "UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             ],
         ],
     ]:
@@ -350,17 +354,17 @@ def test_stage_and_upload(
         ("atten_corr", "medimage/dicom-series", "AC CT.*"),
         (
             "listmode",
-            "medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             ".*/LISTMODE",
         ),
         # (
         #     "sinogram",
-        #     "medimage/vnd.siemens.syngo-mi.sinogram.vr20b",
+        #     "medimage/vnd.siemens.syngo-mi.vr20b.sinogram",
         #     ".*/EM_SINO",
         # ),
         (
             "countrate",
-            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate",
             ".*/COUNTRATE",
         ),
     ]:
@@ -384,9 +388,9 @@ def test_stage_and_upload(
             str(staging_dir),
             "--resource-field",
             "ImageType[-1]",
-            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--associated-files",
-            "medimage/vnd.siemens.syngo-mi.count-rate.vr20b,medimage/vnd.siemens.syngo-mi.list-mode.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate,medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
@@ -428,7 +432,7 @@ def test_stage_and_upload(
             "medimage/dicom-series",
             "--method",
             "tar_file",
-            "medimage/vnd.siemens.syngo-mi.raw-data.vr20b",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--use-curl-jsession",
             "--wait-period",
             "0",
@@ -579,3 +583,49 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(staged_dir.iterdir())
+
+
+def test_stage_invalid_ids(
+    cli_runner,
+    tmp_path: Path,
+    capsys,
+):
+    # Get test image data
+
+    staging_dir = tmp_path / "staging"
+    dicoms_path = tmp_path / "dicoms"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir()
+
+    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    invalid_dir = staging_dir / INVALID_NAME_DEFAULT
+
+    stage_log_file = tmp_path / "stage-logs.log"
+    if stage_log_file.exists():
+        os.unlink(stage_log_file)
+
+    # Generate a test DICOM image without a patient ID
+    get_pet_image(dicoms_path, PatientID="")
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--subject-field",
+            "PatientID",
+            "generic/file-set",
+            "--raise-errors",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
+    assert not list(staged_dir.iterdir())
+    assert len(list(invalid_dir.iterdir())) == 1

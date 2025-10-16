@@ -11,7 +11,7 @@ from pathlib import Path
 
 import attrs
 from fileformats.core import FileSet, from_mime, from_paths
-from fileformats.medimage import DicomSeries, MedicalImage
+from fileformats.medimage import DicomCollection, MedicalImage
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
@@ -326,20 +326,20 @@ class ImagingSession:
             datatypes = [datatypes]
 
         from_paths_kwargs = {}
-        if DicomSeries in datatypes:
-            specific_tags = from_paths_kwargs["specific_tags"] = []
-            for spec in (
-                project_field,
-                subject_field,
-                visit_field,
-                scan_id_field,
-                scan_desc_field,
-                resource_field,
-                session_field,
-            ):
-                for field in spec:
-                    if field.datatype is DicomSeries:
-                        specific_tags.append(field.field_name)
+        # Optimise the reading of DICOM metadata by only selecting the specific tags that are required
+        specific_tags = from_paths_kwargs["specific_tags"] = []
+        for spec in (
+            project_field,
+            subject_field,
+            visit_field,
+            scan_id_field,
+            scan_desc_field,
+            resource_field,
+            session_field,
+        ):
+            for field in spec:
+                if issubclass(field.datatype, DicomCollection):
+                    specific_tags.append(field.field_name)
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
@@ -385,7 +385,7 @@ class ImagingSession:
                 resource, scan_desc_field, missing_ids_session
             )
 
-            if isinstance(resource, DicomSeries):
+            if isinstance(resource, DicomCollection):
                 resource_label = "DICOM"  # special case
             else:
                 resource_label = FieldSpec.get_value_from_fields(
