@@ -282,6 +282,11 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                 resource.scan.path,
                 pprint.pformat(difference),
             )
+        # Ensure that catalog is rebuilt if the file counts are 0
+        xresource.xnat_session.post(
+            "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
+            f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+        )
         return None
     logger.debug(
         "Creating resource %s in %s",
