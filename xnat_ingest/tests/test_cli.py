@@ -342,10 +342,10 @@ def test_stage_and_upload(
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
-    dataset_locator = f"testxnat//{xnat_project}"
+    dataset_address = f"testxnat//{xnat_project}"
 
     # Create dataset definition
-    result = cli_runner(dataset_define, [dataset_locator])
+    result = cli_runner(dataset_define, [dataset_address])
     assert result.exit_code == 0, show_cli_trace(result)
 
     for col_name, col_type, col_pattern in [
@@ -372,7 +372,7 @@ def test_stage_and_upload(
         result = cli_runner(
             dataset_add_source,
             [
-                dataset_locator,
+                dataset_address,
                 col_name,
                 col_type,
                 "--path",

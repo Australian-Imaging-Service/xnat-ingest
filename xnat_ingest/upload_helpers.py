@@ -283,10 +283,18 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                 pprint.pformat(difference),
             )
         # Ensure that catalog is rebuilt if the file counts are 0
-        xresource.xnat_session.post(
-            "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
-            f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
-        )
+        if not xscan.files:
+            xresource.xnat_session.post(
+                "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
+                f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+            )
+            if not xscan.files:
+                logger.error(
+                    "'%s' resource in '%s' already exists on XNAT with "
+                    "and is empty. Please delete on XNAT to overwrite\n",
+                    resource.name,
+                    resource.scan.path,
+                )
         return None
     logger.debug(
         "Creating resource %s in %s",
