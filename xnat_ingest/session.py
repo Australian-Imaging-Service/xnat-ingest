@@ -416,6 +416,12 @@ class ImagingSession:
                     multiple_sessions[session_uid].add(
                         (session.project_id, session.subject_id, session.visit_id)
                     )
+            logger.debug(
+                "Adding resource '%s' to %s scan in %s session",
+                resource_label,
+                scan_type,
+                session_uid,
+            )
             session.add_resource(
                 scan_id,
                 scan_type,

@@ -1,3 +1,5 @@
+import logging
+
 from click.testing import CliRunner
 
 from xnat_ingest.cli import stage
@@ -5,12 +7,15 @@ from xnat_ingest.utils import show_cli_trace
 
 runner = CliRunner()
 
+WORK_DIR = "/Users/tclo7153/Data/TBP"
+
+logging.basicConfig(level=logging.DEBUG)
 
 result = runner.invoke(
     stage,
     [
-        "/Users/tclo7153/Data/TBP/venture-raw-data",
-        "/Users/tclo7153/Data/TBP/TEST-STAGED",
+        f"{WORK_DIR}/RAW-DATA-EXPORT/VENTURE_P001_Galligas_Post-RT",
+        f"{WORK_DIR}/TEST-STAGED",
     ],  # XINGEST_DIR
     env={
         "XINGEST_ADDITIONAL_LOGGERS": "fileformats.",
@@ -31,7 +36,7 @@ result = runner.invoke(
         "XINGEST_DEIDENTIFY": "0",
         "XINGEST_DELETE": "0",
         "XINGEST_INVALID_DIR_NAME": "INVALID",
-        "XINGEST_LOGGERS": "stream,info,stdout;file,debug,/tmp/LOGS/xnat-ingest-stage.log",
+        "XINGEST_LOGGERS": f"stream,info,stdout;file,debug,{WORK_DIR}/xnat-ingest-test-stage.log",
         "XINGEST_PRE_STAGE_DIR_NAME": "PRE-STAGE",
         "XINGEST_PROJECT": "PatientComments",
         "XINGEST_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.vr20b.raw-data",

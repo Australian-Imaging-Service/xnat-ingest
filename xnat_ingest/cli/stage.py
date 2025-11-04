@@ -109,7 +109,7 @@ are uploaded to XNAT
     type=FieldSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=[["StudyInstanceUID", "medimage/dicom-collection"]],
+    default=[["StudyInstanceUID", "generic/file-set"]],
     envvar="XINGEST_SESSION",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
