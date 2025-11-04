@@ -208,8 +208,6 @@ class FieldSpec(MultiCliTyped):
                 )
         if index is not None:
             value = value[index]
-        if isinstance(value, list):
-            value = "_".join(value)
         elif isinstance(value, list):
             frequency = Counter(value)
             value = frequency.most_common(1)[0]
