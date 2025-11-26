@@ -497,7 +497,7 @@ def upload(
                 except Exception as e:
                     if not raise_errors:
                         logger.error(
-                            f"Skipping '{session.name}' session due to error uploading: \"{e}\""
+                            f"Skipping upload of '{str(session_staging_dir)}' due to error: \"{e}\""
                             f"\n{traceback.format_exc()}\n\n"
                         )
                         continue
