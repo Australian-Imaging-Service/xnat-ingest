@@ -142,10 +142,18 @@ class ImagingResource:
         from the files that were found
         """
         manifest_file = resource_dir / cls.MANIFEST_FNAME
+        fspaths = [p for p in resource_dir.iterdir() if p.name != cls.MANIFEST_FNAME]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
             checksums = manifest["checksums"]
             datatype: ty.Type[FileSet] = FileSet.from_mime(manifest["datatype"])  # type: ignore[assignment]
+            if missing := set(checksums) - set(
+                str(p.relative_to(resource_dir)) for p in fspaths
+            ):
+                raise IncompleteCheckumsException(
+                    f"Files listed in manifest for '{resource_dir}' resource are not present in the directory: "
+                    + "\n".join(missing)
+                )
         elif require_manifest:
             raise FileNotFoundError(
                 f"Manifest file not found in '{resource_dir}' resource, set "
@@ -154,9 +162,7 @@ class ImagingResource:
         else:
             checksums = None
             datatype = FileSet
-        fileset = datatype(
-            p for p in resource_dir.iterdir() if p.name != cls.MANIFEST_FNAME
-        )
+        fileset = datatype(fspaths)
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
         if checksums is not None and check_checksums:
             resource.check_checksums()
@@ -164,14 +170,8 @@ class ImagingResource:
 
     def check_checksums(self) -> None:
         calc_checksums = self.calculate_checksums()
+        assert set(self.checksums) == set(calc_checksums), "Checksum keys do not match"
         if calc_checksums != self.checksums:
-            if all(v == self.checksums[k] for k, v in calc_checksums.items()):
-                missing = list(set(self.checksums) - set(calc_checksums))
-                raise IncompleteCheckumsException(
-                    f"Files saved with '{self.name}' resource are incomplete "
-                    f"according to saved checksums, missing {missing}"
-                )
-
             differing = [
                 k for k in self.checksums if calc_checksums[k] != self.checksums[k]
             ]
