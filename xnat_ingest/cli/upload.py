@@ -45,11 +45,12 @@ from xnat_ingest.utils import (
 STAGED is either a directory that the files for each session are collated to before they
 are uploaded to XNAT or an S3 bucket to download the files from.
 
-SERVER is address of the XNAT server to upload the scans up to.
+SERVER is address of the XNAT server to upload the scans up to. Can alternatively provided
+by setting the "XNAT_INGEST_HOST" environment variable.
 """,
 )
-@click.argument("staged", type=str)
-@click.argument("server", type=str)
+@click.argument("staged", type=str, envvar="XINGEST_STAGED")
+@click.argument("server", type=str, envvar="XINGEST_HOST")
 @click.option(
     "--user",
     type=str,
