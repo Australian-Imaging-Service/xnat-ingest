@@ -45,18 +45,26 @@ from xnat_ingest.utils import (
 STAGED is either a directory that the files for each session are collated to before they
 are uploaded to XNAT or an S3 bucket to download the files from.
 
-SERVER is address of the XNAT server to upload the scans up to. Can alternatively provided
-by setting the "XNAT_INGEST_HOST" environment variable.
-
-USER is the XNAT user to connect with, alternatively the "XNAT_INGEST_USER" env. var
-
-PASSWORD is the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var
+SERVER is address of the XNAT server to upload the scans up to.
 """,
 )
-@click.argument("staged", type=str, envvar="XINGEST_STAGED")
-@click.argument("server", type=str, envvar="XINGEST_HOST")
-@click.argument("user", type=str, envvar="XINGEST_USER")
-@click.option("--password", default=None, type=str, envvar="XINGEST_PASS")
+@click.argument("staged", type=str)
+@click.argument("server", type=str)
+@click.option(
+    "--user",
+    type=str,
+    envvar="XINGEST_USER",
+    help=(
+        'the XNAT user to connect with (alternatively the "XNAT_INGEST_USER" env. variable can be used.'
+    ),
+)
+@click.option(
+    "--password",
+    default=None,
+    type=str,
+    envvar="XINGEST_PASS",
+    help='the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var',
+)
 @click.option(
     "--logger",
     "loggers",
@@ -298,12 +306,11 @@ def upload(
                 total=num_sessions,
                 desc=f"Processing staged sessions found in '{staged}'",
             ):
-
-                session = ImagingSession.load(
-                    session_staging_dir,
-                    require_manifest=require_manifest,
-                )
                 try:
+                    session = ImagingSession.load(
+                        session_staging_dir,
+                        require_manifest=require_manifest,
+                    )
                     # Create corresponding session on XNAT
                     logger.debug(
                         "Creating XNAT session for '%s' in project '%s'",
