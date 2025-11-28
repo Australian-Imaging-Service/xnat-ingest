@@ -33,16 +33,24 @@ class SessionListing(metaclass=abc.ABCMeta):
         pass
 
     @property
+    def ids(self):
+        return self.name.split("-")[:3]
+
+    @property
     def project_id(self) -> str:
-        return self.name.split(".")[0]
+        return self.ids[0]
 
     @property
     def subject_id(self) -> str:
-        return self.name.split(".")[1]
+        return self.ids[1]
+
+    @property
+    def visit_id(self) -> str:
+        return self.ids[2]
 
     @property
     def session_id(self) -> str:
-        return self.name.split(".")[2]
+        return "_".join((self.subject_id, self.visit_id))
 
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
@@ -73,7 +81,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         resource_paths = set()
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
-                resource_paths.add(xscan.type + "/" + xresource.label)
+                resource_paths.add(f"{xscan.id}-{xscan.type}/{xresource.label}")
         return resource_paths.issuperset(self.resource_paths)
 
 
@@ -88,11 +96,7 @@ class LocalSessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        return {
-            str(p.relative_to(self.fspath))
-            for p in self.fspath.rglob("*/*")
-            if p.is_file()
-        }
+        return {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
 
     @property
     def name(self) -> str:
@@ -103,10 +107,8 @@ class LocalSessionListing(SessionListing):
 class S3SessionListing(SessionListing):
 
     name: str
-    bucket: boto3.resources.base.ServiceResource.Bucket
-    objects: ty.List[
-        ty.Tuple[ty.List[str], boto3.resources.base.ServiceResource.Object]
-    ]
+    bucket: ty.Any
+    objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
 
     @property
