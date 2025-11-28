@@ -1,3 +1,4 @@
+import abc
 import datetime
 import hashlib
 import os
@@ -8,8 +9,10 @@ import typing as ty
 from collections import defaultdict
 from pathlib import Path
 
+import attrs
 import boto3.resources.base
 import paramiko
+import xnat
 from fileformats.core import FileSet
 from tqdm import tqdm
 
@@ -19,12 +22,118 @@ from .resource import ImagingResource
 from .session import ImagingSession
 
 
+class SessionListing(metaclass=abc.ABCMeta):
+
+    @abc.abstractproperty
+    def cache_path(self) -> Path:
+        pass
+
+    @abc.abstractproperty
+    def resource_paths(self) -> set[str]:
+        pass
+
+    @property
+    def project_id(self) -> str:
+        return self.name.split(".")[0]
+
+    @property
+    def subject_id(self) -> str:
+        return self.name.split(".")[1]
+
+    @property
+    def session_id(self) -> str:
+        return self.name.split(".")[2]
+
+    def all_uploaded(self, connection: xnat.Session) -> bool:
+        """Checks whether all the resources in this session have been uploaded to XNAT
+
+        Parameters
+        ----------
+        session : ImagingSession
+            the session to upload
+        xnat_repo : Xnat
+            the XNAT repository to upload to
+
+        Returns
+        -------
+        xsession : xnat.classes.ExperimentData | None
+            the XNAT session object
+        """
+        try:
+            xproject = connection.projects[self.project_id]
+        except KeyError:
+            raise KeyError(
+                "Project '{}' does not exist on XNAT".format(self.project_id)
+            ) from None
+        try:
+            xsession = xproject.experiments[self.session_id]
+        except KeyError:
+            return False
+
+        resource_paths = set()
+        for xscan in xsession.scans.values():
+            for xresource in xscan.resources.values():
+                resource_paths.add(xscan.type + "/" + xresource.label)
+        return resource_paths.issuperset(self.resource_paths)
+
+
+@attrs.define
+class LocalSessionListing(SessionListing):
+
+    fspath: Path
+
+    @property
+    def cache_path(self) -> Path:
+        return self.fspath
+
+    @property
+    def resource_paths(self) -> set[str]:
+        return {
+            str(p.relative_to(self.fspath))
+            for p in self.fspath.rglob("*/*")
+            if p.is_file()
+        }
+
+    @property
+    def name(self) -> str:
+        return self.fspath.name
+
+
+@attrs.define
+class S3SessionListing(SessionListing):
+
+    name: str
+    bucket: boto3.resources.base.ServiceResource.Bucket
+    objects: ty.List[
+        ty.Tuple[ty.List[str], boto3.resources.base.ServiceResource.Object]
+    ]
+    _cache_path: Path
+
+    @property
+    def cache_path(self) -> Path:
+        logger.info("Downloading session '%s' from S3 bucket", self.name)
+        for relpath, obj in tqdm(
+            self.objects,
+            desc=f"Downloading scans in '{self.name}' session from S3 bucket",
+        ):
+            obj_path = self._cache_path.joinpath(*relpath)
+            obj_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.debug("Downloading %s to %s", obj, obj_path)
+            with open(obj_path, "wb") as f:
+                self.bucket.download_fileobj(obj.key, f)
+        return self._cache_path
+
+    @property
+    def resource_paths(self) -> set[str]:
+        return {"/".join(o[0].split("/")[:2]) for o in self.objects}
+
+
 def iterate_s3_sessions(
     bucket_path: str,
     store_credentials: StoreCredentials,
     temp_dir: Path | None,
     wait_period: int,
-) -> ty.Iterator[Path]:
+) -> ty.Iterator[SessionListing]:
     """Iterate over sessions stored in an S3 bucket
 
     Parameters
@@ -82,19 +191,12 @@ def iterate_s3_sessions(
         if (
             datetime.datetime.now(datetime.timezone.utc) - last_modified
         ) >= datetime.timedelta(seconds=wait_period):
-            logger.info("Downloading session '%s' from S3 bucket", session_name)
-            for relpath, obj in tqdm(
-                objs,
-                desc=f"Downloading scans in '{session_name}' session from S3 bucket",
-            ):
-                if last_modified is None or obj.last_modified > last_modified:
-                    last_modified = obj.last_modified
-                obj_path = session_tmp_dir.joinpath(*relpath)
-                obj_path.parent.mkdir(parents=True, exist_ok=True)
-                logger.debug("Downloading %s to %s", obj, obj_path)
-                with open(obj_path, "wb") as f:
-                    bucket.download_fileobj(obj.key, f)
-            yield session_tmp_dir
+            yield S3SessionListing(
+                name=session_name,
+                objects=session_objs,
+                bucket=bucket,
+                cache_root=session_tmp_dir,
+            )
         else:
             logger.info(
                 "Skipping session '%s' as it was last modified less than %d seconds ago "
