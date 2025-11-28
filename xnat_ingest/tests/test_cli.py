@@ -453,6 +453,42 @@ def test_stage_and_upload(
     assert " - xnat - " in file_logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
+    assert "as all the resources already exist on XNAT" not in stdout_logs
+
+    # Run upload a second time, and check that already uploaded sessions are skipped
+    result = cli_runner(
+        upload,
+        [
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--additional-logger",
+            "xnat",
+            "--always-include",
+            "medimage/dicom-series",
+            "--raise-errors",
+            "--method",
+            "tgz_file",
+            "medimage/dicom-series",
+            "--method",
+            "tar_file",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+            "--num-files-per-batch",
+            "107",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert (
+        "as all the resources already exist on XNAT" in result.stdout
+    ), show_cli_trace(result)
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[xnat_project]
