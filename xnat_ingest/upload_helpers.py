@@ -127,7 +127,7 @@ class S3SessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        return {"/".join(o[0].split("/")[:2]) for o in self.objects}
+        return {"/".join(o[0][:2]) for o in self.objects}
 
 
 def iterate_s3_sessions(
@@ -195,9 +195,9 @@ def iterate_s3_sessions(
         ) >= datetime.timedelta(seconds=wait_period):
             yield S3SessionListing(
                 name=session_name,
-                objects=session_objs,
+                objects=session_objs[session_name],
                 bucket=bucket,
-                cache_root=session_tmp_dir,
+                cache_path=session_tmp_dir,
             )
         else:
             logger.info(

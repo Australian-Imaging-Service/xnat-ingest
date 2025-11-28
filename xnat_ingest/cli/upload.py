@@ -142,7 +142,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     metavar="<days>",
     envvar="XINGEST_CLEANUP_OLDER_THAN",
     default=0,
-    help="The number of days to keep files in the remote store for",
+    help="The number of days to keep files in the remote store for. If <= 0, no cleanup is performed",
 )
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
