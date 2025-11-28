@@ -44,7 +44,7 @@ class SessionListing(metaclass=abc.ABCMeta):
     def session_id(self) -> str:
         return self.name.split(".")[2]
 
-    def all_uploaded(self, connection: xnat.Session) -> bool:
+    def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
 
         Parameters
