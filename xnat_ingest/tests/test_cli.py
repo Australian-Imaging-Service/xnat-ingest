@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
+import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.medimage import DicomSeries
 from frametree.core.cli import add_source as dataset_add_source
@@ -25,7 +26,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,  # type: ignore[import-untyped]
 )
 
-from conftest import get_raw_data_files
+from conftest import TEST_S3, get_raw_data_files
 from xnat_ingest.cli import stage, upload
 from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
 from xnat_ingest.utils import (
@@ -33,6 +34,7 @@ from xnat_ingest.utils import (
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,
     show_cli_trace,
+    upload_file_to_s3,
 )
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
@@ -216,15 +218,24 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
         assert out_file.read_text().split("\n")[:-1] == expected
 
 
+@pytest.mark.parametrize(
+    "upload_source",
+    [
+        "local-dir",
+        pytest.param(
+            "s3-bucket",
+            marks=pytest.mark.skipif(TEST_S3 is None, reason="S3 not configured"),
+        ),
+    ],
+)
 def test_stage_and_upload(
     xnat_project,
     xnat_config,
     xnat_server,
     cli_runner,
-    run_prefix,
     tmp_path: Path,
     tmp_gen_dir: Path,
-    capsys,
+    upload_source: str,
 ):
     # Get test image data
 
@@ -418,10 +429,36 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
+    if upload_source == "s3-bucket":
+        # Upload staged data to S3 bucket
+
+        test_s3 = TEST_S3[5:] if TEST_S3.startswith("s3://") else TEST_S3
+        if "/" in test_s3:
+            s3_bucket, s3_prefix = test_s3.split("/", maxsplit=1)
+            s3_prefix += "/"
+        else:
+            s3_bucket = test_s3
+            s3_prefix = ""
+
+        s3_prefix += f"xnat-ingest-tests/{xnat_project}"
+        stage_dir = staging_dir / STAGED_NAME_DEFAULT
+        for fspath in stage_dir.glob("**/*"):
+            if fspath.is_file():
+                upload_file_to_s3(
+                    fspath,
+                    s3_bucket,
+                    f"{s3_prefix.rstrip('/')}/{fspath.relative_to(stage_dir)}",
+                )
+
+        staging_source = f"s3://{s3_bucket}/{s3_prefix}"
+
+    else:
+        staging_source = str(staging_dir / STAGED_NAME_DEFAULT)
+
     result = cli_runner(
         upload,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            staging_source,
             "--additional-logger",
             "xnat",
             "--always-include",
@@ -453,6 +490,42 @@ def test_stage_and_upload(
     assert " - xnat - " in file_logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
+    assert "as all the resources already exist on XNAT" not in stdout_logs
+
+    # Run upload a second time, and check that already uploaded sessions are skipped
+    result = cli_runner(
+        upload,
+        [
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--additional-logger",
+            "xnat",
+            "--always-include",
+            "medimage/dicom-series",
+            "--raise-errors",
+            "--method",
+            "tgz_file",
+            "medimage/dicom-series",
+            "--method",
+            "tar_file",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+            "--num-files-per-batch",
+            "107",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert (
+        "as all the resources already exist on XNAT" in result.stdout
+    ), show_cli_trace(result)
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[xnat_project]

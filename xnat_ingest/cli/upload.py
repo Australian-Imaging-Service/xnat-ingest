@@ -20,6 +20,8 @@ from xnat.exceptions import XNATResponseError
 from xnat_ingest.cli.base import cli
 from xnat_ingest.session import ImagingSession
 from xnat_ingest.upload_helpers import (
+    LocalSessionListing,
+    SessionListing,
     calculate_checksums,
     dir_older_than,
     get_xnat_checksums,
@@ -140,7 +142,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     metavar="<days>",
     envvar="XINGEST_CLEANUP_OLDER_THAN",
     default=0,
-    help="The number of days to keep files in the remote store for",
+    help="The number of days to keep files in the remote store for. If <= 0, no cleanup is performed",
 )
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
@@ -222,7 +224,7 @@ def upload(
     use_curl_jsession: bool,
     methods: ty.Sequence[UploadMethod],
     wait_period: int,
-    loop: int | None,
+    loop: int,
     num_files_per_batch: int,
 ) -> None:
 
@@ -276,7 +278,7 @@ def upload(
         with xnat_repo.connection:
 
             num_sessions: int
-            sessions: ty.Iterable[Path]
+            sessions: ty.Iterable[SessionListing]
             if staged.startswith("s3://"):
                 sessions = iterate_s3_sessions(
                     staged, store_credentials, temp_dir, wait_period=wait_period
@@ -287,7 +289,7 @@ def upload(
                 sessions = []
                 for session_dir in Path(staged).iterdir():
                     if dir_older_than(session_dir, wait_period):
-                        sessions.append(session_dir)
+                        sessions.append(LocalSessionListing(session_dir))
                     else:
                         logger.info(
                             "Skipping '%s' session as it has been modified recently",
@@ -302,14 +304,23 @@ def upload(
 
             framesets: dict[str, FrameSet] = {}
 
-            for session_staging_dir in tqdm(
+            for session_listing in tqdm(
                 sessions,
                 total=num_sessions,
                 desc=f"Processing staged sessions found in '{staged}'",
             ):
+
                 try:
+
+                    if session_listing.all_uploaded(xnat_repo.connection):
+                        logger.info(
+                            "Skipping upload of '%s' as all the resources already exist on XNAT",
+                            session_listing.name,
+                        )
+                        continue  # skip as session already exists
+
                     session = ImagingSession.load(
-                        session_staging_dir,
+                        session_listing.cache_path,
                         require_manifest=require_manifest,
                     )
                     # Create corresponding session on XNAT
@@ -340,6 +351,7 @@ def upload(
                                 frameset = None
                         framesets[session.project_id] = frameset
 
+                    # Get the XNAT session object (creates it if it does not exist)
                     xsession = get_xnat_session(session, xproject)
 
                     # Anonymise DICOMs and save to directory prior to upload
@@ -497,7 +509,7 @@ def upload(
                 except Exception as e:
                     if not raise_errors:
                         logger.error(
-                            f"Skipping upload of '{str(session_staging_dir)}' due to error: \"{e}\""
+                            f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
                             f"\n{traceback.format_exc()}\n\n"
                         )
                         continue
