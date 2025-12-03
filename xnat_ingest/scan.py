@@ -31,6 +31,35 @@ def scan_resources_converter(
     }
 
 
+# ---- START Extended functionality for EEG/MEG support ---- #
+def scan_type_converter(scan_type: str) -> str:
+    """Convert scan type to valid XNAT scan type string with EEG/MEG support"""
+    # Remove invalid characters for XNAT scan types
+    invalid_chars = r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+"
+    
+    # Special handling for EEG/MEG scan types
+    if any(t in scan_type.upper() for t in ["EEG", "MEG"]):
+        # Preserve EEG/MEG prefix while cleaning
+        cleaned = re.sub(invalid_chars, "", scan_type)
+        # Ensure consistent capitalization for EEG/MEG
+        return re.sub(r"(eeg|meg)", lambda m: m.group(0).upper(), cleaned, flags=re.IGNORECASE)
+    
+    # Original handling for other scan types
+    return re.sub(invalid_chars, "", scan_type)
+
+
+def detect_scan_modality(resource) -> str:
+    """Detect modality with EEG/MEG support"""
+    # Check if resource is EEG/MEG type first
+    if isinstance(resource.datatype, (EEGData, MEGData)):
+        return "EEG" if isinstance(resource.datatype, EEGData) else "MEG"
+    
+    # Original modality detection logic
+    if resource.metadata:
+        return resource.metadata.get("Modality", "UNKNOWN")
+    return "UNKNOWN"
+# ---- END Extended functionality for EEG/MEG support ---- #
+
 @attrs.define
 class ImagingScan:
     """Representation of a scan to be uploaded to XNAT
