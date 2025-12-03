@@ -1,22 +1,24 @@
-import os
-from pathlib import Path
 import logging
-import typing as ty
+import os
 import tempfile
+import typing as ty
+from datetime import datetime
+from pathlib import Path
+
+import click.testing
 
 # from logging.handlers import SMTPHandler
 import pytest
-import click.testing
-from click.testing import CliRunner
 import xnat4tests  # type: ignore[import-untyped]
-from datetime import datetime
-from xnat_ingest.utils import logger
-from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode import (
-    get_data as get_listmode_data,
-)
+from click.testing import CliRunner
 from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_countrate import (
     get_data as get_countrate_data,
 )
+from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode import (
+    get_data as get_listmode_data,
+)
+
+from xnat_ingest.utils import logger
 
 # Set DEBUG logging for unittests
 
@@ -27,6 +29,7 @@ sch.setFormatter(formatter)
 logger.addHandler(sch)
 
 PROJECT_ID = "PROJECT_ID"
+TEST_S3 = os.getenv("XINGEST_TEST_S3")
 
 # For debugging in IDE's don't catch raised exceptions and let the IDE
 # break at it

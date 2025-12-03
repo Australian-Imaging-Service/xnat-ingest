@@ -1,4 +1,3 @@
-import itertools
 import logging
 import random
 import re
@@ -10,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 import attrs
+import boto3
 import click.testing
 import click.types
 import discord
@@ -487,6 +487,13 @@ _escaped_glob_tokens_to_re = dict(
         (r"\]", "]"),
     )
 )
+
+
+def upload_file_to_s3(file_path: Path, bucket: str, s3_key: str) -> None:
+
+    s3_client = boto3.client("s3")
+    s3_client.upload_file(str(file_path), bucket, s3_key)
+
 
 _escaped_glob_replacement = re.compile(
     "(%s)" % "|".join(_escaped_glob_tokens_to_re).replace("\\", "\\\\\\")
