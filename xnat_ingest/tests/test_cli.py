@@ -27,7 +27,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import TEST_S3, get_raw_data_files
-from xnat_ingest.cli import stage, upload
+from xnat_ingest.cli import check_upload, stage, upload
 from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
 from xnat_ingest.utils import (
     FieldSpec,
@@ -258,6 +258,10 @@ def test_stage_and_upload(
     if upload_log_file.exists():
         os.unlink(upload_log_file)
 
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+    if check_upload_log_file.exists():
+        os.unlink(check_upload_log_file)
+
     # Delete any existing sessions from previous test runs
     session_ids = []
     with xnat4tests.connect() as xnat_login:
@@ -401,7 +405,7 @@ def test_stage_and_upload(
             "ImageType[-1]",
             "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--associated-files",
-            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate,medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             str(associated_files_dir)
             + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
@@ -542,6 +546,30 @@ def test_stage_and_upload(
                 # "603",
             ]
 
+    # Run upload a second time, and check that already uploaded sessions are skipped
+    result = cli_runner(
+        check_upload,
+        [
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--always-include",
+            "medimage/dicom-series",
+            "--raise-errors",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file,debug,{check_upload_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    file_logs = check_upload_log_file.read_text()
+    assert (
+        "No issues found with the upload, staged files can be removed" in file_logs
+    ), show_cli_trace(result)
+
 
 def test_stage_wait_period(
     cli_runner,
@@ -608,54 +636,6 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
-    assert list(staged_dir.iterdir())
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
 
 
 def test_stage_invalid_ids(
@@ -702,3 +682,57 @@ def test_stage_invalid_ids(
     assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
     assert not list(staged_dir.iterdir())
     assert len(list(invalid_dir.iterdir())) == 1
+
+
+def test_check_upload_error(
+    cli_runner,
+    tmp_path: Path,
+    capsys,
+):
+    # Get test image data
+
+    input_dir = tmp_path / "inputs"
+    staging_dir = tmp_path / "staging"
+    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    check_upload_log_file = tmp_path / "stage-logs.log"
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": "stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    time.sleep(10)
+
+    result = cli_runner(
+        stage,
+        [
+            str(dicoms_path),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert list(staged_dir.iterdir())

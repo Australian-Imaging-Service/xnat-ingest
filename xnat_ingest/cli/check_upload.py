@@ -1,38 +1,28 @@
-import datetime
 import logging
-import math
-import shutil
+import pprint
 import subprocess as sp
 import tempfile
-import time
-import traceback
 import typing as ty
 from pathlib import Path
 
 import click
 import xnat
-from fileformats.generic import File, FileSet
-from frametree.core.frameset import FrameSet
+
+# from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
-from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import cli
-from xnat_ingest.session import ImagingSession
 from xnat_ingest.upload_helpers import (
     LocalSessionListing,
     SessionListing,
-    calculate_checksums,
-    dir_older_than,
     get_xnat_checksums,
-    get_xnat_resource,
     get_xnat_session,
     iterate_s3_sessions,
 )
 from xnat_ingest.utils import (
     LoggerConfig,
     StoreCredentials,
-    UploadMethod,
     logger,
     set_logger_handling,
 )
@@ -91,6 +81,22 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     ),
 )
 @click.option(
+    "--store-credentials",
+    type=StoreCredentials.cli_type,
+    metavar="<access-key> <secret-key>",
+    envvar="XINGEST_STORE_CREDENTIALS",
+    default=None,
+    nargs=2,
+    help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
+)
+@click.option(
+    "--temp-dir",
+    type=Path,
+    default=None,
+    envvar="XINGEST_TEMPDIR",
+    help="The directory to use for temporary downloads (i.e. from s3)",
+)
+@click.option(
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
     default=True,
@@ -115,8 +121,6 @@ def check_upload(
     password: str,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
-    always_include: ty.Sequence[str],
-    raise_errors: bool,
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
     verify_ssl: bool,
@@ -162,20 +166,14 @@ def check_upload(
         sessions: ty.Iterable[SessionListing]
         if staged.startswith("s3://"):
             sessions = iterate_s3_sessions(
-                staged, store_credentials, temp_dir, wait_period=wait_period
+                staged, store_credentials, temp_dir, wait_period=0
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
         else:
             sessions = []
             for session_dir in Path(staged).iterdir():
-                if dir_older_than(session_dir, wait_period):
-                    sessions.append(LocalSessionListing(session_dir))
-                else:
-                    logger.info(
-                        "Skipping '%s' session as it has been modified recently",
-                        session_dir,
-                    )
+                sessions.append(LocalSessionListing(session_dir))
             num_sessions = len(sessions)
             logger.info(
                 "Found %d sessions in staging directory to stage'%s'",
@@ -183,7 +181,9 @@ def check_upload(
                 staged,
             )
 
-        framesets: dict[str, FrameSet] = {}
+        # framesets: dict[str, FrameSet] = {}
+
+        num_issues = 0
 
         for session_listing in tqdm(
             sessions,
@@ -191,201 +191,79 @@ def check_upload(
             desc=f"Processing staged sessions found in '{staged}'",
         ):
 
-            try:
+            xproject = xnat_repo.connection.projects[session_listing.project_id]
 
-                if session_listing.all_uploaded(xnat_repo.connection):
-                    logger.info(
-                        "Skipping upload of '%s' as all the resources already exist on XNAT",
-                        session_listing.name,
-                    )
-                    continue  # skip as session already exists
+            # # Access Arcana frameset associated with project
+            # try:
+            #     frameset = framesets[session_listing.project_id]
+            # except KeyError:
+            #     try:
+            #         frameset = FrameSet.load(session_listing.project_id, xnat_repo)
+            #     except Exception as e:
+            #         if not always_include:
+            #             logger.error(
+            #                 "Did not load frameset definition (%s) from %s project "
+            #                 "on %s. Either '--always-include' flag must be used or "
+            #                 "the frameset must be defined on XNAT using the `frametree` "
+            #                 "command line tool (see https://arcanaframework.github.io/frametree/).",
+            #                 e,
+            #                 session_listing.project_id,
+            #                 xnat_repo.server,
+            #             )
+            #             continue
+            #         else:
+            #             frameset = None
+            #     framesets[session_listing.project_id] = frameset
 
-                session = ImagingSession.load(
-                    session_listing.cache_path,
-                    require_manifest=require_manifest,
-                )
-                # Create corresponding session on XNAT
-                logger.debug(
-                    "Creating XNAT session for '%s' in project '%s'",
-                )
-                xproject = xnat_repo.connection.projects[session.project_id]
+            # Get the XNAT session object (creates it if it does not exist)
+            xsession = get_xnat_session(session_listing, xproject)
 
-                # Access Arcana frameset associated with project
+            for resource, checksums in session_listing.resource_manifests.items():
                 try:
-                    frameset = framesets[session.project_id]
+                    xscan = xsession.scans[session_listing.scan_id]
                 except KeyError:
-                    try:
-                        frameset = FrameSet.load(session.project_id, xnat_repo)
-                    except Exception as e:
-                        if not always_include:
-                            logger.error(
-                                "Did not load frameset definition (%s) from %s project "
-                                "on %s. Either '--always-include' flag must be used or "
-                                "the frameset must be defined on XNAT using the `frametree` "
-                                "command line tool (see https://arcanaframework.github.io/frametree/).",
-                                e,
-                                session.project_id,
-                                xnat_repo.server,
-                            )
-                            continue
-                        else:
-                            frameset = None
-                    framesets[session.project_id] = frameset
-
-                # Get the XNAT session object (creates it if it does not exist)
-                xsession = get_xnat_session(session, xproject)
-
-                # Anonymise DICOMs and save to directory prior to upload
-                if always_include:
-                    logger.info(
-                        f"Including {always_include} scans/files in upload from '{session.name}' to "
-                        f"{session.path} regardless of whether they are explicitly specified"
+                    pass
+                # Ensure that catalog is rebuilt if the file counts are 0
+                if not xscan.files:
+                    xscan.resources[resource].xnat_session.post(
+                        "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
+                        f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
                     )
-
-                for resource in tqdm(
-                    sorted(
-                        session.select_resources(
-                            frameset, always_include=always_include
+                    if not xscan.files:
+                        logger.error(
+                            "EMPTY - '%s' resource is empty. Please delete on XNAT to overwrite\n",
+                            resource,
                         )
-                    ),
-                    f"Uploading resources found in {session.name}",
-                ):
-                    xresource = get_xnat_resource(resource, xsession)
-                    if xresource is None:
-                        logger.info(
-                            "Skipping '%s' resource as it is already uploaded",
-                            resource.path,
-                        )
-                        continue  # skipping as resource already exists
-                    else:
-                        logger.debug(
-                            "Uploading '%s' resource to '%s'",
-                            resource.path,
-                            xresource,
-                        )
-                    if isinstance(resource.fileset, File):
-                        for fspath in resource.fileset.fspaths:
-                            logger.debug(
-                                "Uploading '%s' to '%s' in %s",
-                                fspath,
-                                fspath.name,
-                                xresource,
-                            )
-                            xresource.upload(str(fspath), fspath.name)
-                    else:
-                        # Upload the contents of the resource to XNAT
-                        upload_method = get_method(type(resource.fileset))
-                        # Get the directory containing the files to upload
-                        # and create a temporary upload directory alongside it
-                        # to hardlink files to upload in each batch into
-                        dir_to_upload = resource.fileset.parent
-                        upload_dir = dir_to_upload.parent / (
-                            "." + dir_to_upload.name + "-upload"
-                        )
-                        # Split the files to upload into batches and hardlink them into
-                        # separate directories so we can use upload_dir
-                        files_to_upload = list(resource.fileset.fspaths)
-                        num_files = len(files_to_upload)
-                        batch_size = (
-                            num_files_per_batch
-                            if num_files_per_batch > 0
-                            else num_files
-                        )
-                        num_batches = math.ceil(num_files / batch_size)
-                        logger.debug(
-                            "Uploading %s files to '%s' in %s in %s batches of %s files using '%s' method",
-                            num_files,
-                            resource.path,
-                            xresource,
-                            num_batches,
-                            batch_size,
-                            upload_method,
-                        )
-                        for i in range(num_batches):
-                            # Create a temporary directory to upload the batch from
-                            if upload_dir.exists():
-                                shutil.rmtree(upload_dir)
-                            upload_dir.mkdir()
-                            for fspath in files_to_upload[
-                                i * batch_size : (i + 1) * batch_size
-                            ]:
-                                dest = upload_dir / fspath.relative_to(dir_to_upload)
-                                dest.hardlink_to(fspath)
-                            logger.debug(
-                                "Uploading batch %s of %s of '%s' to %s with '%s' method",
-                                i,
-                                num_batches,
-                                upload_dir,
-                                xresource,
-                                upload_method,
-                            )
-                            xresource.upload_dir(upload_dir, method=upload_method)
-                            shutil.rmtree(upload_dir)
-                    logger.debug("retrieving checksums for %s", xresource)
-                    remote_checksums = get_xnat_checksums(xresource)
-                    if any(remote_checksums.values()):
-                        logger.debug("calculating checksums for %s", xresource)
-                        calc_checksums = calculate_checksums(resource.fileset)
-                        if remote_checksums != calc_checksums:
-                            extra_keys = set(remote_checksums) - set(calc_checksums)
-                            missing_keys = set(calc_checksums) - set(remote_checksums)
-                            intersect_keys = set(calc_checksums) & set(remote_checksums)
-                            mismatching = [
-                                k for k, v in intersect_keys if v != remote_checksums[k]
-                            ]
-                            raise RuntimeError(
-                                "Checksums do not match after upload of "
-                                f"'{resource.path}' resource.\n"
-                                f"Extra keys were {extra_keys}\n"
-                                f"Missing keys were {missing_keys}\n"
-                                f"Mismatching files were {mismatching}\n"
-                                f"Remote checksums were {remote_checksums}\n"
-                                f"Calculated checksums were {calc_checksums}\n"
-                            )
-                    else:
-                        logger.debug(
-                            "Remote checksums were not calculted for %s "
-                            "(requires `enableChecksums` to be set site-wide), "
-                            "assuming upload was successful",
-                            xresource,
-                        )
-
-                    logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
-                logger.info(f"Successfully uploaded all files in '{session.name}'")
-                # Extract DICOM metadata
-                logger.info("Extracting metadata from DICOMs on XNAT..")
+                        num_issues += 1
                 try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
-                    )
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?fixScanTypes=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(f"Failed to fix scan types in '{session.name}': {e}")
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?triggerPipelines=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to trigger pipelines in '{session.name}': {e}"
-                    )
-                logger.info(f"Succesfully uploaded all files in '{session.name}'")
-            except Exception as e:
-                if not raise_errors:
+                    xresource = xscan.resources[resource]
+                except KeyError:
                     logger.error(
-                        f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
-                        f"\n{traceback.format_exc()}\n\n"
+                        f"MISSING - '{resource}' was not found in the XNAT project"
                     )
-                    continue
+                    num_issues += 1
                 else:
-                    raise
+                    xchecksums = get_xnat_checksums(xresource)
+                    if checksums != xchecksums:
+                        difference = {
+                            k: (v, checksums[k])
+                            for k, v in xchecksums.items()
+                            if v != checksums[k]
+                        }
+                        logger.error(
+                            "CHECKSUM FAIL - '%s' resource in '%s' already exists on XNAT with "
+                            "different checksums. Please delete on XNAT to overwrite:\n%s",
+                            resource,
+                            resource.scan.path,
+                            pprint.pformat(difference),
+                        )
+                        num_issues += 1
+        if num_issues:
+            logger.error(
+                f"{num_issues} found with the upload, please check logs for details"
+            )
+        else:
+            logger.info("No issues found with the upload, staged files can be removed")
 
     if use_curl_jsession:
         xnat_repo.connection.exit()
