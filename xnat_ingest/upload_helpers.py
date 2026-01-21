@@ -112,8 +112,8 @@ class LocalSessionListing(SessionListing):
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for relpath in sorted(self.resource_paths):
-            manifest = Json(self.cache_path.joinpath(*relpath) / "MANIFEST.json")
-            manifests["/".join(relpath)] = manifest.contents
+            manifest = Json(self.cache_path / relpath / "MANIFEST.json")
+            manifests[relpath] = manifest.contents
         return manifests
 
 

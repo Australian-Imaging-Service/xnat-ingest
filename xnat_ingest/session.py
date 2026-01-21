@@ -169,7 +169,7 @@ class ImagingSession:
                 fileformat = FileSet
             else:
                 fileformat = from_mime(mime_like)  # type: ignore[assignment]
-                if isinstance(fileformat, FileSet):
+                if not issubclass(fileformat, FileSet):
                     raise ValueError(
                         f"{mime_like!r} does not correspond to a file format ({fileformat})"
                     )

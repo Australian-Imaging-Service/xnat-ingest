@@ -9,7 +9,9 @@ from unittest.mock import patch
 import click
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
+from fileformats.application import Json
 from fileformats.medimage import DicomSeries
+from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
@@ -76,13 +78,13 @@ are uploaded to XNAT
     help="The XNAT server to upload to plus the user and password to use",
     envvar="XINGEST_XNAT_LOGIN",
 )
-def test_cli_types(out_file: Path, datatype: ty.List[MimeType]):
+def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
     fileformats = [m.datatype for m in datatype]
     with open(out_file, "w") as f:
         f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
 
 
-def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
+def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
@@ -101,7 +103,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
             '"extra" are supported, see FF docs on how to add support for new formats.'
         ),
     )
-    def test_cli_types(out_file: Path, datatype: ty.List[MimeType]):
+    def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
         fileformats = [m.datatype for m in datatype]
         with open(out_file, "w") as f:
             f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
@@ -128,7 +130,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner):
     ]
 
 
-def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner):
+def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
@@ -141,7 +143,7 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner):
         help="The XNAT server to upload to plus the user and password to use",
         envvar="XINGEST_XNAT_LOGIN",
     )
-    def test_cli_types(out_file: Path, xnat_login: XnatLogin):
+    def test_cli_types(out_file: Path, xnat_login: XnatLogin) -> None:
         with open(out_file, "w") as f:
             f.write(xnat_login.host + "\n")
             f.write(xnat_login.user + "\n")
@@ -170,7 +172,7 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner):
     ]
 
 
-def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
+def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
@@ -187,7 +189,7 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
             "for different datatypes (use `generic/file-set` as a catch-all if required)."
         ),
     )
-    def test_cli_types(out_file: Path, field: ty.List[FieldSpec]):
+    def test_cli_types(out_file: Path, field: ty.List[FieldSpec]) -> None:
         with open(out_file, "w") as f:
             for field_spec in field:
                 f.write(f"{field_spec.field},{field_spec.datatype.mime_like}\n")
@@ -229,14 +231,14 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner):
     ],
 )
 def test_stage_and_upload(
-    xnat_project,
-    xnat_config,
-    xnat_server,
-    cli_runner,
+    xnat_project: str,
+    xnat_config: ty.Any,
+    xnat_server: str,
+    cli_runner: ty.Any,
     tmp_path: Path,
     tmp_gen_dir: Path,
     upload_source: str,
-):
+) -> None:
     # Get test image data
 
     dicoms_dir = tmp_path / "dicoms"
@@ -572,10 +574,10 @@ def test_stage_and_upload(
 
 
 def test_stage_wait_period(
-    cli_runner,
+    cli_runner: ty.Any,
     tmp_path: Path,
-    capsys,
-):
+    capsys: ty.Any,
+) -> None:
     # Get test image data
 
     staging_dir = tmp_path / "staging"
@@ -639,10 +641,10 @@ def test_stage_wait_period(
 
 
 def test_stage_invalid_ids(
-    cli_runner,
+    cli_runner: ty.Any,
     tmp_path: Path,
-    capsys,
-):
+    capsys: ty.Any,
+) -> None:
     # Get test image data
 
     staging_dir = tmp_path / "staging"
@@ -685,54 +687,103 @@ def test_stage_invalid_ids(
 
 
 def test_check_upload_error(
-    cli_runner,
+    xnat_project: str,
+    xnat_config: ty.Any,
+    xnat_server: str,
+    cli_runner: ty.Any,
     tmp_path: Path,
-    capsys,
-):
+) -> None:
     # Get test image data
 
-    input_dir = tmp_path / "inputs"
+    inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
     staged_dir = staging_dir / STAGED_NAME_DEFAULT
-    check_upload_log_file = tmp_path / "stage-logs.log"
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": xnat_project,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
         stage,
         [
-            str(dicoms_path),
+            str(inputs_dir),
             str(staging_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
-            "10",
+            "0",
         ],
         env={
             "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload,
+        [
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--always-include",
+            "testing/my-format-gz-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
 
-    time.sleep(10)
-
     result = cli_runner(
-        stage,
+        check_upload,
         [
-            str(dicoms_path),
-            str(staging_dir),
-            "--raise-errors",
-            "--delete",
-            "--wait-period",
-            "10",
+            str(staging_dir / STAGED_NAME_DEFAULT),
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
-            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
-    logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "EMPTY RESOURCE" not in logs
+    assert "CHECKSUM FAIL" not in logs

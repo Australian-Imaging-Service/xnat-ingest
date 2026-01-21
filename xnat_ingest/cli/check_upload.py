@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 import xnat
+from fileformats.core import FileSet, from_mime
 
 # from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -81,6 +82,21 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     ),
 )
 @click.option(
+    "--always-include",
+    "-i",
+    default=[],
+    type=str,
+    multiple=True,
+    envvar="XINGEST_ALWAYSINCLUDE",
+    help=(
+        "Scan types to always include in the upload, regardless of whether they are"
+        "specified in a column or not. Specified using the scan types IANA mime-type or "
+        'fileformats "mime-like" (see https://arcanaframework.github.io/fileformats/), '
+        "e.g. 'application/json', 'medimage/dicom-series', "
+        "'image/jpeg'). Use 'all' to include all file-types in the session"
+    ),
+)
+@click.option(
     "--store-credentials",
     type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
@@ -120,6 +136,7 @@ def check_upload(
     user: str,
     password: str,
     loggers: ty.List[LoggerConfig],
+    always_include: ty.Sequence[str],
     additional_loggers: ty.List[str],
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
@@ -159,6 +176,19 @@ def check_upload(
         xnat_repo.connection.session = xnat.connect(
             server, user=user, jsession=jsession, logger=logging.getLogger("xnat")
         )
+
+    included_formats = set()
+
+    for mime_like in always_include:
+        if mime_like == "all":
+            included_formats.add(FileSet)
+        else:
+            fileformat = from_mime(mime_like)  # type: ignore[assignment]
+            if not issubclass(fileformat, FileSet):
+                raise ValueError(
+                    f"{mime_like!r} does not correspond to a file format ({fileformat})"
+                )
+            included_formats.add(fileformat)
 
     with xnat_repo.connection:
 
@@ -218,52 +248,79 @@ def check_upload(
             # Get the XNAT session object (creates it if it does not exist)
             xsession = get_xnat_session(session_listing, xproject)
 
-            for resource, checksums in session_listing.resource_manifests.items():
-                try:
-                    xscan = xsession.scans[session_listing.scan_id]
-                except KeyError:
-                    pass
-                # Ensure that catalog is rebuilt if the file counts are 0
-                if not xscan.files:
-                    xscan.resources[resource].xnat_session.post(
-                        "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
-                        f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+            session_desc = f"{session_listing.name} in {xproject.id}"
+
+            for resource_path, manifests in session_listing.resource_manifests.items():
+                scan_path, resource_name = resource_path.split("/", 1)
+                scan_id, _ = scan_path.split("-", 1)
+                datatype = from_mime(manifests["datatype"])
+                checksums = manifests["checksums"]
+                if not any(issubclass(datatype, r) for r in included_formats):
+                    logger.debug(
+                        "Skipping checking %s in %s as it isn't in the included formats %s",
+                        resource_path,
+                        session_desc,
+                        included_formats,
                     )
-                    if not xscan.files:
-                        logger.error(
-                            "EMPTY - '%s' resource is empty. Please delete on XNAT to overwrite\n",
-                            resource,
-                        )
-                        num_issues += 1
+                    continue
                 try:
-                    xresource = xscan.resources[resource]
+                    xscan = xsession.scans[scan_id]
                 except KeyError:
                     logger.error(
-                        f"MISSING - '{resource}' was not found in the XNAT project"
+                        "MISSING SCAN - '%s' was not found in %s",
+                        scan_path,
+                        session_desc,
                     )
-                    num_issues += 1
                 else:
-                    xchecksums = get_xnat_checksums(xresource)
-                    if checksums != xchecksums:
-                        difference = {
-                            k: (v, checksums[k])
-                            for k, v in xchecksums.items()
-                            if v != checksums[k]
-                        }
+                    # Ensure that catalog is rebuilt if the file counts are 0
+                    if not xscan.files:
+                        # Force the rebuild of the catalog if no files are found to check they aren't there in
+                        # the background already
+                        xscan.resources[resource_name].xnat_session.post(
+                            "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
+                            f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+                        )
+                        if not xscan.files:
+                            logger.error(
+                                "EMPTY SCAN - '%s' in %s is empty. Please delete on XNAT to overwrite\n",
+                                scan_path,
+                                session_desc,
+                            )
+                            num_issues += 1
+                    try:
+                        xresource = xscan.resources[resource_name]
+                    except KeyError:
                         logger.error(
-                            "CHECKSUM FAIL - '%s' resource in '%s' already exists on XNAT with "
-                            "different checksums. Please delete on XNAT to overwrite:\n%s",
-                            resource,
-                            resource.scan.path,
-                            pprint.pformat(difference),
+                            "MISSING RESOURCE - '%s' was not found in %s in %s",
+                            resource_name,
+                            scan_path,
+                            session_desc,
                         )
                         num_issues += 1
-        if num_issues:
-            logger.error(
-                f"{num_issues} found with the upload, please check logs for details"
-            )
-        else:
-            logger.info("No issues found with the upload, staged files can be removed")
+                    else:
+                        xchecksums = get_xnat_checksums(xresource)
+                        if not any(xchecksums.values()):
+                            logger.debug(
+                                "Skipping checksum check for '%s' resource in '%s' in %s as no checksums found on XNAT",
+                                resource_name,
+                                scan_path,
+                                session_desc,
+                            )
+                        elif checksums != xchecksums:
+                            difference = {
+                                k: (v, checksums[k])
+                                for k, v in xchecksums.items()
+                                if v != checksums[k]
+                            }
+                            logger.error(
+                                "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists on XNAT with "
+                                "different checksums. Please delete on XNAT to overwrite:\n%s",
+                                resource_name,
+                                scan_path,
+                                session_desc,
+                                pprint.pformat(difference),
+                            )
+                            num_issues += 1
 
     if use_curl_jsession:
         xnat_repo.connection.exit()
