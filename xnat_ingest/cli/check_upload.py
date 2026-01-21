@@ -274,53 +274,58 @@ def check_upload(
                 else:
                     # Ensure that catalog is rebuilt if the file counts are 0
                     if not xscan.files:
-                        # Force the rebuild of the catalog if no files are found to check they aren't there in
-                        # the background already
-                        xscan.resources[resource_name].xnat_session.post(
-                            "/data/services/refresh/catalog?options=populateStats,append,delete,checksum&"
-                            f"resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+                        # Force the rebuild of the catalog if no files are found to check they
+                        # aren't there in the background already
+                        xnat_repo.connection.post(
+                            "/data/services/refresh/catalog?"
+                            "options=populateStats,append,delete,checksum"
+                            f"&resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
                         )
                         if not xscan.files:
                             logger.error(
-                                "EMPTY SCAN - '%s' in %s is empty. Please delete on XNAT to overwrite\n",
+                                "EMPTY SCAN - '%s' in %s is empty. Please delete on XNAT "
+                                "to overwrite\n",
                                 scan_path,
                                 session_desc,
                             )
                             num_issues += 1
-                    try:
-                        xresource = xscan.resources[resource_name]
-                    except KeyError:
-                        logger.error(
-                            "MISSING RESOURCE - '%s' was not found in %s in %s",
-                            resource_name,
-                            scan_path,
-                            session_desc,
-                        )
-                        num_issues += 1
                     else:
-                        xchecksums = get_xnat_checksums(xresource)
-                        if not any(xchecksums.values()):
-                            logger.debug(
-                                "Skipping checksum check for '%s' resource in '%s' in %s as no checksums found on XNAT",
-                                resource_name,
-                                scan_path,
-                                session_desc,
-                            )
-                        elif checksums != xchecksums:
-                            difference = {
-                                k: (v, checksums[k])
-                                for k, v in xchecksums.items()
-                                if v != checksums[k]
-                            }
+                        try:
+                            xresource = xscan.resources[resource_name]
+                        except KeyError:
                             logger.error(
-                                "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists on XNAT with "
-                                "different checksums. Please delete on XNAT to overwrite:\n%s",
+                                "MISSING RESOURCE - '%s' was not found in %s in %s",
                                 resource_name,
                                 scan_path,
                                 session_desc,
-                                pprint.pformat(difference),
                             )
                             num_issues += 1
+                        else:
+                            xchecksums = get_xnat_checksums(xresource)
+                            if not any(xchecksums.values()):
+                                logger.debug(
+                                    "Skipping checksum check for '%s' resource in '%s' in %s as "
+                                    "no checksums found on XNAT",
+                                    resource_name,
+                                    scan_path,
+                                    session_desc,
+                                )
+                            elif checksums != xchecksums:
+                                difference = {
+                                    k: (v, checksums[k])
+                                    for k, v in xchecksums.items()
+                                    if v != checksums[k]
+                                }
+                                logger.error(
+                                    "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
+                                    "on XNAT with different checksums. Please delete on XNAT to "
+                                    "overwrite:\n%s",
+                                    resource_name,
+                                    scan_path,
+                                    session_desc,
+                                    pprint.pformat(difference),
+                                )
+                                num_issues += 1
 
     if use_curl_jsession:
         xnat_repo.connection.exit()

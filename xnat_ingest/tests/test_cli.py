@@ -686,23 +686,26 @@ def test_stage_invalid_ids(
     assert len(list(invalid_dir.iterdir())) == 1
 
 
-def test_check_upload_error(
-    xnat_project: str,
-    xnat_config: ty.Any,
+def test_check_upload_missing_scan(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
+    run_prefix: str,
 ) -> None:
     # Get test image data
 
+    project_id = f"CHECKUPLOADMISSINGSCAN{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
     inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
-    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
         "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
-        "StudyID": xnat_project,
+        "StudyID": project_id,
         "PatientID": "subject1",
         "AccessionNumber": "1",
         "PatientName": "Test^Subject",
@@ -747,7 +750,7 @@ def test_check_upload_error(
     result = cli_runner(
         upload,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            staged_dir,
             "--always-include",
             "testing/my-format-gz-x",
             "--raise-errors",
@@ -768,7 +771,7 @@ def test_check_upload_error(
     result = cli_runner(
         check_upload,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            staged_dir,
             "--always-include",
             "generic/file-set",
             "--use-curl-jsession",
@@ -784,6 +787,351 @@ def test_check_upload_error(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = check_upload_log_file.read_text()
     assert "MISSING SCAN" in logs
+    assert "EMPTY SCAN" not in logs
     assert "MISSING RESOURCE" not in logs
-    assert "EMPTY RESOURCE" not in logs
     assert "CHECKSUM FAIL" not in logs
+
+
+def test_check_upload_empty_scan(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADEMPTYSCAN{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    staging_dir = tmp_path / "staging"
+    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        stage,
+        [
+            str(inputs_dir),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload,
+        [
+            staged_dir,
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream,info,stdout",
+        },
+    )
+
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[project_id]
+        xsession = xproject.experiments["subject1_1"]
+        xscan = xsession.scans["1"]
+        xresource = next(iter(xscan.resources))
+        xresource.delete()
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        check_upload,
+        [
+            staged_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "EMPTY SCAN" in logs
+    assert "CHECKSUM FAIL" not in logs
+
+
+def test_check_upload_missing_resource(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADMISSINGRESOURCE{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    staging_dir = tmp_path / "staging"
+    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["ImageType"] = ["ORIGINAL", "PRIMARY", "MY_FORMAT_GZ_X"]
+    file2_metadata["SeriesNumber"] = "1"
+    file2_metadata["SeriesDescription"] = "File 1"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        stage,
+        [
+            str(inputs_dir),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload,
+        [
+            staged_dir,
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream,info,stdout",
+        },
+    )
+
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[project_id]
+        xsession = xproject.experiments["subject1_1"]
+        xscan = xsession.scans["1"]
+        xresource = next(iter(xscan.resources))
+        xresource.delete()
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        check_upload,
+        [
+            staged_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" in logs
+    assert "EMPTY SCAN" not in logs
+    assert "CHECKSUM FAIL" not in logs
+
+
+def test_check_upload_checksum_fail(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADCHECKSUMFAIL{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    staging_dir = tmp_path / "staging"
+    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        stage,
+        [
+            str(inputs_dir),
+            str(staging_dir),
+            "--raise-errors",
+            "--delete",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_DEIDENTIFY": "0",
+            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload,
+        [
+            staged_dir,
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    manifest_file = Json(
+        next(next(next(Path(staged_dir).iterdir()).iterdir()).iterdir())
+        / "MANIFEST.json"
+    )
+    manifest_data = manifest_file.load()
+    checksums = manifest_data["checksums"]
+    key, val = next(iter(checksums.items()))
+    checksums[key] = val + "1"
+    manifest_file.save(manifest_data)
+
+    result = cli_runner(
+        check_upload,
+        [
+            staged_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "EMPTY SCAN" not in logs
+    assert "CHECKSUM FAIL" in logs
