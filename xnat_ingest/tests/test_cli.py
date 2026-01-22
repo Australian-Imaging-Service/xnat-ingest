@@ -228,7 +228,6 @@ def test_stage_and_upload(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
-    tmp_gen_dir: Path,
     upload_source: str,
     s3_bucket: str,
     run_prefix: str,
@@ -278,7 +277,7 @@ def test_stage_and_upload(
 
             series = DicomSeries(
                 get_pet_image(
-                    tmp_gen_dir / f"pet{i}",
+                    tmp_path / f"pet{i}",
                     first_name=first_name,
                     last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
@@ -291,7 +290,7 @@ def test_stage_and_upload(
                 os.link(dcm, dicoms_dir / f"pet{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_ac_image(
-                    tmp_gen_dir / f"ac{i}",
+                    tmp_path / f"ac{i}",
                     first_name=first_name,
                     last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
@@ -304,7 +303,7 @@ def test_stage_and_upload(
                 os.link(dcm, dicoms_dir / f"ac{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_topogram_image(
-                    tmp_gen_dir / f"topogram{i}",
+                    tmp_path / f"topogram{i}",
                     first_name=first_name,
                     last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
@@ -317,7 +316,7 @@ def test_stage_and_upload(
                 os.link(dcm, dicoms_dir / f"topogram{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_statistics_image(
-                    tmp_gen_dir / f"statistics{i}",
+                    tmp_path / f"statistics{i}",
                     first_name=first_name,
                     last_name=last_name,
                     StudyInstanceUID=StudyInstanceUID,
@@ -329,7 +328,7 @@ def test_stage_and_upload(
             for dcm in series.contents:
                 os.link(dcm, dicoms_dir / f"statistics{i}-{dcm.fspath.name}")
             assoc_fspaths = get_raw_data_files(
-                tmp_gen_dir / f"non-dicom{i}",
+                tmp_path / f"non-dicom{i}",
                 first_name=first_name,
                 last_name=last_name,
                 date_time=datetime(2023, 8, 25, 15, 50, 5, i),
@@ -466,8 +465,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -506,8 +504,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -545,8 +542,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{check_upload_log_file};stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -754,8 +750,7 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -774,8 +769,7 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -874,8 +868,7 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -901,8 +894,7 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -1002,8 +994,7 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -1029,8 +1020,7 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -1122,8 +1112,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 
@@ -1159,8 +1148,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
-            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
-            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
 

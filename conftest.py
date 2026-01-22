@@ -86,14 +86,6 @@ def xnat_archive_dir(xnat_repository: None) -> Path:
 
 
 @pytest.fixture(scope="session")
-def tmp_gen_dir() -> Path:
-    # tmp_gen_dir = Path("~").expanduser() / ".xnat-ingest-work3"
-    # tmp_gen_dir.mkdir(exist_ok=True)
-    # return tmp_gen_dir
-    return Path(tempfile.mkdtemp())
-
-
-@pytest.fixture(scope="session")
 def xnat_login(xnat_repository: str) -> ty.Any:
     return xnat4tests.connect()
 
