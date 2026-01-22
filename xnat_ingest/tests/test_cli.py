@@ -466,6 +466,8 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -504,6 +506,8 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -541,6 +545,8 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file,debug,{check_upload_log_file};stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -679,7 +685,6 @@ def test_check_upload_missing_scan(
 
     inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
-    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -749,6 +754,8 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -757,7 +764,7 @@ def test_check_upload_missing_scan(
     result = cli_runner(
         check_upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "generic/file-set",
             "--use-curl-jsession",
@@ -767,6 +774,8 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -796,7 +805,6 @@ def test_check_upload_empty_scan(
 
     inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
-    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -866,6 +874,8 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -881,7 +891,7 @@ def test_check_upload_empty_scan(
     result = cli_runner(
         check_upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "generic/file-set",
             "--use-curl-jsession",
@@ -891,6 +901,8 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -920,7 +932,6 @@ def test_check_upload_missing_resource(
 
     inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
-    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -991,6 +1002,8 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -1006,7 +1019,7 @@ def test_check_upload_missing_resource(
     result = cli_runner(
         check_upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "generic/file-set",
             "--use-curl-jsession",
@@ -1016,6 +1029,8 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -1089,19 +1104,12 @@ def test_check_upload_checksum_fail(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
-    source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
-        upload_source=upload_source,
-        s3_bucket=s3_bucket,
-        s3_prefix=project_id,
-    )
-
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload,
         [
-            source_dir,
+            str(staging_dir / STAGED_NAME_DEFAULT),
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1114,6 +1122,8 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream,info,stdout",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
@@ -1129,10 +1139,17 @@ def test_check_upload_checksum_fail(
     checksums[key] = val + "1"
     manifest_file.save(manifest_data)
 
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
     result = cli_runner(
         check_upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "generic/file-set",
             "--use-curl-jsession",
@@ -1142,6 +1159,8 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "AWS_ACCESS_KEY_ID": "0123456789ABCDEF",
+            "AWS_SECRET_ACCESS_KEY": "randomstringofcharacters0912341241234",
         },
     )
 
