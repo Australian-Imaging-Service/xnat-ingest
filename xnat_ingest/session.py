@@ -169,7 +169,7 @@ class ImagingSession:
                 fileformat = FileSet
             else:
                 fileformat = from_mime(mime_like)  # type: ignore[assignment]
-                if isinstance(fileformat, FileSet):
+                if not issubclass(fileformat, FileSet):
                     raise ValueError(
                         f"{mime_like!r} does not correspond to a file format ({fileformat})"
                     )
@@ -386,7 +386,14 @@ class ImagingSession:
             )
 
             if isinstance(resource, DicomCollection):
-                resource_label = "DICOM"  # special case
+                image_type = resource.contents[0].metadata["ImageType"]
+                if image_type[:2] == [
+                    "DERIVED",
+                    "SECONDARY",
+                ]:
+                    resource_label = "secondary"
+                else:
+                    resource_label = "DICOM"  # special case
             else:
                 resource_label = FieldSpec.get_value_from_fields(
                     resource, resource_field

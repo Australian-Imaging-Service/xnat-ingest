@@ -32,7 +32,7 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
         """
         Populate a row with all data entries found in the corresponding node in the data
         store (e.g. files within a directory, scans within an XNAT session) using the
-        ``DataRow.add_entry`` method. Within a node/row there are assumed to be two types
+        ``DataRow.found_entry`` method. Within a node/row there are assumed to be two types
         of entries, "primary" entries (e.g. acquired scans) common to all analyses performed
         on the dataset and "derivative" entries corresponding to intermediate outputs
         of previously performed analyses. These types should be stored in separate
@@ -50,7 +50,7 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
         """
         for scan_id, scan in self.session.scans.items():
             for resource_name, resource in scan.resources.items():
-                row.add_entry(
+                row.found_entry(
                     path=scan.type + "/" + resource_name,
                     datatype=resource.datatype,
                     uri=(scan_id, resource_name),

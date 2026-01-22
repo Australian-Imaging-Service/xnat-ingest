@@ -13,22 +13,28 @@ import attrs
 import boto3.resources.base
 import paramiko
 import xnat
-from fileformats.core import FileSet
+from fileformats.application import Json
+from fileformats.core import FileSet, from_mime
+from frametree.core import FrameSet
+from frametree.core.exceptions import FrameTreeDataMatchError
 from tqdm import tqdm
 
 from xnat_ingest.utils import StoreCredentials, logger
 
 from .resource import ImagingResource
 from .session import ImagingSession
+from .store import ImagingSessionMockStore
 
 
 class SessionListing(metaclass=abc.ABCMeta):
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def cache_path(self) -> Path:
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def resource_paths(self) -> set[str]:
         pass
 
@@ -102,6 +108,14 @@ class LocalSessionListing(SessionListing):
     def name(self) -> str:
         return self.fspath.name
 
+    @property
+    def resource_manifests(self) -> dict[str, dict[str, str]]:
+        manifests = {}
+        for relpath in sorted(self.resource_paths):
+            manifest = Json(self.cache_path / relpath / "MANIFEST.json")
+            manifests[relpath] = manifest.contents
+        return manifests
+
 
 @attrs.define
 class S3SessionListing(SessionListing):
@@ -128,6 +142,20 @@ class S3SessionListing(SessionListing):
     @property
     def resource_paths(self) -> set[str]:
         return {"/".join(o[0][:2]) for o in self.objects}
+
+    @property
+    def resource_manifests(self) -> dict[str, dict[str, str]]:
+        manifests = {}
+        for path_parts, obj in self.objects:
+            if path_parts[-1] != "MANIFEST.json":
+                continue
+            relpath = "/".join(path_parts[:-1])
+            manifest_path = self._cache_path / relpath / "MANIFEST.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(manifest_path, "wb") as f:
+                self.bucket.download_fileobj(obj.key, f)
+            manifests[relpath] = Json(manifest_path).contents
+        return manifests
 
 
 def iterate_s3_sessions(
@@ -308,6 +336,7 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         the XNAT resource object
     """
     xclasses = xsession.xnat_session.classes
+    resource_name = resource.name
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
@@ -362,18 +391,12 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
             parent=xsession,
         )
     try:
-        xresource = xscan.resources[resource.name]
+        xresource = xscan.resources[resource_name]
     except KeyError:
         pass
     else:
         checksums = get_xnat_checksums(xresource)
-        if checksums == resource.checksums:
-            logger.info(
-                "Skipping '%s' resource in '%s' as it " "already exists on XNAT",
-                resource.name,
-                resource.scan.path,
-            )
-        else:
+        if checksums != resource.checksums:
             difference = {
                 k: (v, resource.checksums[k])
                 for k, v in checksums.items()
@@ -382,7 +405,7 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
             logger.error(
                 "'%s' resource in '%s' already exists on XNAT with "
                 "different checksums. Please delete on XNAT to overwrite:\n%s",
-                resource.name,
+                resource_name,
                 resource.scan.path,
                 pprint.pformat(difference),
             )
@@ -396,16 +419,16 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                 logger.error(
                     "'%s' resource in '%s' already exists on XNAT with "
                     "and is empty. Please delete on XNAT to overwrite\n",
-                    resource.name,
+                    resource_name,
                     resource.scan.path,
                 )
         return None
     logger.debug(
         "Creating resource %s in %s",
-        resource.name,
+        resource_name,
         resource.scan.path,
     )
-    xresource = xscan.create_resource(resource.name)
+    xresource = xscan.create_resource(resource_name)
     return xresource
 
 
@@ -484,9 +507,6 @@ def dir_older_than(path: Path, period: int) -> bool:
         for file in files:
             mtimes.append((Path(root) / file).stat().st_mtime)
     last_modified = datetime.datetime.fromtimestamp(max(mtimes))
-    return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
-        seconds=period
-    )
     return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
         seconds=period
     )
