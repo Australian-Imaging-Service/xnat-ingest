@@ -5,9 +5,8 @@ import typing as ty
 from datetime import datetime
 from pathlib import Path
 
+import boto3
 import click.testing
-
-# from logging.handlers import SMTPHandler
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from click.testing import CliRunner
@@ -17,6 +16,9 @@ from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_countrate i
 from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode import (
     get_data as get_listmode_data,
 )
+
+# from logging.handlers import SMTPHandler
+from moto import mock_aws
 
 from xnat_ingest.utils import logger
 
@@ -29,7 +31,6 @@ sch.setFormatter(formatter)
 logger.addHandler(sch)
 
 PROJECT_ID = "PROJECT_ID"
-TEST_S3 = os.getenv("XINGEST_TEST_S3")
 
 # For debugging in IDE's don't catch raised exceptions and let the IDE
 # break at it
@@ -65,6 +66,20 @@ def xnat_repository() -> None:
     xnat4tests.start_xnat()
 
 
+@pytest.fixture
+def s3_bucket() -> str:
+    test_s3 = "dummy-s3-bucket"
+    with mock_aws():
+        s3 = boto3.client("s3")
+        s3.create_bucket(Bucket=test_s3)
+        yield test_s3
+
+
+@pytest.fixture(params=["local", "s3"])
+def upload_source(request: pytest.FixtureRequest) -> str:
+    return request.param
+
+
 @pytest.fixture(scope="session")
 def xnat_archive_dir(xnat_repository: None) -> Path:
     return xnat4tests.Config().xnat_root_dir / "archive"  # type: ignore[no-any-return]
@@ -81,14 +96,6 @@ def tmp_gen_dir() -> Path:
 @pytest.fixture(scope="session")
 def xnat_login(xnat_repository: str) -> ty.Any:
     return xnat4tests.connect()
-
-
-@pytest.fixture(scope="session")
-def xnat_project(xnat_login: ty.Any, run_prefix: str) -> ty.Any:
-    project_id = f"INGESTUPLOAD{run_prefix}"
-    with xnat4tests.connect() as xnat_login:
-        xnat_login.put(f"/data/archive/projects/{project_id}")
-    return project_id
 
 
 @pytest.fixture(scope="session")

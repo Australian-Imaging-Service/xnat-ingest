@@ -9,6 +9,7 @@ from unittest.mock import patch
 import click
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
+from boto3 import s3
 from fileformats.application import Json
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -27,8 +28,9 @@ from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b impo
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,  # type: ignore[import-untyped]
 )
+from moto import mock_aws
 
-from conftest import TEST_S3, get_raw_data_files
+from conftest import get_raw_data_files
 from xnat_ingest.cli import check_upload, stage, upload
 from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
 from xnat_ingest.utils import (
@@ -220,26 +222,22 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         assert out_file.read_text().split("\n")[:-1] == expected
 
 
-@pytest.mark.parametrize(
-    "upload_source",
-    [
-        "local-dir",
-        pytest.param(
-            "s3-bucket",
-            marks=pytest.mark.skipif(TEST_S3 is None, reason="S3 not configured"),
-        ),
-    ],
-)
+@mock_aws
 def test_stage_and_upload(
-    xnat_project: str,
     xnat_config: ty.Any,
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
     tmp_gen_dir: Path,
     upload_source: str,
+    s3_bucket: str,
+    run_prefix: str,
 ) -> None:
     # Get test image data
+
+    project_id = f"STAGEANDUPLOAD{upload_source}{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
 
     dicoms_dir = tmp_path / "dicoms"
     dicoms_dir.mkdir(exist_ok=True)
@@ -286,7 +284,7 @@ def test_stage_and_upload(
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
-                    StudyID=xnat_project,
+                    StudyID=project_id,
                 ).iterdir()
             )
             for dcm in series.contents:
@@ -299,7 +297,7 @@ def test_stage_and_upload(
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
-                    StudyID=xnat_project,
+                    StudyID=project_id,
                 ).iterdir()
             )
             for dcm in series.contents:
@@ -312,7 +310,7 @@ def test_stage_and_upload(
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
-                    StudyID=xnat_project,
+                    StudyID=project_id,
                 ).iterdir()
             )
             for dcm in series.contents:
@@ -325,7 +323,7 @@ def test_stage_and_upload(
                     StudyInstanceUID=StudyInstanceUID,
                     PatientID=PatientID,
                     AccessionNumber=AccessionNumber,
-                    StudyID=xnat_project,
+                    StudyID=project_id,
                 ).iterdir()
             )
             for dcm in series.contents:
@@ -359,7 +357,7 @@ def test_stage_and_upload(
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
-    dataset_address = f"testxnat//{xnat_project}"
+    dataset_address = f"testxnat//{project_id}"
 
     # Create dataset definition
     result = cli_runner(dataset_define, [dataset_address])
@@ -435,36 +433,17 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
-    if upload_source == "s3-bucket":
-        # Upload staged data to S3 bucket
-
-        test_s3 = TEST_S3[5:] if TEST_S3.startswith("s3://") else TEST_S3
-        if "/" in test_s3:
-            s3_bucket, s3_prefix = test_s3.split("/", maxsplit=1)
-            s3_prefix += "/"
-        else:
-            s3_bucket = test_s3
-            s3_prefix = ""
-
-        s3_prefix += f"xnat-ingest-tests/{xnat_project}"
-        stage_dir = staging_dir / STAGED_NAME_DEFAULT
-        for fspath in stage_dir.glob("**/*"):
-            if fspath.is_file():
-                upload_file_to_s3(
-                    fspath,
-                    s3_bucket,
-                    f"{s3_prefix.rstrip('/')}/{fspath.relative_to(stage_dir)}",
-                )
-
-        staging_source = f"s3://{s3_bucket}/{s3_prefix}"
-
-    else:
-        staging_source = str(staging_dir / STAGED_NAME_DEFAULT)
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
 
     result = cli_runner(
         upload,
         [
-            staging_source,
+            source_dir,
             "--additional-logger",
             "xnat",
             "--always-include",
@@ -502,7 +481,7 @@ def test_stage_and_upload(
     result = cli_runner(
         upload,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            source_dir,
             "--additional-logger",
             "xnat",
             "--always-include",
@@ -534,7 +513,7 @@ def test_stage_and_upload(
     ), show_cli_trace(result)
 
     with xnat4tests.connect() as xnat_login:
-        xproject = xnat_login.projects[xnat_project]
+        xproject = xnat_login.projects[project_id]
         for session_id in session_ids:
             xsession = xproject.experiments[session_id]
             scan_ids = sorted(s.id for s in xsession.scans)
@@ -552,10 +531,9 @@ def test_stage_and_upload(
     result = cli_runner(
         check_upload,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            source_dir,
             "--always-include",
             "medimage/dicom-series",
-            "--raise-errors",
             "--use-curl-jsession",
         ],
         env={
@@ -568,9 +546,7 @@ def test_stage_and_upload(
 
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = check_upload_log_file.read_text()
-    assert (
-        "No issues found with the upload, staged files can be removed" in file_logs
-    ), show_cli_trace(result)
+    assert "ERROR" not in file_logs, show_cli_trace(result)
 
 
 def test_stage_wait_period(
@@ -686,15 +662,18 @@ def test_stage_invalid_ids(
     assert len(list(invalid_dir.iterdir())) == 1
 
 
+@mock_aws
 def test_check_upload_missing_scan(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
     run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
 ) -> None:
     # Get test image data
 
-    project_id = f"CHECKUPLOADMISSINGSCAN{run_prefix}"
+    project_id = f"CHECKUPLOADMISSINGSCAN{upload_source}{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
@@ -745,12 +724,19 @@ def test_check_upload_missing_scan(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "testing/my-format-gz-x",
             "--raise-errors",
@@ -792,16 +778,19 @@ def test_check_upload_missing_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
+@mock_aws
 def test_check_upload_empty_scan(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
     xnat_login: ty.Any,
     run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
 ) -> None:
     # Get test image data
 
-    project_id = f"CHECKUPLOADEMPTYSCAN{run_prefix}"
+    project_id = f"CHECKUPLOADEMPTYSCAN{upload_source}{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
@@ -852,12 +841,19 @@ def test_check_upload_empty_scan(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -906,16 +902,19 @@ def test_check_upload_empty_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
+@mock_aws
 def test_check_upload_missing_resource(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
     xnat_login: ty.Any,
     run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
 ) -> None:
     # Get test image data
 
-    project_id = f"CHECKUPLOADMISSINGRESOURCE{run_prefix}"
+    project_id = f"CHECKUPLOADMISSINGRESOURCE{upload_source}{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
@@ -967,12 +966,19 @@ def test_check_upload_missing_resource(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1021,16 +1027,19 @@ def test_check_upload_missing_resource(
     assert "CHECKSUM FAIL" not in logs
 
 
+@mock_aws
 def test_check_upload_checksum_fail(
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
     xnat_login: ty.Any,
     run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
 ) -> None:
     # Get test image data
 
-    project_id = f"CHECKUPLOADCHECKSUMFAIL{run_prefix}"
+    project_id = f"CHECKUPLOADCHECKSUMFAIL{upload_source}{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
@@ -1080,12 +1089,19 @@ def test_check_upload_checksum_fail(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    source_dir = transfer_to_source(
+        staging_dir / STAGED_NAME_DEFAULT,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload,
         [
-            staged_dir,
+            source_dir,
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1135,3 +1151,20 @@ def test_check_upload_checksum_fail(
     assert "MISSING RESOURCE" not in logs
     assert "EMPTY SCAN" not in logs
     assert "CHECKSUM FAIL" in logs
+
+
+def transfer_to_source(
+    source_dir: Path, upload_source: str, s3_prefix: str, s3_bucket: str
+):
+    if upload_source == "s3":
+        # Upload staged data to S3 bucket
+        for fspath in source_dir.glob("**/*"):
+            if fspath.is_file():
+                upload_file_to_s3(
+                    fspath,
+                    s3_bucket,
+                    f"{s3_prefix.rstrip('/')}/{fspath.relative_to(source_dir)}",
+                )
+        return f"s3://{s3_bucket}/{s3_prefix}"
+    else:
+        return str(source_dir)

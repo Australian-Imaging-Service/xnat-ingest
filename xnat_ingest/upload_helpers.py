@@ -146,13 +146,15 @@ class S3SessionListing(SessionListing):
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
-        for relpath in sorted(self.resource_paths):
-            key = "/".join(relpath)
-            manifest = Json(self._cache_path.joinpath(*relpath) / "MANIFEST.json")
-            manifest.parent.mkdir(parents=True, exist_ok=True)
-            with open(manifest, "wb") as f:
-                self.bucket.download_fileobj(key, f)
-            manifests[key] = manifest.contents
+        for path_parts, obj in self.objects:
+            if path_parts[-1] != "MANIFEST.json":
+                continue
+            relpath = "/".join(path_parts[:-1])
+            manifest_path = self._cache_path / relpath / "MANIFEST.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(manifest_path, "wb") as f:
+                self.bucket.download_fileobj(obj.key, f)
+            manifests[relpath] = Json(manifest_path).contents
         return manifests
 
 
