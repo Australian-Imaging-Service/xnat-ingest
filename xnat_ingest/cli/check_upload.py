@@ -232,12 +232,13 @@ def check_upload(
             desc=f"Processing staged sessions found in '{staged}'",
             disable=disable_progress,
         ):
-            logger.info("CHECKING %s", session_listing.name)
 
             try:
                 xproject = xnat_repo.connection.projects[session_listing.project_id]
             except KeyError:
-                logger.error("MISSING PROJECT - %s", session_listing.project_id)
+                logger.error(
+                    "MISSING PROJECT - %s (%s)", session_listing.project_id, session_listing.name
+                )
                 continue
 
             # # Access Arcana frameset associated with project
@@ -269,6 +270,8 @@ def check_upload(
             except KeyError:
                 logger.error("MISSING SESSION - %s", session_desc)
                 continue
+
+            logger.info("CHECKING %s", session_listing.name)
 
             for resource_path, manifests in session_listing.resource_manifests.items():
                 scan_path, resource_name = resource_path.split("/", 1)
