@@ -82,7 +82,9 @@ are uploaded to XNAT
     multiple=True,
     default=[["StudyID", "generic/file-set"]],
     envvar="XINGEST_PROJECT",
-    help=("The keyword of the metadata field to extract the XNAT project ID from "),
+    help=(
+        "The keyword of the metadata field to extract the XNAT project ID from (XINGEST_PROJECT env. var)"
+    ),
 )
 @click.option(
     "--subject-field",
@@ -91,7 +93,9 @@ are uploaded to XNAT
     multiple=True,
     default=[["PatientID", "generic/file-set"]],
     envvar="XINGEST_SUBJECT",
-    help=("The keyword of the metadata field to extract the XNAT subject ID from "),
+    help=(
+        "The keyword of the metadata field to extract the XNAT subject ID from (XINGEST_SUBJECT env. var)"
+    ),
 )
 @click.option(
     "--visit-field",
@@ -101,7 +105,7 @@ are uploaded to XNAT
     default=[["AccessionNumber", "generic/file-set"]],
     envvar="XINGEST_VISIT",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging session ID from "
+        "The keyword of the metadata field to extract the XNAT imaging session ID from (XINGEST_VISIT env. var)"
     ),
 )
 @click.option(
@@ -112,7 +116,7 @@ are uploaded to XNAT
     default=[["StudyInstanceUID", "generic/file-set"]],
     envvar="XINGEST_SESSION",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging session ID from "
+        "The keyword of the metadata field to extract the XNAT imaging session ID from (XINGEST_SESSION env. var)"
     ),
 )
 @click.option(
@@ -123,7 +127,7 @@ are uploaded to XNAT
     default=[["SeriesNumber", "generic/file-set"]],
     envvar="XINGEST_SCAN_ID",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan ID from "
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
     ),
 )
 @click.option(
@@ -134,7 +138,7 @@ are uploaded to XNAT
     default=[["SeriesDescription", "generic/file-set"]],
     envvar="XINGEST_SCAN_DESC",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan description from "
+        "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
     ),
 )
 @click.option(
@@ -147,7 +151,7 @@ are uploaded to XNAT
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
-        "for different datatypes (use `generic/file-set` as a catch-all if required)."
+        "for different datatypes (use `generic/file-set` as a catch-all if required). (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -179,13 +183,14 @@ are uploaded to XNAT
         "type/resource from the associated filename. Should be a regular-expression "
         "(Python syntax) with named groups called 'id' and 'type', e.g. "
         r"'[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
+        "(XINGEST_ASSOCIATED env. var)"
     ),
 )
 @click.option(
     "--delete/--dont-delete",
     default=False,
     envvar="XINGEST_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not",
+    help="Whether to delete the session directories after they have been uploaded or not (XINGEST_DELETE env. var)",
 )
 @click.option(
     "--logger",
@@ -196,7 +201,9 @@ are uploaded to XNAT
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
-    help=("Setup handles to capture logs that are generated"),
+    help=(
+        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
+    ),
 )
 @click.option(
     "--additional-logger",
@@ -208,7 +215,7 @@ are uploaded to XNAT
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here"
+        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
     ),
 )
 @click.option(
@@ -222,7 +229,7 @@ are uploaded to XNAT
     default=False,
     type=bool,
     envvar="XINGEST_DEIDENTIFY",
-    help="whether to deidentify the file names and DICOM metadata before staging",
+    help="whether to deidentify the file names and DICOM metadata before staging (XINGEST_DEIDENTIFY env. var)",
 )
 @click.option(
     "--xnat-login",
@@ -230,13 +237,13 @@ are uploaded to XNAT
     type=XnatLogin.cli_type,
     default=None,
     metavar="<host> <user> <password>",
-    help="The XNAT server to upload to plus the user and password to use",
+    help="The XNAT server to upload to plus the user and password to use for login (XINGEST_XNAT_LOGIN env. var)",
     envvar="XINGEST_XNAT_LOGIN",
 )
 @click.option(
     "--spaces-to-underscores/--no-spaces-to-underscores",
     default=False,
-    help="Whether to replace spaces with underscores in the filenames of associated files",
+    help="Whether to replace spaces with underscores in the filenames of associated files (XINGEST_SPACES_TO_UNDERSCORES env. var)",
     envvar="XINGEST_SPACES_TO_UNDERSCORES",
     type=bool,
 )
@@ -245,42 +252,42 @@ are uploaded to XNAT
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
     envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files",
+    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
     "--loop",
     type=int,
     default=None,
     envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds",
+    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
     "--pre-stage-dir-name",
     type=str,
     default=PRE_STAGE_NAME_DEFAULT,
     envvar="XINGEST_PRE_STAGE_DIR_NAME",
-    help="The name of the directory to use for pre-staging the files",
+    help="The name of the directory to use for pre-staging the files (XINGEST_PRE_STAGE_DIR_NAME env. var)",
 )
 @click.option(
     "--staged-dir-name",
     type=str,
     default=STAGED_NAME_DEFAULT,
     envvar="XINGEST_STAGED_DIR_NAME",
-    help="The name of the directory to use for staging the files",
+    help="The name of the directory to use for staging the files (XINGEST_STAGED_DIR_NAME env. var)",
 )
 @click.option(
     "--invalid-dir-name",
     type=str,
     default=INVALID_NAME_DEFAULT,
     envvar="XINGEST_INVALID_DIR_NAME",
-    help="The name of the directory to use for invalid files",
+    help="The name of the directory to use for invalid files (XINGEST_INVALID_DIR_NAME env. var)",
 )
 @click.option(
     "--deidentified-dir-name",
     type=str,
     default=DEIDENTIFIED_NAME_DEFAULT,
     envvar="XINGEST_DEIDENTIFIED_DIR_NAME",
-    help="The name of the directory to use for deidentified files",
+    help="The name of the directory to use for deidentified files (XINGEST_DEIDENTIFIED_DIR_NAME env. var)",
 )
 @click.option(
     "--wait-period",
@@ -290,7 +297,7 @@ are uploaded to XNAT
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions"
+        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
     ),
 )
 @click.option(
@@ -299,7 +306,7 @@ are uploaded to XNAT
     envvar="XINGEST_AVOID_CLASHES",
     help=(
         "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is found"
+        "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
     ),
 )
 def stage(

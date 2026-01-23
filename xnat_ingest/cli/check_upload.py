@@ -48,7 +48,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=str,
     envvar="XINGEST_USER",
     help=(
-        'the XNAT user to connect with (alternatively the "XNAT_INGEST_USER" env. variable can be used.'
+        'the XNAT user to connect with (alternatively the "XINGEST_USER" env. variable can be used.'
     ),
 )
 @click.option(
@@ -56,7 +56,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     default=None,
     type=str,
     envvar="XINGEST_PASS",
-    help='the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var',
+    help='the password for the XNAT user, alternatively "XINGEST_PASS" env. var',
 )
 @click.option(
     "--logger",
@@ -67,7 +67,9 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     nargs=3,
     default=[],
     metavar="<logtype> <loglevel> <location>",
-    help=("Setup handles to capture logs that are generated"),
+    help=(
+        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
+    ),
 )
 @click.option(
     "--additional-logger",
@@ -79,7 +81,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here"
+        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)."
     ),
 )
 @click.option(
@@ -94,7 +96,8 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "specified in a column or not. Specified using the scan types IANA mime-type or "
         'fileformats "mime-like" (see https://arcanaframework.github.io/fileformats/), '
         "e.g. 'application/json', 'medimage/dicom-series', "
-        "'image/jpeg'). Use 'all' to include all file-types in the session"
+        "'image/jpeg'). Use 'all' to include all file-types in the session (XINGEST_ALWAYSINCLUDE "
+        "env. var)."
     ),
 )
 @click.option(
@@ -111,14 +114,14 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=Path,
     default=None,
     envvar="XINGEST_TEMPDIR",
-    help="The directory to use for temporary downloads (i.e. from s3)",
+    help="The directory to use for temporary downloads (i.e. from s3) (XINGEST_TEMPDIR env. var)",
 )
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
     default=True,
     envvar="XINGEST_VERIFY_SSL",
-    help="Whether to verify the SSL certificate of the XNAT server",
+    help="Whether to verify the SSL certificate of the XNAT server (XINGEST_VERIFY_SSL env. var)",
 )
 @click.option(
     "--use-curl-jsession/--dont-use-curl-jsession",
@@ -128,7 +131,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "Whether to use CURL to create a JSESSION token to authenticate with XNAT. This is "
         "used to work around a strange authentication issue when running within a Kubernetes "
-        "cluster and targeting the XNAT Tomcat directly"
+        "cluster and targeting the XNAT Tomcat directly (XINGEST_USE_CURL_JSESSION env. var)."
     ),
 )
 @click.option(
