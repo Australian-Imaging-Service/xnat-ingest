@@ -7,11 +7,12 @@ from pathlib import Path
 
 import click
 import xnat
-from fileformats.core import FileSet, from_mime
+from fileformats.core import FileSet, to_mime, from_mime
 
 # from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
+from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import cli
 from xnat_ingest.upload_helpers import (
@@ -280,10 +281,11 @@ def check_upload(
                 checksums = manifests["checksums"]
                 if not any(issubclass(datatype, r) for r in included_formats):
                     logger.debug(
-                        "Skipping checking %s in %s as it isn't in the included formats %s",
+                        "Skipping checking %s in %s as it's datatype (%s) isn't in the included formats %s",
                         resource_path,
                         session_desc,
-                        included_formats,
+                        manifests["datatype"],
+                        sorted(to_mime(f) for f in included_formats),
                     )
                     continue
                 try:
@@ -296,7 +298,18 @@ def check_upload(
                     )
                     continue
                 # Ensure that catalog is rebuilt if the file counts are 0
-                if not xscan.files:
+                try:
+                    num_files = len(xscan.files)
+                except XNATResponseError as e:
+                    logger.error(
+                        "POSSIBLY CORRUPT SESSION - attempting to access %s in %s resulted in %s error"
+                        "looks like the session might be corrupted",
+                        scan_path,
+                        session_desc,
+                        str(e),
+                    )
+                    continue
+                if not num_files:
                     # Force the rebuild of the catalog if no files are found to check they
                     # aren't there in the background already
                     xnat_repo.connection.post(
@@ -333,20 +346,29 @@ def check_upload(
                         scan_path,
                         session_desc,
                     )
-                elif checksums != xchecksums:
-                    difference = {
-                        k: (v, checksums[k])
-                        for k, v in xchecksums.items()
-                        if v != checksums[k]
+                elif sorted(checksums.values()) != sorted(xchecksums.values()):
+                    fnames = set(checksums)
+                    xfnames = set(xchecksums)
+                    missing = xfnames - fnames
+                    extra = fnames - xfnames
+                    differing  = {
+                        k: (xchecksums[k], checksums[k])
+                        for k in fnames & xfnames
+                        if xchecksums[k] != checksums[k]
                     }
                     logger.error(
                         "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
-                        "on XNAT with different checksums. Please delete on XNAT to "
-                        "overwrite:\n%s",
+                        "on XNAT with different files/checksums. Please delete on XNAT to "
+                        "overwrite:\n"
+                        "    missing: %s\n"
+                        "    extra: %s\n"
+                        "    differing checksums:\n%s",
                         resource_name,
                         scan_path,
                         session_desc,
-                        pprint.pformat(difference),
+                        list(missing),
+                        list(extra),
+                        pprint.pformat(differing),
                     )
                     num_issues += 1
 
