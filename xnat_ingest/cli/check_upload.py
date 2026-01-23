@@ -130,6 +130,15 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "cluster and targeting the XNAT Tomcat directly"
     ),
 )
+@click.option(
+    "--disable-progress/--enable-progress",
+    type=bool,
+    default=False,
+    envvar="XINGEST_DISABLE_PROGRESS",
+    help=(
+        "Disable the progress bar"
+    ),
+)
 def check_upload(
     staged: str,
     server: str,
@@ -142,11 +151,13 @@ def check_upload(
     temp_dir: ty.Optional[Path],
     verify_ssl: bool,
     use_curl_jsession: bool,
+    disable_progress: bool,
 ) -> None:
 
     set_logger_handling(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
+        clean_format=True,
     )
 
     # Set the directory to create temporary files/directories in away from system default
@@ -219,9 +230,15 @@ def check_upload(
             sessions,
             total=num_sessions,
             desc=f"Processing staged sessions found in '{staged}'",
+            disable=disable_progress,
         ):
+            logger.info("CHECKING %s", session_listing.name)
 
-            xproject = xnat_repo.connection.projects[session_listing.project_id]
+            try:
+                xproject = xnat_repo.connection.projects[session_listing.project_id]
+            except KeyError:
+                logger.error("MISSING PROJECT - %s", session_listing.project_id)
+                continue
 
             # # Access Arcana frameset associated with project
             # try:
@@ -246,9 +263,12 @@ def check_upload(
             #     framesets[session_listing.project_id] = frameset
 
             # Get the XNAT session object (creates it if it does not exist)
-            xsession = get_xnat_session(session_listing, xproject)
-
-            session_desc = f"{session_listing.name} in {xproject.id}"
+            session_desc = f"{session_listing.session_id} in {xproject.id}"
+            try:
+                xsession = xproject.experiments[session_listing.session_id]
+            except KeyError:
+                logger.error("MISSING SESSION - %s", session_desc)
+                continue
 
             for resource_path, manifests in session_listing.resource_manifests.items():
                 scan_path, resource_name = resource_path.split("/", 1)
@@ -271,61 +291,61 @@ def check_upload(
                         scan_path,
                         session_desc,
                     )
-                else:
-                    # Ensure that catalog is rebuilt if the file counts are 0
+                    continue
+                # Ensure that catalog is rebuilt if the file counts are 0
+                if not xscan.files:
+                    # Force the rebuild of the catalog if no files are found to check they
+                    # aren't there in the background already
+                    xnat_repo.connection.post(
+                        "/data/services/refresh/catalog?"
+                        "options=populateStats,append,delete,checksum"
+                        f"&resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+                    )
                     if not xscan.files:
-                        # Force the rebuild of the catalog if no files are found to check they
-                        # aren't there in the background already
-                        xnat_repo.connection.post(
-                            "/data/services/refresh/catalog?"
-                            "options=populateStats,append,delete,checksum"
-                            f"&resource=/archive/experiments/{xsession.id}/scans/{xscan.id}"
+                        logger.error(
+                            "EMPTY SCAN - '%s' in %s is empty. Please delete on XNAT "
+                            "to overwrite\n",
+                            scan_path,
+                            session_desc,
                         )
-                        if not xscan.files:
-                            logger.error(
-                                "EMPTY SCAN - '%s' in %s is empty. Please delete on XNAT "
-                                "to overwrite\n",
-                                scan_path,
-                                session_desc,
-                            )
-                            num_issues += 1
-                    else:
-                        try:
-                            xresource = xscan.resources[resource_name]
-                        except KeyError:
-                            logger.error(
-                                "MISSING RESOURCE - '%s' was not found in %s in %s",
-                                resource_name,
-                                scan_path,
-                                session_desc,
-                            )
-                            num_issues += 1
-                        else:
-                            xchecksums = get_xnat_checksums(xresource)
-                            if not any(xchecksums.values()):
-                                logger.debug(
-                                    "Skipping checksum check for '%s' resource in '%s' in %s as "
-                                    "no checksums found on XNAT",
-                                    resource_name,
-                                    scan_path,
-                                    session_desc,
-                                )
-                            elif checksums != xchecksums:
-                                difference = {
-                                    k: (v, checksums[k])
-                                    for k, v in xchecksums.items()
-                                    if v != checksums[k]
-                                }
-                                logger.error(
-                                    "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
-                                    "on XNAT with different checksums. Please delete on XNAT to "
-                                    "overwrite:\n%s",
-                                    resource_name,
-                                    scan_path,
-                                    session_desc,
-                                    pprint.pformat(difference),
-                                )
-                                num_issues += 1
+                        num_issues += 1
+                        continue
+                try:
+                    xresource = xscan.resources[resource_name]
+                except KeyError:
+                    logger.error(
+                        "MISSING RESOURCE - '%s' was not found in %s in %s",
+                        resource_name,
+                        scan_path,
+                        session_desc,
+                    )
+                    num_issues += 1
+                    continue
+                xchecksums = get_xnat_checksums(xresource)
+                if not any(xchecksums.values()):
+                    logger.debug(
+                        "Skipping checksum check for '%s' resource in '%s' in %s as "
+                        "no checksums found on XNAT",
+                        resource_name,
+                        scan_path,
+                        session_desc,
+                    )
+                elif checksums != xchecksums:
+                    difference = {
+                        k: (v, checksums[k])
+                        for k, v in xchecksums.items()
+                        if v != checksums[k]
+                    }
+                    logger.error(
+                        "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
+                        "on XNAT with different checksums. Please delete on XNAT to "
+                        "overwrite:\n%s",
+                        resource_name,
+                        scan_path,
+                        session_desc,
+                        pprint.pformat(difference),
+                    )
+                    num_issues += 1
 
     if use_curl_jsession:
         xnat_repo.connection.exit()

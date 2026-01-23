@@ -246,6 +246,7 @@ class MimeType(str, MultiCliTyped):
 def set_logger_handling(
     logger_configs: ty.Sequence[LoggerConfig],
     additional_loggers: ty.Sequence[str] = (),
+    clean_format: bool = False,
 ) -> None:
     """Set up logging for the application"""
 
@@ -275,9 +276,12 @@ def set_logger_handling(
         else:
             raise ValueError(f"Unknown logger type: {config.type}")
         log_handle.setLevel(config.loglevel_int)
-        log_handle.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
+        if clean_format:
+            log_handle.setFormatter(logging.Formatter("%(message)s"))
+        else:
+            log_handle.setFormatter(
+                logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            )
         for logr in loggers:
             logr.addHandler(log_handle)
 
