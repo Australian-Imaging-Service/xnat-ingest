@@ -386,14 +386,18 @@ class ImagingSession:
             )
 
             if isinstance(resource, DicomCollection):
-                image_type = resource.contents[0].metadata["ImageType"]
-                if image_type[:2] == [
-                    "DERIVED",
-                    "SECONDARY",
-                ]:
-                    resource_label = "secondary"
+                try:
+                    image_type = resource.contents[0].metadata["ImageType"]
+                except (KeyError, IndexError):
+                    resource_label = "DICOM"
                 else:
-                    resource_label = "DICOM"  # special case
+                    if image_type[:2] == [
+                        "DERIVED",
+                        "SECONDARY",
+                    ]:
+                        resource_label = "secondary"
+                    else:
+                        resource_label = "DICOM"  # special case
             else:
                 resource_label = FieldSpec.get_value_from_fields(
                     resource, resource_field
