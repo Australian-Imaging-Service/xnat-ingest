@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 import xnat
-from fileformats.core import FileSet, to_mime, from_mime
+from fileformats.core import FileSet, from_mime, to_mime
 
 # from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -136,9 +136,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=bool,
     default=False,
     envvar="XINGEST_DISABLE_PROGRESS",
-    help=(
-        "Disable the progress bar"
-    ),
+    help=("Disable the progress bar"),
 )
 def check_upload(
     staged: str,
@@ -238,7 +236,9 @@ def check_upload(
                 xproject = xnat_repo.connection.projects[session_listing.project_id]
             except KeyError:
                 logger.error(
-                    "MISSING PROJECT - %s (%s)", session_listing.project_id, session_listing.name
+                    "MISSING PROJECT - %s (%s)",
+                    session_listing.project_id,
+                    session_listing.name,
                 )
                 continue
 
@@ -351,7 +351,7 @@ def check_upload(
                     xfnames = set(xchecksums)
                     missing = xfnames - fnames
                     extra = fnames - xfnames
-                    differing  = {
+                    differing = {
                         k: (xchecksums[k], checksums[k])
                         for k in fnames & xfnames
                         if xchecksums[k] != checksums[k]

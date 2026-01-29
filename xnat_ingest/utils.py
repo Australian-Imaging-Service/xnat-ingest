@@ -70,6 +70,8 @@ class CliType(click.types.ParamType):
         if self.multiple:
             tokens = []
             for entry in envvar.split(";"):
+                if not entry.strip():
+                    continue
                 args = entry.split(",", maxsplit=self.arity - 1)
                 # Allow for default values supplied by the attrs type class
                 tokens.extend(self._add_defaults_for_missing_args(args, self.type))
@@ -83,13 +85,15 @@ class CliType(click.types.ParamType):
         if len(args) < len(fields):
             for field in fields[len(args) :]:
                 if field.default is not attrs.NOTHING:
-                    args.append(field.default)
-                elif field.default_factory is not attrs.NOTHING:  # type: ignore[attr-defined]
-                    args.append(field.default_factory())  # type: ignore[attr-defined]
+                    args.append(
+                        field.default()
+                        if isinstance(field.default, attrs.Factory)
+                        else field.default
+                    )
                 else:
                     raise click.BadParameter(
                         f"Not enough arguments provided for {type_.__name__}, "
-                        f"missing value for '{field.name}'"
+                        f"missing value for '{field.name}' ({args})"
                     )
         return args
 
@@ -280,7 +284,9 @@ def set_logger_handling(
             log_handle.setFormatter(logging.Formatter("%(message)s"))
         else:
             log_handle.setFormatter(
-                logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
             )
         for logr in loggers:
             logr.addHandler(log_handle)
