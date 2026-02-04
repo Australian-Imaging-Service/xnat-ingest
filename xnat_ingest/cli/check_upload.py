@@ -301,13 +301,22 @@ def check_upload(
                 try:
                     num_files = len(xscan.files)
                 except XNATResponseError as e:
-                    logger.error(
-                        "POSSIBLY CORRUPT SESSION - attempting to access %s in %s resulted in %s error"
-                        "looks like the session might be corrupted",
-                        scan_path,
-                        session_desc,
-                        str(e),
-                    )
+                    if e.status_code == 404:
+                        logger.warning(
+                            "ARCHIVED RESOURCE - attempting to access %s in %s resulted in a 404 error "
+                            "looks like the session might be corrupted",
+                            scan_path,
+                            session_desc,
+                            str(e),
+                        )
+                    else:
+                        logger.error(
+                            "POSSIBLY CORRUPT SESSION - attempting to access %s in %s resulted in a %s error "
+                            "looks like the session might be corrupted",
+                            scan_path,
+                            session_desc,
+                            str(e),
+                        )
                     continue
                 if not num_files:
                     # Force the rebuild of the catalog if no files are found to check they
