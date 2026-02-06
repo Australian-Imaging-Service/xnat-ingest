@@ -207,6 +207,15 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "then all files are uploaded in a single batch"
     ),
 )
+@click.option(
+    "--dry-run/--no-dry-run",
+    type=bool,
+    default=False,
+    envvar="XINGEST_DRY_RUN",
+    help=(
+        "List the sessions that will be uploaded instead of the actually uploading them"
+    ),
+)
 def upload(
     staged: str,
     server: str,
@@ -226,6 +235,7 @@ def upload(
     wait_period: int,
     loop: int,
     num_files_per_batch: int,
+    dry_run: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -309,6 +319,13 @@ def upload(
                 total=num_sessions,
                 desc=f"Processing staged sessions found in '{staged}'",
             ):
+
+                if dry_run:
+                    logger.info(
+                        "Would attempt to upload '%s' if not dry run",
+                        session_listing.name,
+                    )
+                    continue
 
                 try:
 

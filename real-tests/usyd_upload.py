@@ -11,7 +11,7 @@ result = runner.invoke(
     upload,
     [],
     env={
-        "XINGEST_STAGED": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/NEW-STAGING",  # os.environ["XINGEST_STAGED"],
+        "XINGEST_STAGED": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING/STAGED",  # os.environ["XINGEST_STAGED"],
         "XINGEST_HOST": "https://xnat.sydney.edu.au",
         "XINGEST_USER": os.environ["XINGEST_USER"],
         "XINGEST_PASS": os.environ["XINGEST_PASS"],
