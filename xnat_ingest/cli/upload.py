@@ -208,6 +208,18 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     ),
 )
 @click.option(
+    "--check-checksums/--dont-check-checksums",
+    type=bool,
+    default=True,
+    envvar="XINGEST_CHECK_CHECKSUMS",
+    help=(
+        "Whether to check the checksums of the files in the staged resources against the "
+        "checksums of both the checksums saved in the manifests and verify after upload "
+        "to verify that they were uploaded correctly (if checksums are enabled site-wide on "
+        "XNAT, i.e. `enableChecksums` is set to `true` in the XNAT configuration)"
+    ),
+)
+@click.option(
     "--dry-run/--no-dry-run",
     type=bool,
     default=False,
@@ -235,6 +247,7 @@ def upload(
     wait_period: int,
     loop: int,
     num_files_per_batch: int,
+    check_checksums: bool,
     dry_run: bool,
 ) -> None:
 
@@ -339,6 +352,7 @@ def upload(
                     session = ImagingSession.load(
                         session_listing.cache_path,
                         require_manifest=require_manifest,
+                        check_checksums=check_checksums,
                     )
                     # Create corresponding session on XNAT
                     logger.debug(
@@ -459,39 +473,48 @@ def upload(
                                 )
                                 xresource.upload_dir(upload_dir, method=upload_method)
                                 shutil.rmtree(upload_dir)
-                        logger.debug("retrieving checksums for %s", xresource)
-                        remote_checksums = get_xnat_checksums(xresource)
-                        if any(remote_checksums.values()):
-                            logger.debug("calculating checksums for %s", xresource)
-                            calc_checksums = calculate_checksums(resource.fileset)
-                            if remote_checksums != calc_checksums:
-                                extra_keys = set(remote_checksums) - set(calc_checksums)
-                                missing_keys = set(calc_checksums) - set(
-                                    remote_checksums
-                                )
-                                intersect_keys = set(calc_checksums) & set(
-                                    remote_checksums
-                                )
-                                mismatching = [
-                                    k
-                                    for k, v in intersect_keys
-                                    if v != remote_checksums[k]
-                                ]
-                                raise RuntimeError(
-                                    "Checksums do not match after upload of "
-                                    f"'{resource.path}' resource.\n"
-                                    f"Extra keys were {extra_keys}\n"
-                                    f"Missing keys were {missing_keys}\n"
-                                    f"Mismatching files were {mismatching}\n"
-                                    f"Remote checksums were {remote_checksums}\n"
-                                    f"Calculated checksums were {calc_checksums}\n"
+                        if check_checksums:
+                            logger.debug("retrieving checksums for %s", xresource)
+                            remote_checksums = get_xnat_checksums(xresource)
+                            if any(remote_checksums.values()):
+                                logger.debug("calculating checksums for %s", xresource)
+                                calc_checksums = calculate_checksums(resource.fileset)
+                                if remote_checksums != calc_checksums:
+                                    extra_keys = set(remote_checksums) - set(
+                                        calc_checksums
+                                    )
+                                    missing_keys = set(calc_checksums) - set(
+                                        remote_checksums
+                                    )
+                                    intersect_keys = set(calc_checksums) & set(
+                                        remote_checksums
+                                    )
+                                    mismatching = [
+                                        k
+                                        for k, v in intersect_keys
+                                        if v != remote_checksums[k]
+                                    ]
+                                    raise RuntimeError(
+                                        "Checksums do not match after upload of "
+                                        f"'{resource.path}' resource.\n"
+                                        f"Extra keys were {extra_keys}\n"
+                                        f"Missing keys were {missing_keys}\n"
+                                        f"Mismatching files were {mismatching}\n"
+                                        f"Remote checksums were {remote_checksums}\n"
+                                        f"Calculated checksums were {calc_checksums}\n"
+                                    )
+                            else:
+                                logger.debug(
+                                    "Remote checksums were not calculted for %s "
+                                    "(requires `enableChecksums` to be set site-wide), "
+                                    "assuming upload was successful",
+                                    xresource,
                                 )
                         else:
                             logger.debug(
-                                "Remote checksums were not calculted for %s "
-                                "(requires `enableChecksums` to be set site-wide), "
-                                "assuming upload was successful",
-                                xresource,
+                                "Not checking checksums for '%s' resource as checksum "
+                                "checking is disabled",
+                                resource.path,
                             )
 
                         logger.info(f"Uploaded '{resource.path}' in '{session.name}'")

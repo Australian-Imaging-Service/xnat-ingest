@@ -82,13 +82,17 @@ class ImagingScan:
         return saved
 
     @classmethod
-    def load(cls, scan_dir: Path, require_manifest: bool = True) -> Self:
+    def load(
+        cls, scan_dir: Path, require_manifest: bool = True, check_checksums: bool = True
+    ) -> Self:
         scan_id, scan_type = scan_dir.name.split("-", 1)
         scan = cls(scan_id, scan_type)
         for resource_dir in scan_dir.iterdir():
             if resource_dir.is_dir():
                 resource = ImagingResource.load(
-                    resource_dir, require_manifest=require_manifest
+                    resource_dir,
+                    require_manifest=require_manifest,
+                    check_checksums=check_checksums,
                 )
                 resource.scan = scan
                 scan.resources[resource.name] = resource

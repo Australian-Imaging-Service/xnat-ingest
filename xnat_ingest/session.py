@@ -709,7 +709,11 @@ class ImagingSession:
         )
         for scan_dir in session_dir.iterdir():
             if scan_dir.is_dir():
-                scan = ImagingScan.load(scan_dir, require_manifest=require_manifest)
+                scan = ImagingScan.load(
+                    scan_dir,
+                    require_manifest=require_manifest,
+                    check_checksums=check_checksums,
+                )
                 scan.session = session
                 session.scans[scan.id] = scan
         return session

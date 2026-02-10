@@ -17,7 +17,7 @@ result = runner.invoke(
         "XINGEST_PASS": os.environ["XINGEST_PASS"],
         "XINGEST_ALWAYSINCLUDE": "medimage/dicom-series",
         "XINGEST_STORE_CREDENTIALS": os.environ["XINGEST_STORE_CREDENTIALS"],
-        "XINGEST_LOGFILE": os.environ["XINGEST_LOGFILE"],
+        "XINGEST_LOGGERS": os.environ["XINGEST_LOGGERS"],
         "XINGEST_DELETE": "0",
         "XINGEST_TEMPDIR": os.environ.get("XINGEST_TEMPDIR", "/tmp"),
         "XINGEST_REQUIRE_MANIFEST": "1",
