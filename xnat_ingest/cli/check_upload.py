@@ -368,16 +368,16 @@ def check_upload(
                     logger.error(
                         "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
                         "on XNAT with different files/checksums. Please delete on XNAT to "
-                        "overwrite:\n"
+                        "overwrite:\n",
+                        resource_name,
+                        scan_path,
+                        session_desc,
                     )
                     logger.debug(
                         "Checksum differences are:\n"
                         "    missing: %s\n"
                         "    extra: %s\n"
                         "    differing checksums:\n%s",
-                        resource_name,
-                        scan_path,
-                        session_desc,
                         list(missing),
                         list(extra),
                         pprint.pformat(differing),
