@@ -58,7 +58,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=str,
     envvar="XINGEST_USER",
     help=(
-        'the XNAT user to connect with (alternatively the "XNAT_INGEST_USER" env. variable can be used.'
+        'the XNAT user to connect with (alternatively the "XINGEST_USER" env. variable can be used.'
     ),
 )
 @click.option(
@@ -66,7 +66,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     default=None,
     type=str,
     envvar="XINGEST_PASS",
-    help='the password for the XNAT user, alternatively "XNAT_INGEST_PASS" env. var',
+    help='the password for the XNAT user, alternatively "XINGEST_PASS" env. var',
 )
 @click.option(
     "--logger",
@@ -77,7 +77,9 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     nargs=3,
     default=[],
     metavar="<logtype> <loglevel> <location>",
-    help=("Setup handles to capture logs that are generated"),
+    help=(
+        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
+    ),
 )
 @click.option(
     "--additional-logger",
@@ -89,7 +91,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "The loggers to use for logging. By default just the 'xnat-ingest' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here"
+        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)."
     ),
 )
 @click.option(
@@ -104,14 +106,15 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "specified in a column or not. Specified using the scan types IANA mime-type or "
         'fileformats "mime-like" (see https://arcanaframework.github.io/fileformats/), '
         "e.g. 'application/json', 'medimage/dicom-series', "
-        "'image/jpeg'). Use 'all' to include all file-types in the session"
+        "'image/jpeg'). Use 'all' to include all file-types in the session (XINGEST_ALWAYSINCLUDE "
+        "env. var)."
     ),
 )
 @click.option(
     "--raise-errors/--dont-raise-errors",
     default=False,
     type=bool,
-    help="Whether to raise errors instead of logging them (typically for debugging)",
+    help="Whether to raise errors instead of logging them (typically for debugging) ",
 )
 @click.option(
     "--store-credentials",
@@ -120,7 +123,10 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     envvar="XINGEST_STORE_CREDENTIALS",
     default=None,
     nargs=2,
-    help="Credentials to use to access of data stored in remote stores (e.g. AWS S3)",
+    help=(
+        "Credentials to use to access of data stored in remote stores (e.g. AWS S3) "
+        "(XINGEST_STORE_CREDENTIALS env. var)"
+    ),
 )
 @click.option(
     "--temp-dir",
@@ -159,7 +165,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "Whether to use CURL to create a JSESSION token to authenticate with XNAT. This is "
         "used to work around a strange authentication issue when running within a Kubernetes "
-        "cluster and targeting the XNAT Tomcat directly"
+        "cluster and targeting the XNAT Tomcat directly (XINGEST_USE_CURL_JSESSION env. var)."
     ),
 )
 @click.option(
@@ -174,7 +180,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "The methods to use to upload the file types to XNAT with. Passed through to XNATPy and controls "
         "whether directories are tarred and/or gzipped before they are uploaded, by default "
-        "'tgz_file' is used"
+        "'tgz_file' is used (XINGEST_METHODS env. var)."
     ),
 )
 @click.option(
@@ -185,7 +191,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions"
+        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
     ),
 )
 @click.option(
@@ -193,7 +199,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=int,
     default=-1,
     envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds",
+    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
     "--num-files-per-batch",
@@ -204,7 +210,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "When uploading files to XNAT, the number of files to upload in each batch. "
         "The number of files that are uploaded in a single batch can be limited to "
         "avoid overloading the building of the catalog file. If <= 0 (the default), "
-        "then all files are uploaded in a single batch"
+        "then all files are uploaded in a single batch (XINGEST_NUM_FILES_PER_BATCH env. var)."
     ),
 )
 @click.option(
