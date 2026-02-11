@@ -386,14 +386,18 @@ class ImagingSession:
             )
 
             if isinstance(resource, DicomCollection):
-                image_type = resource.contents[0].metadata["ImageType"]
-                if image_type[:2] == [
-                    "DERIVED",
-                    "SECONDARY",
-                ]:
-                    resource_label = "secondary"
+                try:
+                    image_type = resource.contents[0].metadata["ImageType"]
+                except (KeyError, IndexError):
+                    resource_label = "DICOM"
                 else:
-                    resource_label = "DICOM"  # special case
+                    if image_type[:2] == [
+                        "DERIVED",
+                        "SECONDARY",
+                    ]:
+                        resource_label = "secondary"
+                    else:
+                        resource_label = "DICOM"  # special case
             else:
                 resource_label = FieldSpec.get_value_from_fields(
                     resource, resource_field
@@ -705,7 +709,11 @@ class ImagingSession:
         )
         for scan_dir in session_dir.iterdir():
             if scan_dir.is_dir():
-                scan = ImagingScan.load(scan_dir, require_manifest=require_manifest)
+                scan = ImagingScan.load(
+                    scan_dir,
+                    require_manifest=require_manifest,
+                    check_checksums=check_checksums,
+                )
                 scan.session = session
                 session.scans[scan.id] = scan
         return session

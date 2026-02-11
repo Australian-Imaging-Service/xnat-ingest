@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 import xnat
-from fileformats.core import FileSet, to_mime, from_mime
+from fileformats.core import FileSet, from_mime, to_mime
 
 # from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -136,9 +136,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     type=bool,
     default=False,
     envvar="XINGEST_DISABLE_PROGRESS",
-    help=(
-        "Disable the progress bar"
-    ),
+    help=("Disable the progress bar"),
 )
 def check_upload(
     staged: str,
@@ -238,7 +236,9 @@ def check_upload(
                 xproject = xnat_repo.connection.projects[session_listing.project_id]
             except KeyError:
                 logger.error(
-                    "MISSING PROJECT - %s (%s)", session_listing.project_id, session_listing.name
+                    "MISSING PROJECT - %s (%s)",
+                    session_listing.project_id,
+                    session_listing.name,
                 )
                 continue
 
@@ -301,13 +301,22 @@ def check_upload(
                 try:
                     num_files = len(xscan.files)
                 except XNATResponseError as e:
-                    logger.error(
-                        "POSSIBLY CORRUPT SESSION - attempting to access %s in %s resulted in %s error"
-                        "looks like the session might be corrupted",
-                        scan_path,
-                        session_desc,
-                        str(e),
-                    )
+                    if e.status_code == 404:
+                        logger.warning(
+                            "ARCHIVED RESOURCE - attempting to access %s in %s resulted in a 404 error "
+                            "looks like the session might be corrupted",
+                            scan_path,
+                            session_desc,
+                            str(e),
+                        )
+                    else:
+                        logger.error(
+                            "POSSIBLY CORRUPT SESSION - attempting to access %s in %s resulted in a %s error "
+                            "looks like the session might be corrupted",
+                            scan_path,
+                            session_desc,
+                            str(e),
+                        )
                     continue
                 if not num_files:
                     # Force the rebuild of the catalog if no files are found to check they
@@ -351,7 +360,7 @@ def check_upload(
                     xfnames = set(xchecksums)
                     missing = xfnames - fnames
                     extra = fnames - xfnames
-                    differing  = {
+                    differing = {
                         k: (xchecksums[k], checksums[k])
                         for k in fnames & xfnames
                         if xchecksums[k] != checksums[k]
@@ -359,13 +368,16 @@ def check_upload(
                     logger.error(
                         "CHECKSUM FAIL - '%s' resource in '%s' in %s already exists "
                         "on XNAT with different files/checksums. Please delete on XNAT to "
-                        "overwrite:\n"
-                        "    missing: %s\n"
-                        "    extra: %s\n"
-                        "    differing checksums:\n%s",
+                        "overwrite:\n",
                         resource_name,
                         scan_path,
                         session_desc,
+                    )
+                    logger.debug(
+                        "Checksum differences are:\n"
+                        "    missing: %s\n"
+                        "    extra: %s\n"
+                        "    differing checksums:\n%s",
                         list(missing),
                         list(extra),
                         pprint.pformat(differing),
