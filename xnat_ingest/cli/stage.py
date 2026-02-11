@@ -58,8 +58,10 @@ OUTPUT_DIR is the directory that the files for each session are collated to befo
 are uploaded to XNAT
 """,
 )
-@click.argument("files_path", type=str)
-@click.argument("output_dir", type=click.Path(path_type=Path))
+@click.argument("input_paths", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
+@click.argument(
+    "staging_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
+)
 @click.option(
     "--datatype",
     type=MimeType.cli_type,
@@ -309,9 +311,15 @@ are uploaded to XNAT
         "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
     ),
 )
+@click.option(
+    "--recursive/--not-recursive",
+    type=bool,
+    default=False,
+    help=("Whether to recursively search input directories for input files"),
+)
 def stage(
-    files_path: str,
-    output_dir: Path,
+    input_paths: list[str],
+    staging_dir: Path,
     datatype: list[MimeType] | None,
     associated_files: ty.List[AssociatedFiles],
     project_field: list[FieldSpec],
@@ -336,7 +344,8 @@ def stage(
     deidentified_dir_name: str,
     loop: int | None,
     wait_period: int,
-    avoid_clashes: bool = False,
+    avoid_clashes: bool,
+    recursive: bool,
 ) -> None:
 
     if raise_errors and loop:
@@ -373,7 +382,7 @@ def stage(
         logger.info("No XNAT login provided, will not check project IDs in XNAT")
         project_list = None
 
-    msg = f"Loading {list(datatypes)} sessions from '{files_path}'"
+    msg = f"Loading {list(datatypes)} sessions from '{input_paths}'"
 
     for assoc_files in associated_files:
         msg += f" with associated files selected from '{assoc_files.glob}'"
@@ -384,19 +393,19 @@ def stage(
 
     # Create sub-directories of the output directory for the different phases of the
     # staging process
-    prestage_dir = output_dir / pre_stage_dir_name
-    staged_dir = output_dir / staged_dir_name
-    invalid_dir = output_dir / invalid_dir_name
+    prestage_dir = staging_dir / pre_stage_dir_name
+    staged_dir = staging_dir / staged_dir_name
+    invalid_dir = staging_dir / invalid_dir_name
     prestage_dir.mkdir(parents=True, exist_ok=True)
     staged_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
     if deidentify:
-        deidentified_dir = output_dir / deidentified_dir_name
+        deidentified_dir = staging_dir / deidentified_dir_name
         deidentified_dir.mkdir(parents=True, exist_ok=True)
 
     def do_stage() -> None:
         sessions = ImagingSession.from_paths(
-            files_path=files_path,
+            files_path=input_paths,
             datatypes=datatypes,
             project_field=project_field,
             subject_field=subject_field,
@@ -407,11 +416,12 @@ def stage(
             resource_field=resource_field,
             project_id=project_id,
             avoid_clashes=avoid_clashes,
+            recursive=recursive,
         )
 
-        logger.info("Staging sessions to '%s'", str(output_dir))
+        logger.info("Staging sessions to '%s'", str(staging_dir))
 
-        for session in tqdm(sessions, f"Staging resources found in '{files_path}'"):
+        for session in tqdm(sessions, f"Staging resources found in '{input_paths}'"):
 
             if wait_period:
                 last_mod = session.last_modified()

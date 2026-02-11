@@ -248,6 +248,7 @@ class ImagingSession:
         session_field: list[FieldSpec],
         project_id: list[FieldSpec] | None = None,
         avoid_clashes: bool = False,
+        recursive: bool = False,
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -288,6 +289,9 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
+        recursive : bool, optional
+            recurse into directories passed as file paths (i.e. by appending '**/*' and running a glob),
+            by default False
 
         Returns
         -------
@@ -300,17 +304,29 @@ class ImagingSession:
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
-
-        if isinstance(files_path, Path) or "*" not in files_path:
-            files_path = Path(files_path)
-            if not files_path.exists():
-                raise ValueError(f"Provided DICOMs path '{files_path}' does not exist")
-            if files_path.is_dir():
-                fspaths = list(Path(files_path).iterdir())
+        if isinstance(files_path, (Path, str)):
+            files_path = [files_path]
+        elif not isinstance(files_path, ty.Sequence):
+            raise TypeError(
+                "Invalid type of 'files_path', must be a pathlib.Path, str or list of"
+            )
+        fspaths = []
+        for fspath in files_path:
+            if isinstance(fspath, Path) or "*" not in fspath:
+                fspath = Path(fspath)
+                if not fspath.exists():
+                    raise ValueError(f"Provided DICOMs path '{fspath}' does not exist")
+                if fspath.is_dir():
+                    if recursive:
+                        fspaths.extend(
+                            Path(p) for p in glob(str(fspath) + "/**/*", recursive=True)
+                        )
+                    else:
+                        fspaths.extend(Path(fspath).iterdir())
+                else:
+                    fspaths.append(fspath)
             else:
-                fspaths = [files_path]
-        else:
-            fspaths = [Path(p) for p in glob(files_path, recursive=True)]
+                fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
 
         # Create a UID out of the paths that session was created from and the
         # timestamp
