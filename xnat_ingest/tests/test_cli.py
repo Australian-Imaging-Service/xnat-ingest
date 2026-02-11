@@ -238,8 +238,14 @@ def test_stage_and_upload(
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
-    dicoms_dir = tmp_path / "dicoms"
-    dicoms_dir.mkdir(exist_ok=True)
+    dicoms_dir1 = tmp_path / "dicom1"
+    dicoms_dir1.mkdir(exist_ok=True)
+
+    dicoms_dir2_parent = tmp_path / "dicoms2"
+    dicoms_dir2 = dicoms_dir2_parent / "child"
+    dicoms_dir2.mkdir(exist_ok=True, parents=True)
+
+    dicoms_dirs = [dicoms_dir1, dicoms_dir2_parent]
 
     associated_files_dir = tmp_path / "non-dicoms"
     associated_files_dir.mkdir(exist_ok=True)
@@ -287,7 +293,7 @@ def test_stage_and_upload(
                 ).iterdir()
             )
             for dcm in series.contents:
-                os.link(dcm, dicoms_dir / f"pet{i}-{dcm.fspath.name}")
+                os.link(dcm, dicoms_dir1 / f"pet{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_ac_image(
                     tmp_path / f"ac{i}",
@@ -300,7 +306,7 @@ def test_stage_and_upload(
                 ).iterdir()
             )
             for dcm in series.contents:
-                os.link(dcm, dicoms_dir / f"ac{i}-{dcm.fspath.name}")
+                os.link(dcm, dicoms_dir1 / f"ac{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_topogram_image(
                     tmp_path / f"topogram{i}",
@@ -313,7 +319,7 @@ def test_stage_and_upload(
                 ).iterdir()
             )
             for dcm in series.contents:
-                os.link(dcm, dicoms_dir / f"topogram{i}-{dcm.fspath.name}")
+                os.link(dcm, dicoms_dir2 / f"topogram{i}-{dcm.fspath.name}")
             series = DicomSeries(
                 get_statistics_image(
                     tmp_path / f"statistics{i}",
@@ -326,7 +332,7 @@ def test_stage_and_upload(
                 ).iterdir()
             )
             for dcm in series.contents:
-                os.link(dcm, dicoms_dir / f"statistics{i}-{dcm.fspath.name}")
+                os.link(dcm, dicoms_dir2 / f"statistics{i}-{dcm.fspath.name}")
             assoc_fspaths = get_raw_data_files(
                 tmp_path / f"non-dicom{i}",
                 first_name=first_name,
@@ -397,12 +403,13 @@ def test_stage_and_upload(
 
     result = cli_runner(
         stage,
-        [
-            str(dicoms_dir),
+        [str(d) for d in dicoms_dirs]
+        + [
             str(staging_dir),
             "--resource-field",
             "ImageType[-1]",
             "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "--recursive",
             "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             str(associated_files_dir)
