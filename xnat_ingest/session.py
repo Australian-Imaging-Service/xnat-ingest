@@ -342,7 +342,7 @@ class ImagingSession:
                 logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
 
-        if nonexistent := [str(p) for p in fspaths if Path(p).exists()]:
+        if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
             raise ValueError(
                 "The following paths do not exist:\n"
                 + "\n".join(nonexistent[:100])
