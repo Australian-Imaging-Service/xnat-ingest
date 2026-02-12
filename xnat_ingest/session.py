@@ -343,8 +343,7 @@ class ImagingSession:
                 logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
 
-        if platform.system() == "Windows":
-            fspaths = [Path(f"\\\\?\\{p.resolve()}") for p in fspaths]
+        fspaths = [fix_long_path(p) for p in fspaths]
 
         if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
             raise ValueError(
@@ -828,6 +827,26 @@ class ImagingSession:
             for scan in self.scans.values()
             for resource in scan.resources.values()
         )
+
+
+def fix_long_path(p: str | Path) -> Path:
+    r"""Add \\?\ or \\?\UNC\ prefix on Windows for long paths."""
+    if platform.system() != "Windows":
+        return Path(p)
+
+    path = Path(p).resolve()
+    path_str = str(path)
+
+    # Already has prefix, don't double-apply
+    if path_str.startswith("\\\\?\\"):
+        return path
+
+    # UNC path: \\server\share\... -> \\?\UNC\server\share\...
+    if path_str.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{path_str[2:]}")
+
+    # Local path: C:\... -> \\?\C:\...
+    return Path(f"\\\\?\\{path_str}")
 
 
 from .store import ImagingSessionMockStore  # noqa: E402
