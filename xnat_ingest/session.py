@@ -344,7 +344,9 @@ class ImagingSession:
 
         if nonexistent := [str(p) for p in fspaths if Path(p).exists()]:
             raise ValueError(
-                "The following paths do not exist:\n" + "\n".join(nonexistent)
+                "The following paths do not exist:\n"
+                + "\n".join(nonexistent[:100])
+                + ("\n..." if len(nonexistent) > 100 else "")
             )
 
         # Create a UID out of the paths that session was created from and the
