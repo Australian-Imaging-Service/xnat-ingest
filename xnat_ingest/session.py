@@ -342,6 +342,11 @@ class ImagingSession:
                 logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
 
+        if nonexistent := [str(p) for p in fspaths if Path(p).exists()]:
+            raise ValueError(
+                "The following paths do not exist:\n" + "\n".join(nonexistent)
+            )
+
         # Create a UID out of the paths that session was created from and the
         # timestamp
         crypto = hashlib.sha256()
