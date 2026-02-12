@@ -259,7 +259,7 @@ are uploaded to XNAT
 @click.option(
     "--loop",
     type=int,
-    default=None,
+    default=-1,
     envvar="XINGEST_LOOP",
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
@@ -342,13 +342,13 @@ def stage(
     staged_dir_name: str,
     invalid_dir_name: str,
     deidentified_dir_name: str,
-    loop: int | None,
+    loop: int,
     wait_period: int,
     avoid_clashes: bool,
     recursive: bool,
 ) -> None:
 
-    if raise_errors and loop:
+    if raise_errors and loop >= 0:
         raise ValueError(
             "Cannot use --raise-errors and --loop together as the loop will "
             "continue to run even if an error occurs"
@@ -480,7 +480,7 @@ def stage(
                 else:
                     raise
 
-    if loop is not None:
+    if loop >= 0:
         while True:
             start_time = datetime.datetime.now()
             try:
