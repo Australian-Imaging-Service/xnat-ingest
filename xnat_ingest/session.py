@@ -312,20 +312,34 @@ class ImagingSession:
             )
         fspaths = []
         for fspath in files_path:
+            logger.debug("Searching for file types in '%s'", str(fspath))
             if isinstance(fspath, Path) or "*" not in fspath:
                 fspath = Path(fspath)
                 if not fspath.exists():
-                    raise ValueError(f"Provided DICOMs path '{fspath}' does not exist")
+                    raise ValueError(
+                        f"Provided file-system path '{fspath}' does not exist"
+                    )
                 if fspath.is_dir():
                     if recursive:
+                        logger.debug(
+                            "Recursively searching for all paths '%s' directory",
+                            str(fspath),
+                        )
                         fspaths.extend(
                             Path(p) for p in glob(str(fspath) + "/**/*", recursive=True)
                         )
                     else:
+                        logger.debug(
+                            "Adding contents of '%s' directory to list", str(fspath)
+                        )
                         fspaths.extend(Path(fspath).iterdir())
                 else:
+                    logger.debug(
+                        "Directly appending '%s' to list of files", str(fspath)
+                    )
                     fspaths.append(fspath)
             else:
+                logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
 
         # Create a UID out of the paths that session was created from and the
