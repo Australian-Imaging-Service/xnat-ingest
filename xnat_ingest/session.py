@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import platform
 import re
 import typing as ty
 from collections import Counter, defaultdict
@@ -341,6 +342,9 @@ class ImagingSession:
             else:
                 logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
+
+        if platform.system() == "Windows":
+            fspaths = [Path(f"\\\\?\\{p.resolve()}") for p in fspaths]
 
         if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
             raise ValueError(
