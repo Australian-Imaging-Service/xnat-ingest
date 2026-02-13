@@ -512,7 +512,8 @@ def stage(
                 )
             else:
                 raise
-        logger.info("Staging completed successfully")
+        else:
+            logger.info("Staging completed successfully")
 
 
 if __name__ == "__main__":
