@@ -15,18 +15,13 @@ from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import cli
-from xnat_ingest.upload_helpers import (
+from xnat_ingest.helpers.cli_types import LoggerConfig, StoreCredentials
+from xnat_ingest.helpers.logging import logger, set_logger_handling
+from xnat_ingest.helpers.remotes import (
     LocalSessionListing,
     SessionListing,
     get_xnat_checksums,
-    get_xnat_session,
     iterate_s3_sessions,
-)
-from xnat_ingest.utils import (
-    LoggerConfig,
-    StoreCredentials,
-    logger,
-    set_logger_handling,
 )
 
 

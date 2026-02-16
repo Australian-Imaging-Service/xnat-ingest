@@ -15,7 +15,12 @@ from .session import ImagingSession
 @attrs.define
 class ImagingSessionMockStore(Store):  # type: ignore[misc]
     """Mock data store so we can use the column.match_entry method on the "entries" in
-    the data row
+    the data row of a FrameTree FrameSet (see https://arcanaframework.github.io/frametree/frame_sets.html)
+
+    Parameters
+    ----------
+    session : ImagingSession
+        the session to pull data from
     """
 
     session: ImagingSession
@@ -128,10 +133,6 @@ class ImagingSessionMockStore(Store):  # type: ignore[misc]
 
     def create_entry(self, path: str, datatype: type, row: DataRow) -> DataEntry:
         raise NotImplementedError
-
-
-class DummyAxes(Axes):  # type: ignore[misc]
-    _ = 0b0
 
 
 class DummyAxes(Axes):  # type: ignore[misc]

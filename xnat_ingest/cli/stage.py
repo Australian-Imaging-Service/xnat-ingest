@@ -8,20 +8,20 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 from fileformats.medimage import DicomSeries
-from frametree.xnat import Xnat  # type: ignore[import-untyped]
+from frametree.xnat import Xnat
 from tqdm import tqdm
 
 from xnat_ingest.cli.base import cli
-from xnat_ingest.session import ImagingSession
-from xnat_ingest.utils import (
+
+from ..helpers.cli_types import (
     AssociatedFiles,
     FieldSpec,
     LoggerConfig,
     MimeType,
     XnatLogin,
-    logger,
-    set_logger_handling,
 )
+from ..helpers.logging import logger, set_logger_handling
+from ..model.session import ImagingSession
 
 PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
 STAGED_NAME_DEFAULT = "STAGED"

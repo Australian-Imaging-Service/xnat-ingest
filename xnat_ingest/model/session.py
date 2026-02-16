@@ -18,10 +18,10 @@ from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 from typing_extensions import Self
 
-from .exceptions import ImagingSessionParseError, StagingError
+from ..exceptions import ImagingSessionParseError, StagingError
+from ..helpers.cli_types import AssociatedFiles, FieldSpec
 from .resource import ImagingResource
 from .scan import ImagingScan
-from .utils import AssociatedFiles, FieldSpec
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -39,6 +39,23 @@ def scans_converter(
 
 @attrs.define(slots=False)
 class ImagingSession:
+    """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
+    belong together under the same project/subject/visit IDs.
+
+    Parameters
+    ----------
+    project_id: str
+        The project ID of the session
+    subject_id: str
+        The subject ID of the session
+    visit_id: str
+        The visit ID of the session
+    scans: ty.Dict[str, ImagingScan]
+        The scans in the session
+    run_uid: ty.Optional[str]
+        The run UID of the session, if it exists
+    """
+
     project_id: str
     subject_id: str
     visit_id: str
@@ -238,7 +255,7 @@ class ImagingSession:
     @classmethod
     def from_paths(
         cls,
-        files_path: str | Path,
+        files_path: str | Path | ty.Sequence[str | Path],
         datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
         project_field: list[FieldSpec],
         subject_field: list[FieldSpec],
@@ -246,8 +263,8 @@ class ImagingSession:
         scan_id_field: list[FieldSpec],
         scan_desc_field: list[FieldSpec],
         resource_field: list[FieldSpec],
-        session_field: list[FieldSpec],
-        project_id: list[FieldSpec] | None = None,
+        session_field: list[FieldSpec] | None = None,
+        project_id: str | None = None,
         avoid_clashes: bool = False,
         recursive: bool = False,
     ) -> ty.List[Self]:
@@ -377,9 +394,10 @@ class ImagingSession:
             resource_field,
             session_field,
         ):
-            for field in spec:
-                if issubclass(field.datatype, DicomCollection):
-                    specific_tags.append(field.field_name)
+            if spec is not None:
+                for field in spec:
+                    if issubclass(field.datatype, DicomCollection):
+                        specific_tags.append(field.field_name)
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")

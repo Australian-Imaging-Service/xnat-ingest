@@ -1,3 +1,5 @@
+"""Helper functions and classes for working with remote storage locations, such as S3 buckets, SSH servers and XNAT repositories"""
+
 import abc
 import datetime
 import hashlib
@@ -14,16 +16,13 @@ import boto3.resources.base
 import paramiko
 import xnat
 from fileformats.application import Json
-from fileformats.core import FileSet, from_mime
-from frametree.core import FrameSet
-from frametree.core.exceptions import FrameTreeDataMatchError
+from fileformats.core import FileSet
 from tqdm import tqdm
 
-from xnat_ingest.utils import StoreCredentials, logger
-
-from .resource import ImagingResource
-from .session import ImagingSession
-from .store import ImagingSessionMockStore
+from ..model.resource import ImagingResource
+from ..model.session import ImagingSession
+from .cli_types import StoreCredentials
+from .logging import logger
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -510,3 +509,9 @@ def dir_older_than(path: Path, period: int) -> bool:
     return (datetime.datetime.now() - last_modified) >= datetime.timedelta(
         seconds=period
     )
+
+
+def upload_file_to_s3(file_path: Path, bucket: str, s3_key: str) -> None:
+
+    s3_client = boto3.client("s3")
+    s3_client.upload_file(str(file_path), bucket, s3_key)

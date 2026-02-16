@@ -27,9 +27,9 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.session import ImagingScan, ImagingSession
-from xnat_ingest.store import DummyAxes
-from xnat_ingest.utils import AssociatedFiles, FieldSpec
+from xnat_ingest.helpers.cli_types import AssociatedFiles, FieldSpec
+from xnat_ingest.model.session import ImagingScan, ImagingSession
+from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
 LAST_NAME = "FamilyName"

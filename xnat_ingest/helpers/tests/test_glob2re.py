@@ -1,6 +1,6 @@
 import re
 
-from xnat_ingest.utils import glob_to_re, transform_paths
+from xnat_ingest.helpers.glob2re import glob_to_re, transform_paths
 
 
 def test_glob_to_re():

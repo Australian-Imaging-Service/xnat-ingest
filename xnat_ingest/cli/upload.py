@@ -18,8 +18,7 @@ from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import cli
-from xnat_ingest.session import ImagingSession
-from xnat_ingest.upload_helpers import (
+from xnat_ingest.helpers.remotes import (
     LocalSessionListing,
     SessionListing,
     calculate_checksums,
@@ -31,13 +30,10 @@ from xnat_ingest.upload_helpers import (
     remove_old_files_on_s3,
     remove_old_files_on_ssh,
 )
-from xnat_ingest.utils import (
-    LoggerConfig,
-    StoreCredentials,
-    UploadMethod,
-    logger,
-    set_logger_handling,
-)
+
+from ..helpers.cli_types import StoreCredentials, UploadMethod
+from ..helpers.logging import LoggerConfig, logger, set_logger_handling
+from ..model.session import ImagingSession
 
 
 @cli.command(

@@ -9,7 +9,7 @@ from fileformats.application import Json
 from fileformats.core import FileSet
 from typing_extensions import Self
 
-from .exceptions import DifferingCheckumsException, IncompleteCheckumsException
+from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -19,6 +19,23 @@ if ty.TYPE_CHECKING:
 
 @attrs.define
 class ImagingResource:
+    """Representation of a resource to be uploaded to XNAT, which is a set of files
+    associated with a scan. There can be multiple resources associated with a scan,
+    e.g. the original DICOM files, a BIDS-converted version of the scan, and a brain
+    mask generated from the scan.
+
+    Parameters
+    ----------
+    name: str
+        The name of the resource
+    fileset: FileSet
+        The set of files associated with the resource
+    checksums: dict[str, str]
+        The checksums of the files in the resource
+    scan: ImagingScan
+        The scan that the resource is associated with
+    """
+
     name: str
     fileset: FileSet
     checksums: dict[str, str] = attrs.field(eq=False, repr=False)
@@ -191,7 +208,5 @@ class ImagingResource:
     @property
     def path(self) -> str:
         return self.scan.path + ":" + self.name
-
-    MANIFEST_FNAME = "MANIFEST.json"
 
     MANIFEST_FNAME = "MANIFEST.json"

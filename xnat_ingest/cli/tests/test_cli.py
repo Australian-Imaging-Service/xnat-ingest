@@ -7,9 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
-import pytest
 import xnat4tests  # type: ignore[import-untyped]
-from boto3 import s3
 from fileformats.application import Json
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -30,16 +28,15 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 from moto import mock_aws
 
-from conftest import get_raw_data_files
+from conftest import get_raw_data_files, show_cli_trace
 from xnat_ingest.cli import check_upload, stage, upload
 from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
-from xnat_ingest.utils import (
+from xnat_ingest.helpers.cli_types import (
     FieldSpec,
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,
-    show_cli_trace,
-    upload_file_to_s3,
 )
+from xnat_ingest.helpers.remotes import upload_file_to_s3
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
