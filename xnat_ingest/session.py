@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import platform
 import re
 import typing as ty
 from collections import Counter, defaultdict
@@ -312,21 +313,44 @@ class ImagingSession:
             )
         fspaths = []
         for fspath in files_path:
+            logger.debug("Searching for file types in '%s'", str(fspath))
             if isinstance(fspath, Path) or "*" not in fspath:
                 fspath = Path(fspath)
                 if not fspath.exists():
-                    raise ValueError(f"Provided DICOMs path '{fspath}' does not exist")
+                    raise ValueError(
+                        f"Provided file-system path '{fspath}' does not exist"
+                    )
                 if fspath.is_dir():
                     if recursive:
+                        logger.debug(
+                            "Recursively searching for all paths '%s' directory",
+                            str(fspath),
+                        )
                         fspaths.extend(
                             Path(p) for p in glob(str(fspath) + "/**/*", recursive=True)
                         )
                     else:
+                        logger.debug(
+                            "Adding contents of '%s' directory to list", str(fspath)
+                        )
                         fspaths.extend(Path(fspath).iterdir())
                 else:
+                    logger.debug(
+                        "Directly appending '%s' to list of files", str(fspath)
+                    )
                     fspaths.append(fspath)
             else:
+                logger.debug("Searching for file-system paths using glob '%s'", fspath)
                 fspaths.extend(Path(p) for p in glob(fspath, recursive=True))
+
+        fspaths = [fix_long_path(p) for p in fspaths]
+
+        if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
+            raise ValueError(
+                "The following paths do not exist:\n"
+                + "\n".join(nonexistent[:100])
+                + ("\n..." if len(nonexistent) > 100 else "")
+            )
 
         # Create a UID out of the paths that session was created from and the
         # timestamp
@@ -803,6 +827,26 @@ class ImagingSession:
             for scan in self.scans.values()
             for resource in scan.resources.values()
         )
+
+
+def fix_long_path(p: str | Path) -> Path:
+    r"""Add \\?\ or \\?\UNC\ prefix on Windows for long paths."""
+    if platform.system() != "Windows":
+        return Path(p)
+
+    path = Path(p)
+    path_str = str(path)
+
+    # Already has prefix, don't double-apply
+    if path_str.startswith("\\\\?\\"):
+        return path
+
+    # UNC path: \\server\share\... -> \\?\UNC\server\share\...
+    if path_str.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{path_str[2:]}")
+
+    # Local path: C:\... -> \\?\C:\...
+    return Path(f"\\\\?\\{path_str}")
 
 
 from .store import ImagingSessionMockStore  # noqa: E402
