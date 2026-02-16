@@ -834,7 +834,7 @@ def fix_long_path(p: str | Path) -> Path:
     if platform.system() != "Windows":
         return Path(p)
 
-    path = Path(p).resolve()
+    path = Path(p)
     path_str = str(path)
 
     # Already has prefix, don't double-apply
