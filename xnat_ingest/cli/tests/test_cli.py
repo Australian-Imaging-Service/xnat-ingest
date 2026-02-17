@@ -29,8 +29,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
-from xnat_ingest.cli import check_upload, stage, upload
-from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
+from xnat_ingest.cli import check_upload, sort, upload
+from xnat_ingest.cli.sort import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
 from xnat_ingest.helpers.arg_types import (
     FieldSpec,
     MimeType,  # type: ignore[import-untyped]
@@ -399,7 +399,7 @@ def test_stage_and_upload(
         assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        stage,
+        sort,
         [str(d) for d in dicoms_dirs]
         + [
             str(staging_dir),
@@ -578,7 +578,7 @@ def test_stage_wait_period(
     get_pet_image(dicoms_path)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -601,7 +601,7 @@ def test_stage_wait_period(
     time.sleep(10)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -646,7 +646,7 @@ def test_stage_invalid_ids(
     get_pet_image(dicoms_path, PatientID="")
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -711,7 +711,7 @@ def test_check_upload_missing_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -829,7 +829,7 @@ def test_check_upload_empty_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -955,7 +955,7 @@ def test_check_upload_missing_resource(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -1080,7 +1080,7 @@ def test_check_upload_checksum_fail(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort,
         [
             str(inputs_dir),
             str(staging_dir),

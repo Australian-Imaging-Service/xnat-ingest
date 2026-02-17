@@ -117,7 +117,7 @@ are uploaded to XNAT
     default=False,
     help=("Whether to recursively search input directories for input files"),
 )
-def deidentify(
+def deidentify_cli(
     input_dir: Path,
     output_dir: Path,
     loggers: ty.List[LoggerConfig],

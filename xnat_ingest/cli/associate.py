@@ -156,7 +156,7 @@ are uploaded to XNAT
         "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
     ),
 )
-def associate(
+def associate_cli(
     input_dir: Path,
     output_dir: Path,
     loggers: ty.List[LoggerConfig],

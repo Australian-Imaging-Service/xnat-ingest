@@ -8,6 +8,7 @@ from pathlib import Path
 import tqdm
 import xnat
 from fileformats.core import FileSet, from_mime, to_mime
+from fileformats.medimage import DicomSeries
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
 
@@ -26,14 +27,14 @@ def check_upload(
     server: str,
     user: str,
     password: str,
-    loggers: ty.List[LoggerConfig],
-    always_include: ty.Sequence[str],
-    additional_loggers: ty.List[str],
     store_credentials: StoreCredentials,
-    temp_dir: ty.Optional[Path],
-    verify_ssl: bool,
-    use_curl_jsession: bool,
-    disable_progress: bool,
+    loggers: ty.List[LoggerConfig],
+    always_include: ty.Sequence[str] = (DicomSeries,),
+    additional_loggers: ty.Sequence[str] = (),
+    temp_dir: Path | None = None,
+    verify_ssl: bool = True,
+    use_curl_jsession: bool = False,
+    disable_progress: bool = False,
 ) -> None:
     """Checks the staged sessions against the XNAT server to check for any issues before upload.
 

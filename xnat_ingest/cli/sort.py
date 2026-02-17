@@ -248,7 +248,7 @@ are uploaded to XNAT
     envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
-def stage(
+def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
     datatype: list[MimeType] | None,

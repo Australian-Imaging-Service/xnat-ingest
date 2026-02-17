@@ -14,7 +14,7 @@ from frametree.xnat import Xnat
 from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
-from xnat_ingest.cli.base import cli
+from xnat_ingest.cli.base import base_cli
 from xnat_ingest.helpers.arg_types import LoggerConfig, StoreCredentials
 from xnat_ingest.helpers.logging import logger, set_logger_handling
 from xnat_ingest.helpers.remotes import (
@@ -25,7 +25,7 @@ from xnat_ingest.helpers.remotes import (
 )
 
 
-@cli.command(
+@base_cli.command(
     "check-upload",
     help="""Checks staging directory against uploaded files and logs all files that aren't uploaded
 
@@ -136,7 +136,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     envvar="XINGEST_DISABLE_PROGRESS",
     help=("Disable the progress bar"),
 )
-def check_upload(
+def check_upload_cli(
     staged: str,
     server: str,
     user: str,

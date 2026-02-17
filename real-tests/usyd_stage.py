@@ -1,9 +1,9 @@
 import logging
 
 from click.testing import CliRunner
-
-from xnat_ingest.cli import stage
 from xnat_ingest.utils import show_cli_trace
+
+from xnat_ingest.cli import sort
 
 runner = CliRunner()
 
@@ -12,7 +12,7 @@ WORK_DIR = "/Users/tclo7153/Data/TBP"
 logging.basicConfig(level=logging.DEBUG)
 
 result = runner.invoke(
-    stage,
+    sort,
     [
         f"{WORK_DIR}/RAW-DATA-EXPORT/VENTURE_P001_Galligas_Post-RT",
         f"{WORK_DIR}/TEST-STAGED",
