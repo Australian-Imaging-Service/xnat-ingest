@@ -136,6 +136,16 @@ class UploadMethod(MultiCliTyped):
     )
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
+    @classmethod
+    def select_method(
+        cls, methods: list["UploadMethod"], datatype: ty.Type[FileSet]
+    ) -> str:
+        """Get the upload method for the given datatype"""
+        for method in methods:
+            if issubclass(datatype, method.datatype):
+                return method.method
+        return "tgz_file"
+
 
 @attrs.define
 class AssociatedFiles(CliTyped):
@@ -241,6 +251,24 @@ class MimeType(str, MultiCliTyped):
     @property
     def datatype(self) -> ty.Type[DataType]:
         return from_mime(self.mime)
+
+
+class CopyModeParamType(click.ParamType):
+    name = "copy_mode"
+
+    def convert(
+        self,
+        value: str,
+        param: ty.Optional[click.Parameter],
+        ctx: ty.Optional[click.Context],
+    ) -> FileSet.CopyMode:
+        if isinstance(value, FileSet.CopyMode):
+            return value
+        try:
+            # Allow case-insensitive matching on enum member names.
+            return FileSet.CopyMode[value.lower()]
+        except KeyError:
+            self.fail(f"{value!r} is not a valid copy mode", param, ctx)
 
 
 invalid_path_chars_re = re.compile(r'[\-<>:"/\\|?*\x00-\x1F]')

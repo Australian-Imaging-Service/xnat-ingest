@@ -7,7 +7,7 @@ import attrs
 from fileformats.core import FileSet
 from typing_extensions import Self
 
-from ..helpers.cli_types import AssociatedFiles
+from ..helpers.arg_types import AssociatedFiles
 from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")

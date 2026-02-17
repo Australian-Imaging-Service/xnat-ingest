@@ -19,7 +19,7 @@ from tqdm import tqdm
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.cli_types import AssociatedFiles, FieldSpec
+from ..helpers.arg_types import AssociatedFiles, FieldSpec
 from .resource import ImagingResource
 from .scan import ImagingScan
 
@@ -150,7 +150,7 @@ class ImagingSession:
     def select_resources(
         self,
         dataset: ty.Optional[FrameSet],
-        always_include: ty.Sequence[str] = (),
+        always_include: ty.Sequence[str | FileSet] = (),
     ) -> ty.Iterator[ImagingResource]:
         """Returns selected resources that match the columns in the dataset definition
 
@@ -158,7 +158,7 @@ class ImagingSession:
         ----------
         dataset : FrameSet
             Arcana dataset definition
-        always_include : sequence[str]
+        always_include : sequence[str | FileSet]
             mime-types or "mime-like" (see https://arcanaframework.github.io/fileformats/)
             of file-format to always include in the upload, regardless of whether they are
             specified in the dataset or not
@@ -183,7 +183,9 @@ class ImagingSession:
 
         uploaded = set()
         for mime_like in always_include:
-            if mime_like == "all":
+            if issubclass(mime_like, FileSet):
+                fileformat = mime_like
+            elif mime_like == "all":
                 fileformat = FileSet
             else:
                 fileformat = from_mime(mime_like)  # type: ignore[assignment]

@@ -1,6 +1,6 @@
-from .base import cli
+from .base import base_cli
 from .check_upload import check_upload
 from .stage import stage
-from .upload import upload
+from .upload import upload_cli
 
-__all__ = ["check_upload", "cli", "upload", "stage"]
+__all__ = ["check_upload", "base_cli", "upload_cli", "stage"]

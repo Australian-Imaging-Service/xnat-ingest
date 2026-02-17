@@ -31,7 +31,7 @@ from moto import mock_aws
 from conftest import get_raw_data_files, show_cli_trace
 from xnat_ingest.cli import check_upload, stage, upload
 from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
-from xnat_ingest.helpers.cli_types import (
+from xnat_ingest.helpers.arg_types import (
     FieldSpec,
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,

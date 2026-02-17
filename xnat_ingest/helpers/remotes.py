@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
-from .cli_types import StoreCredentials
+from .arg_types import StoreCredentials
 from .logging import logger
 
 

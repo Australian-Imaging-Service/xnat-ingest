@@ -8,7 +8,7 @@ from pathlib import Path
 
 import discord
 
-from .cli_types import LoggerConfig
+from .arg_types import LoggerConfig
 
 logger = logging.getLogger("xnat-ingest")
 
