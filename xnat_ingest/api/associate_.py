@@ -2,7 +2,8 @@ import traceback
 import typing as ty
 from pathlib import Path
 
-import tqdm
+from fileformats.core import FileSet
+from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing
 
@@ -19,6 +20,8 @@ def associate(
     avoid_clashes: bool = False,
     raise_errors: bool = False,
     require_manifest: bool = True,
+    copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+    delete: bool = False,
 ) -> list[str]:
 
     sessions: list[LocalSessionListing] = [
@@ -50,7 +53,7 @@ def associate(
                 spaces_to_underscores=spaces_to_underscores,
                 avoid_clashes=avoid_clashes,
             )
-            session.save(output_dir / session_listing.name)
+            session.save(output_dir / session_listing.name, copy_mode=copy_mode)
         except Exception as e:
             if raise_errors:
                 raise

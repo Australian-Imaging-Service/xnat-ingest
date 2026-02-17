@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import logging
 import platform
 import re
@@ -183,7 +184,7 @@ class ImagingSession:
 
         uploaded = set()
         for mime_like in always_include:
-            if issubclass(mime_like, FileSet):
+            if inspect.isclass(mime_like) and issubclass(mime_like, FileSet):
                 fileformat = mime_like
             elif mime_like == "all":
                 fileformat = FileSet

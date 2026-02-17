@@ -256,6 +256,10 @@ def test_stage_and_upload(
     if stage_log_file.exists():
         os.unlink(stage_log_file)
 
+    associate_log_file = tmp_path / "associate-logs.log"
+    if associate_log_file.exists():
+        os.unlink(associate_log_file)
+
     upload_log_file = tmp_path / "upload-logs.log"
     if upload_log_file.exists():
         os.unlink(upload_log_file)
@@ -420,7 +424,6 @@ def test_stage_and_upload(
         ],
         env={
             "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
-            "XINGEST_DEIDENTIFY": "0",
         },
     )
 
@@ -437,7 +440,7 @@ def test_stage_and_upload(
         associate_cli,
         [
             str(staging_dir / SORTED_NAME_DEFAULT),
-            associated_dir,
+            str(associated_dir),
             "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             (
@@ -445,9 +448,16 @@ def test_stage_and_upload(
                 + "/{PatientName.family_name}_{PatientName.given_name}*.ptd"
             ),
             r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
-            "--raise-errors",
+            # "--raise-errors",
         ],
+        env={
+            "XINGEST_LOGGERS": f"file,info,{associate_log_file};stream,info,stdout",
+        },
     )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = associate_log_file.read_text()
+    assert "Association completed successfully" in logs, show_cli_trace(result)
 
     source_dir = transfer_to_source(
         associated_dir,

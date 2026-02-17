@@ -7,8 +7,8 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
-
+from ..api import associate
+from ..cli.base import base_cli
 from ..helpers.arg_types import AssociatedFiles, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
@@ -47,7 +47,11 @@ OUTPUT_DIR is the directory that the files for each session are collated to befo
 are uploaded to XNAT
 """,
 )
-@click.argument("input_dir", type=str, nargs=-1, envvar="XINGEST_INPUT_DIR")
+@click.argument(
+    "input_dir",
+    type=click.Path(path_type=Path, exists=True),
+    envvar="XINGEST_INPUT_DIR",
+)
 @click.argument(
     "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
@@ -137,17 +141,6 @@ are uploaded to XNAT
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--wait-period",
-    type=int,
-    default=0,
-    envvar="XINGEST_WAIT_PERIOD",
-    help=(
-        "The number of seconds to wait since the last file modification in sessions "
-        "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
-    ),
-)
-@click.option(
     "--avoid-clashes/--dont-avoid-clashes",
     default=False,
     envvar="XINGEST_AVOID_CLASHES",
@@ -155,6 +148,20 @@ are uploaded to XNAT
         "If a resource with the same name already exists in the scan, increment the "
         "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
     ),
+)
+@click.option(
+    "--temp-dir",
+    type=Path,
+    default=None,
+    envvar="XINGEST_TEMPDIR",
+    help="The directory to use for temporary downloads (i.e. from s3)",
+)
+@click.option(
+    "--require-manifest/--dont-require-manifest",
+    default=None,
+    envvar="XINGEST_REQUIRE_MANIFEST",
+    help=("Whether to require manifest files in the staged resources or not"),
+    type=bool,
 )
 def associate_cli(
     input_dir: Path,
@@ -165,10 +172,11 @@ def associate_cli(
     spaces_to_underscores: bool,
     avoid_clashes: bool,
     loop: int,
-    require_manifest: bool,
     temp_dir: Path | None,
     associated_files: ty.List[AssociatedFiles],
     copy_mode: FileSet.CopyMode,
+    delete: bool,
+    require_manifest: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -198,6 +206,7 @@ def associate_cli(
             raise_errors=raise_errors,
             require_manifest=require_manifest,
             copy_mode=copy_mode,
+            delete=delete,
         )
         if errors:
             logger.error(
