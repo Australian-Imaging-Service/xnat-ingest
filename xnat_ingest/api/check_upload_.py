@@ -29,7 +29,7 @@ def check_upload(
     password: str,
     store_credentials: StoreCredentials,
     loggers: ty.List[LoggerConfig],
-    always_include: ty.Sequence[str] = (DicomSeries,),
+    always_include: ty.Sequence[str | ty.Type[FileSet]] = (DicomSeries,),
     additional_loggers: ty.Sequence[str] = (),
     temp_dir: Path | None = None,
     verify_ssl: bool = True,

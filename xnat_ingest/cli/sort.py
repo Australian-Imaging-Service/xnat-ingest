@@ -19,10 +19,9 @@ from ..helpers.arg_types import (
 )
 from ..helpers.logging import logger, set_logger_handling
 
-PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
-STAGED_NAME_DEFAULT = "STAGED"
+BUILDING_NAME_DEFAULT = "BUILDING"
+SORTED_NAME_DEFAULT = "SORTED"
 INVALID_NAME_DEFAULT = "INVALID"
-DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
 @base_cli.command(
@@ -197,14 +196,14 @@ are uploaded to XNAT
 @click.option(
     "--pre-stage-dir-name",
     type=str,
-    default=PRE_STAGE_NAME_DEFAULT,
+    default=BUILDING_NAME_DEFAULT,
     envvar="XINGEST_PRE_STAGE_DIR_NAME",
     help="The name of the directory to use for pre-staging the files (XINGEST_PRE_STAGE_DIR_NAME env. var)",
 )
 @click.option(
     "--staged-dir-name",
     type=str,
-    default=STAGED_NAME_DEFAULT,
+    default=SORTED_NAME_DEFAULT,
     envvar="XINGEST_STAGED_DIR_NAME",
     help="The name of the directory to use for staging the files (XINGEST_STAGED_DIR_NAME env. var)",
 )

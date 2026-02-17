@@ -31,7 +31,7 @@ from ..model.session import ImagingSession
 
 
 def upload(
-    input_dir: Path,
+    input_dir: Path | str,
     server: str,
     user: str,
     password: str,
@@ -110,7 +110,7 @@ def upload(
 
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
-        if input_dir.startswith("s3://"):
+        if str(input_dir).startswith("s3://"):
             if s3_cache_dir is None:
                 s3_cache_dir = Path(tempfile.mkdtemp())
                 logger.info(

@@ -11,9 +11,6 @@ from xnat_ingest.cli.base import base_cli
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
-PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
-STAGED_NAME_DEFAULT = "STAGED"
-INVALID_NAME_DEFAULT = "INVALID"
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
