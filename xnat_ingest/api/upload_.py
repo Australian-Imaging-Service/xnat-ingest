@@ -83,7 +83,7 @@ def upload(
     errors = []
 
     # Ensure input_path is a string so we can check for s3://
-    input_path = str(input_path)
+    input_dir = str(input_dir)
 
     xnat_repo = Xnat(
         server=server,
