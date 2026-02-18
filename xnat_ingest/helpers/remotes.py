@@ -201,7 +201,7 @@ def iterate_s3_sessions(
     yield num_sessions  # type: ignore[misc]
 
     if temp_dir:
-        tmp_download_dir = temp_dir / "xnat-ingest-download"
+        tmp_download_dir = Path(temp_dir) / "xnat-ingest-download"
         tmp_download_dir.mkdir(parents=True, exist_ok=True)
     else:
         tmp_download_dir = Path(tempfile.mkdtemp())

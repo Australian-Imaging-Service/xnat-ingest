@@ -1,8 +1,8 @@
 import traceback
 from pathlib import Path
 
-import tqdm
 from fileformats.core import FileSet
+from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing
 

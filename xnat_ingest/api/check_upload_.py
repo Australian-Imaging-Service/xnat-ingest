@@ -5,7 +5,7 @@ import tempfile
 import typing as ty
 from pathlib import Path
 
-import tqdm
+from tqdm import tqdm
 import xnat
 from fileformats.core import FileSet, from_mime, to_mime
 from fileformats.medimage import DicomSeries
