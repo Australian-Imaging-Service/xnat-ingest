@@ -12,8 +12,8 @@ from fileformats.medimage import DicomSeries
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
 
-from xnat_ingest.helpers.arg_types import LoggerConfig, StoreCredentials
-from xnat_ingest.helpers.logging import logger, set_logger_handling
+from xnat_ingest.helpers.arg_types import StoreCredentials
+from xnat_ingest.helpers.logging import logger
 from xnat_ingest.helpers.remotes import (
     LocalSessionListing,
     SessionListing,
