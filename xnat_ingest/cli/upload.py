@@ -240,7 +240,7 @@ def upload_cli(
     while True:
         start_time = datetime.datetime.now()
         errors = upload(
-            input_dir=Path(staged),
+            input_dir=staged,
             server=server,
             user=user,
             password=password,

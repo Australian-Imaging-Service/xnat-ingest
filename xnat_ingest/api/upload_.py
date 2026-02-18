@@ -31,7 +31,7 @@ from ..model.session import ImagingSession
 
 
 def upload(
-    input_dir: Path | str,
+    input_dir: str,
     server: str,
     user: str,
     password: str,
@@ -82,6 +82,9 @@ def upload(
 
     errors = []
 
+    # Ensure input_path is a string so we can check for s3://
+    input_path = str(input_path)
+
     xnat_repo = Xnat(
         server=server,
         user=user,
@@ -110,7 +113,7 @@ def upload(
 
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
-        if str(input_dir).startswith("s3://"):
+        if input_dir.startswith("s3://"):
             if s3_cache_dir is None:
                 s3_cache_dir = Path(tempfile.mkdtemp())
                 logger.info(
