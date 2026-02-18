@@ -28,9 +28,7 @@ def check_upload(
     user: str,
     password: str,
     store_credentials: StoreCredentials,
-    loggers: ty.List[LoggerConfig],
     always_include: ty.Sequence[str | ty.Type[FileSet]] = (DicomSeries,),
-    additional_loggers: ty.Sequence[str] = (),
     temp_dir: Path | None = None,
     verify_ssl: bool = True,
     use_curl_jsession: bool = False,
@@ -62,21 +60,11 @@ def check_upload(
         defined in the frameset, or to include all file formats by using "all".
     """
 
-    set_logger_handling(
-        logger_configs=loggers,
-        additional_loggers=additional_loggers,
-        clean_format=True,
-    )
-
-    # Set the directory to create temporary files/directories in away from system default
-    if temp_dir:
-        tempfile.tempdir = str(temp_dir)
-
     xnat_repo = Xnat(
         server=server,
         user=user,
         password=password,
-        cache_dir=Path(tempfile.mkdtemp()),
+        cache_dir=Path(temp_dir) if temp_dir else Path(tempfile.mkdtemp()),
         verify_ssl=verify_ssl,
     )
 
@@ -113,7 +101,7 @@ def check_upload(
 
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
-        if input_dir.startswith("s3://"):
+        if str(input_dir).startswith("s3://"):
             sessions = iterate_s3_sessions(
                 input_dir, store_credentials, temp_dir, wait_period=0
             )
