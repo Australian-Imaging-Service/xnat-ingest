@@ -53,7 +53,7 @@ def associate(
                 spaces_to_underscores=spaces_to_underscores,
                 avoid_clashes=avoid_clashes,
             )
-            session.save(output_dir / session_listing.name, copy_mode=copy_mode)
+            session.save(output_dir, copy_mode=copy_mode)
         except Exception as e:
             if raise_errors:
                 raise
