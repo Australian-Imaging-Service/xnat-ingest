@@ -1,6 +1,7 @@
 import logging
 import os
 import tempfile
+import traceback
 import typing as ty
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode im
 # from logging.handlers import SMTPHandler
 from moto import mock_aws
 
-from xnat_ingest.utils import logger
+from xnat_ingest.helpers.logging import logger
 
 # Set DEBUG logging for unittests
 
@@ -134,3 +135,10 @@ def get_raw_data_files(
     return get_listmode_data(out_dir, skip_unknown=True, **kwargs) + get_countrate_data(  # type: ignore[no-any-return]
         out_dir, skip_unknown=True, **kwargs
     )
+
+
+def show_cli_trace(result: click.testing.Result) -> str:
+    """Show the exception traceback from CLIRunner results"""
+    assert result.exc_info is not None
+    exc_type, exc, tb = result.exc_info
+    return "".join(traceback.format_exception(exc_type, value=exc, tb=tb))

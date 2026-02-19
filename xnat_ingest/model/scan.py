@@ -7,12 +7,14 @@ import attrs
 from fileformats.core import FileSet
 from typing_extensions import Self
 
-import xnat_ingest.session
-
+from ..helpers.arg_types import AssociatedFiles
 from .resource import ImagingResource
-from .utils import AssociatedFiles
 
 logger = logging.getLogger("xnat-ingest")
+
+
+if ty.TYPE_CHECKING:
+    from xnat_ingest.model.session import ImagingSession
 
 
 def scan_type_converter(scan_type: str) -> str:
@@ -49,9 +51,7 @@ class ImagingScan:
         factory=dict, converter=scan_resources_converter
     )
     associated: AssociatedFiles | None = None
-    session: "xnat_ingest.session.ImagingSession" = attrs.field(
-        default=None, eq=False, repr=False
-    )
+    session: "ImagingSession" = attrs.field(default=None, eq=False, repr=False)
 
     def __contains__(self, resource_name: str) -> bool:
         return resource_name in self.resources
@@ -97,10 +97,6 @@ class ImagingScan:
                 resource.scan = scan
                 scan.resources[resource.name] = resource
         return scan
-
-    @property
-    def path(self) -> str:
-        return self.session.path + ":" + self.id + "-" + self.type
 
     @property
     def path(self) -> str:

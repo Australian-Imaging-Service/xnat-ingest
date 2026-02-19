@@ -7,9 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
-import pytest
 import xnat4tests  # type: ignore[import-untyped]
-from boto3 import s3
 from fileformats.application import Json
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -30,16 +28,15 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 from moto import mock_aws
 
-from conftest import get_raw_data_files
-from xnat_ingest.cli import check_upload, stage, upload
-from xnat_ingest.cli.stage import INVALID_NAME_DEFAULT, STAGED_NAME_DEFAULT
-from xnat_ingest.utils import (
+from conftest import get_raw_data_files, show_cli_trace
+from xnat_ingest.cli import associate_cli, check_upload_cli, sort_cli, upload_cli
+from xnat_ingest.cli.sort import INVALID_NAME_DEFAULT, SORTED_NAME_DEFAULT
+from xnat_ingest.helpers.arg_types import (
     FieldSpec,
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,
-    show_cli_trace,
-    upload_file_to_s3,
 )
+from xnat_ingest.helpers.remotes import upload_file_to_s3
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -259,6 +256,10 @@ def test_stage_and_upload(
     if stage_log_file.exists():
         os.unlink(stage_log_file)
 
+    associate_log_file = tmp_path / "associate-logs.log"
+    if associate_log_file.exists():
+        os.unlink(associate_log_file)
+
     upload_log_file = tmp_path / "upload-logs.log"
     if upload_log_file.exists():
         os.unlink(upload_log_file)
@@ -402,7 +403,7 @@ def test_stage_and_upload(
         assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [str(d) for d in dicoms_dirs]
         + [
             str(staging_dir),
@@ -410,11 +411,6 @@ def test_stage_and_upload(
             "ImageType[-1]",
             "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
             "--recursive",
-            "--associated-files",
-            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
-            str(associated_files_dir)
-            + "/{PatientName.family_name}_{PatientName.given_name}*.ptd",
-            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
             "--additional-logger",
             "xnat",
             "--additional-logger",
@@ -428,7 +424,6 @@ def test_stage_and_upload(
         ],
         env={
             "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
-            "XINGEST_DEIDENTIFY": "0",
         },
     )
 
@@ -439,15 +434,40 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
+    associated_dir = tmp_path / "associated"
+
+    result = cli_runner(
+        associate_cli,
+        [
+            str(staging_dir / SORTED_NAME_DEFAULT),
+            str(associated_dir),
+            "--associated-files",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
+            (
+                str(associated_files_dir)
+                + "/{PatientName.family_name}_{PatientName.given_name}*.ptd"
+            ),
+            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+            # "--raise-errors",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file,info,{associate_log_file};stream,info,stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = associate_log_file.read_text()
+    assert "Association completed successfully" in logs, show_cli_trace(result)
+
     source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
+        associated_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
     )
 
     result = cli_runner(
-        upload,
+        upload_cli,
         [
             source_dir,
             "--additional-logger",
@@ -486,7 +506,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        upload,
+        upload_cli,
         [
             source_dir,
             "--additional-logger",
@@ -537,7 +557,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        check_upload,
+        check_upload_cli,
         [
             source_dir,
             "--always-include",
@@ -571,7 +591,7 @@ def test_stage_wait_period(
         shutil.rmtree(staging_dir)
     staging_dir.mkdir()
 
-    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    staged_dir = staging_dir / SORTED_NAME_DEFAULT
 
     stage_log_file = tmp_path / "stage-logs.log"
     if stage_log_file.exists():
@@ -581,7 +601,7 @@ def test_stage_wait_period(
     get_pet_image(dicoms_path)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -591,7 +611,6 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
         },
     )
@@ -604,7 +623,7 @@ def test_stage_wait_period(
     time.sleep(10)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -614,7 +633,6 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
         },
     )
@@ -638,7 +656,7 @@ def test_stage_invalid_ids(
         shutil.rmtree(staging_dir)
     staging_dir.mkdir()
 
-    staged_dir = staging_dir / STAGED_NAME_DEFAULT
+    staged_dir = staging_dir / SORTED_NAME_DEFAULT
     invalid_dir = staging_dir / INVALID_NAME_DEFAULT
 
     stage_log_file = tmp_path / "stage-logs.log"
@@ -649,7 +667,7 @@ def test_stage_invalid_ids(
     get_pet_image(dicoms_path, PatientID="")
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(dicoms_path),
             str(staging_dir),
@@ -659,7 +677,6 @@ def test_stage_invalid_ids(
             "--raise-errors",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
         },
     )
@@ -714,7 +731,7 @@ def test_check_upload_missing_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -724,7 +741,6 @@ def test_check_upload_missing_scan(
             "0",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": "stream,debug,stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
@@ -733,7 +749,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
+        staging_dir / SORTED_NAME_DEFAULT,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -742,7 +758,7 @@ def test_check_upload_missing_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload,
+        upload_cli,
         [
             source_dir,
             "--always-include",
@@ -764,7 +780,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload,
+        check_upload_cli,
         [
             source_dir,
             "--always-include",
@@ -832,7 +848,7 @@ def test_check_upload_empty_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -842,7 +858,6 @@ def test_check_upload_empty_scan(
             "0",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": "stream,debug,stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
@@ -851,7 +866,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
+        staging_dir / SORTED_NAME_DEFAULT,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -860,7 +875,7 @@ def test_check_upload_empty_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload,
+        upload_cli,
         [
             source_dir,
             "--always-include",
@@ -889,7 +904,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload,
+        check_upload_cli,
         [
             source_dir,
             "--always-include",
@@ -958,7 +973,7 @@ def test_check_upload_missing_resource(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -968,7 +983,6 @@ def test_check_upload_missing_resource(
             "0",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": "stream,debug,stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
@@ -977,7 +991,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
+        staging_dir / SORTED_NAME_DEFAULT,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -986,7 +1000,7 @@ def test_check_upload_missing_resource(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload,
+        upload_cli,
         [
             source_dir,
             "--always-include",
@@ -1015,7 +1029,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload,
+        check_upload_cli,
         [
             source_dir,
             "--always-include",
@@ -1057,7 +1071,7 @@ def test_check_upload_checksum_fail(
 
     inputs_dir = tmp_path / "inputs"
     staging_dir = tmp_path / "staging"
-    staged_dir = str(staging_dir / STAGED_NAME_DEFAULT)
+    staged_dir = str(staging_dir / SORTED_NAME_DEFAULT)
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -1083,7 +1097,7 @@ def test_check_upload_checksum_fail(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        stage,
+        sort_cli,
         [
             str(inputs_dir),
             str(staging_dir),
@@ -1093,7 +1107,6 @@ def test_check_upload_checksum_fail(
             "0",
         ],
         env={
-            "XINGEST_DEIDENTIFY": "0",
             "XINGEST_LOGGERS": "stream,debug,stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
@@ -1104,9 +1117,9 @@ def test_check_upload_checksum_fail(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload,
+        upload_cli,
         [
-            str(staging_dir / STAGED_NAME_DEFAULT),
+            str(staging_dir / SORTED_NAME_DEFAULT),
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1136,14 +1149,14 @@ def test_check_upload_checksum_fail(
     manifest_file.save(manifest_data)
 
     source_dir = transfer_to_source(
-        staging_dir / STAGED_NAME_DEFAULT,
+        staging_dir / SORTED_NAME_DEFAULT,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
     )
 
     result = cli_runner(
-        check_upload,
+        check_upload_cli,
         [
             source_dir,
             "--always-include",
@@ -1169,7 +1182,7 @@ def test_check_upload_checksum_fail(
 
 def transfer_to_source(
     source_dir: Path, upload_source: str, s3_prefix: str, s3_bucket: str
-):
+) -> str:
     if upload_source == "s3":
         # Upload staged data to S3 bucket
         for fspath in source_dir.glob("**/*"):
