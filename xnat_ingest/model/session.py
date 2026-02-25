@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import logging
 import platform
 import re
@@ -784,6 +785,7 @@ class ImagingSession:
         dest_dir: Path,
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+        save_metadata: bool | Path = False,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -802,6 +804,10 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
+        save_metadata : bool or Path, optional
+            whether to save the session metadata to a JSON file in the session directory,
+            if True, the metadata will be saved to a file named "METADATA.json" in the session
+            directory, if a Path, the metadata will be saved to this path, by default False
 
         Returns
         -------
@@ -824,6 +830,12 @@ class ImagingSession:
             saved_scan = scan.save(session_dir, copy_mode=copy_mode)
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
+        if save_metadata:
+            metadata_path = (
+                session_dir / "METADATA.json" if session_dir is True else save_metadata  # type: ignore[comparison-overlap]
+            )
+            with open(metadata_path, "w") as f:
+                json.dump(self.metadata, f, indent=4)
         return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"

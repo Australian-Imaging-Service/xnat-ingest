@@ -247,6 +247,17 @@ are uploaded to XNAT
     envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
+@click.option(
+    "--save-metadata",
+    type=bool | click.Path(path_type=Path),
+    default=False,
+    help=(
+        "Whether to save the session metadata to a JSON file in the session directory. If True, the metadata will be saved to a file "
+        'named "METADATA.json" in the session directory. If a Path, the metadata will be saved to this path. If False, the metadata '
+        "will not be saved."
+    ),
+    envvar="XINGEST_SAVE_METADATA",
+)
 def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
@@ -264,7 +275,7 @@ def sort_cli(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     xnat_login: XnatLogin,
-    pre_stage_dir_name: str,
+    build_dir_name: str,
     staged_dir_name: str,
     invalid_dir_name: str,
     loop: int,
@@ -272,6 +283,7 @@ def sort_cli(
     avoid_clashes: bool,
     recursive: bool,
     copy_mode: FileSet.CopyMode,
+    save_metadata: bool | Path,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -295,7 +307,7 @@ def sort_cli(
         start_time = datetime.datetime.now()
         errors = sort(
             input_paths=input_paths,
-            staging_dir=staging_dir,
+            output_dir=staging_dir,
             datatypes=datatypes,
             project_field=project_field,
             subject_field=subject_field,
@@ -308,13 +320,14 @@ def sort_cli(
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            pre_stage_dir_name=pre_stage_dir_name,
+            build_dir_name=build_dir_name,
             staged_dir_name=staged_dir_name,
             invalid_dir_name=invalid_dir_name,
             wait_period=wait_period,
             avoid_clashes=avoid_clashes,
             recursive=recursive,
             xnat_login=xnat_login,
+            save_metadata=save_metadata,
         )
         if errors:
             logger.error(
