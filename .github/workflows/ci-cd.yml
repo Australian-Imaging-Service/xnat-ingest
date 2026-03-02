@@ -181,7 +181,7 @@ jobs:
     - name: Download pip build
       uses: actions/download-artifact@v4
       with:
-        name: built-main
+        name: build
         path: dist
 
     - name: Check for PyPI token on tag
