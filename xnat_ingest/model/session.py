@@ -6,7 +6,7 @@ import platform
 import re
 import typing as ty
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import date, datetime, time
 from functools import cached_property
 from glob import glob
 from itertools import chain
@@ -832,10 +832,13 @@ class ImagingSession:
             saved.scans[saved_scan.id] = saved_scan
         if save_metadata:
             metadata_path = (
-                session_dir / "METADATA.json" if session_dir is True else save_metadata  # type: ignore[comparison-overlap]
+                session_dir / "METADATA.json"
+                if save_metadata is True
+                else save_metadata
             )
+            logger.debug("Saving session metadata to '%s'", metadata_path)
             with open(metadata_path, "w") as f:
-                json.dump(self.metadata, f, indent=4)
+                json.dump(sanitize_for_json(self.metadata), f, indent=4)
         return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
@@ -883,3 +886,9 @@ def fix_long_path(p: str | Path) -> Path:
 
 
 from .store import ImagingSessionMockStore  # noqa: E402
+
+
+def json_serializer(obj: ty.Any) -> ty.Any:
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")

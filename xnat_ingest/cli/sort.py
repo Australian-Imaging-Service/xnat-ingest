@@ -194,27 +194,6 @@ are uploaded to XNAT
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--pre-stage-dir-name",
-    type=str,
-    default=BUILDING_NAME_DEFAULT,
-    envvar="XINGEST_PRE_STAGE_DIR_NAME",
-    help="The name of the directory to use for pre-staging the files (XINGEST_PRE_STAGE_DIR_NAME env. var)",
-)
-@click.option(
-    "--staged-dir-name",
-    type=str,
-    default=SORTED_NAME_DEFAULT,
-    envvar="XINGEST_STAGED_DIR_NAME",
-    help="The name of the directory to use for staging the files (XINGEST_STAGED_DIR_NAME env. var)",
-)
-@click.option(
-    "--invalid-dir-name",
-    type=str,
-    default=INVALID_NAME_DEFAULT,
-    envvar="XINGEST_INVALID_DIR_NAME",
-    help="The name of the directory to use for invalid files (XINGEST_INVALID_DIR_NAME env. var)",
-)
-@click.option(
     "--wait-period",
     type=int,
     default=0,
@@ -248,13 +227,13 @@ are uploaded to XNAT
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
-    "--save-metadata",
-    type=bool | click.Path(path_type=Path),
+    "--save-metadata/--dont-save-metadata",
+    type=bool,
     default=False,
     help=(
-        "Whether to save the session metadata to a JSON file in the session directory. If True, the metadata will be saved to a file "
-        'named "METADATA.json" in the session directory. If a Path, the metadata will be saved to this path. If False, the metadata '
-        "will not be saved."
+        "Whether to save the session metadata to a JSON file in the session directory. "
+        'If True, the metadata will be saved to a file named "METADATA.json" in the session '
+        "directory and hardlinked into a sub-directory named `__metadata__` in the output directory."
     ),
     envvar="XINGEST_SAVE_METADATA",
 )
@@ -275,15 +254,12 @@ def sort_cli(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     xnat_login: XnatLogin,
-    build_dir_name: str,
-    staged_dir_name: str,
-    invalid_dir_name: str,
     loop: int,
     wait_period: int,
     avoid_clashes: bool,
     recursive: bool,
     copy_mode: FileSet.CopyMode,
-    save_metadata: bool | Path,
+    save_metadata: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -320,9 +296,6 @@ def sort_cli(
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            build_dir_name=build_dir_name,
-            staged_dir_name=staged_dir_name,
-            invalid_dir_name=invalid_dir_name,
             wait_period=wait_period,
             avoid_clashes=avoid_clashes,
             recursive=recursive,
@@ -331,7 +304,9 @@ def sort_cli(
         )
         if errors:
             logger.error(
-                f"Staging completed with {len(errors)} errors:\n\n{''.join(errors)}"
+                "Staging completed with %s errors:\n\n%s",
+                len(errors),
+                "\n".join(errors),
             )
         else:
             logger.info("Staging completed successfully")

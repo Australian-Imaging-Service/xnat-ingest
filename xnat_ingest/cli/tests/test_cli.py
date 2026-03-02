@@ -15,27 +15,24 @@ from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,  # type: ignore[import-untyped]
-)
+    get_image as get_ac_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,  # type: ignore[import-untyped]
-)
+    get_image as get_statistics_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,  # type: ignore[import-untyped]
-)
+    get_image as get_topogram_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,  # type: ignore[import-untyped]
-)
+    get_image as get_pet_image,
+)  # type: ignore[import-untyped]
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
 from xnat_ingest.cli import associate_cli, check_upload_cli, sort_cli, upload_cli
 from xnat_ingest.cli.sort import INVALID_NAME_DEFAULT, SORTED_NAME_DEFAULT
-from xnat_ingest.helpers.arg_types import (
-    FieldSpec,
-    MimeType,  # type: ignore[import-untyped]
-    XnatLogin,
-)
+from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
+from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
 from xnat_ingest.helpers.remotes import upload_file_to_s3
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
@@ -247,10 +244,10 @@ def test_stage_and_upload(
     associated_files_dir = tmp_path / "non-dicoms"
     associated_files_dir.mkdir(exist_ok=True)
 
-    staging_dir = tmp_path / "staging"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir()
+    sorted_dir = tmp_path / "staging"
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
 
     stage_log_file = tmp_path / "stage-logs.log"
     if stage_log_file.exists():
@@ -406,7 +403,7 @@ def test_stage_and_upload(
         sort_cli,
         [str(d) for d in dicoms_dirs]
         + [
-            str(staging_dir),
+            str(sorted_dir),
             "--resource-field",
             "ImageType[-1]",
             "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
@@ -417,6 +414,7 @@ def test_stage_and_upload(
             "fileformats",
             "--raise-errors",
             "--delete",
+            "--save-metadata",
             "--xnat-login",
             "http://localhost:8080",
             "admin",
@@ -434,12 +432,17 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
+    mdata_path = sorted_dir / "__metadata__" / f"{session_ids[0]}.json"
+    assert mdata_path.exists(), show_cli_trace(result)
+    mdata = Json(mdata_path).load()  # Check that the metadata file is valid JSON
+    assert mdata.get("PatientID") == "subject0", show_cli_trace(result)
+
     associated_dir = tmp_path / "associated"
 
     result = cli_runner(
         associate_cli,
         [
-            str(staging_dir / SORTED_NAME_DEFAULT),
+            str(sorted_dir / SORTED_NAME_DEFAULT),
             str(associated_dir),
             "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
