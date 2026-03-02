@@ -112,10 +112,12 @@ def sort(
     # staging process
     build_dir = output_dir / "__build__"
     invalid_dir = output_dir / "__invalid__"
-    metadata_dir = output_dir / "__metadata__"
+
     build_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
-    metadata_dir.mkdir(parents=True, exist_ok=True)
+    if save_metadata:
+        metadata_dir = output_dir / "__metadata__"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
@@ -168,7 +170,16 @@ def sort(
                 saved_dir.rename(invalid_dir / saved_dir.relative_to(build_dir))
             else:
                 saved_dir.rename(output_dir / saved_dir.relative_to(build_dir))
+            # Hardlink the metadata file from the build directory to the metadata directory
+            # if save_metadata is True. This ensures that the metadata file is not moved or
+            # deleted until the session is moved from the build directory to the output directory.
             if save_metadata and isinstance(save_metadata, bool):
+                logger.debug(
+                    "Hardlinking metadata file for session '%s' from '%s' to '%s'",
+                    session.name,
+                    saved_dir / "METADATA.json",
+                    metadata_dir / f"{session.name}.json",
+                )
                 Json(output_dir / session.name / "METADATA.json").copy(
                     metadata_dir / f"{session.name}.json",
                     mode=FileSet.CopyMode.hardlink,
