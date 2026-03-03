@@ -85,7 +85,7 @@ class ImagingSession:
 
     @property
     def name(self) -> str:
-        return f"{self.project_id}-{self.subject_id}-{self.visit_id}"
+        return f"{self.project_id}.{self.subject_id}.{self.visit_id}"
 
     @property
     def invalid_ids(self) -> bool:
@@ -101,7 +101,7 @@ class ImagingSession:
 
     @property
     def staging_relpath(self) -> list[str]:
-        return ["-".join([self.project_id, self.subject_id, self.visit_id])]
+        return [".".join([self.project_id, self.subject_id, self.visit_id])]
 
     @property
     def session_id(self) -> str:
@@ -772,7 +772,11 @@ class ImagingSession:
         ImagingSession
             the loaded session
         """
-        parts = session_dir.name.split("-")
+        if "." in session_dir.name:
+            parts = session_dir.name.split(".")
+        else:
+            # Backwards compatibility with old delimiter
+            parts = session_dir.name.split("-")
         if len(parts) == 4:
             project_id, subject_id, visit_id, run_uid = parts
         else:
@@ -839,9 +843,9 @@ class ImagingSession:
             project_id = self.project_id
         else:
             project_id = "INVALID_UNRECOGNISED_" + self.project_id
-        session_dirname = "-".join((project_id, self.subject_id, self.visit_id))
+        session_dirname = ".".join((project_id, self.subject_id, self.visit_id))
         if self.run_uid:
-            session_dirname += f"-{self.run_uid}"
+            session_dirname += f".{self.run_uid}"
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):

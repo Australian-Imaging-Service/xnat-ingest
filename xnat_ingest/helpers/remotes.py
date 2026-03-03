@@ -39,7 +39,12 @@ class SessionListing(metaclass=abc.ABCMeta):
 
     @property
     def ids(self):
-        return self.name.split("-")[:3]
+        if "." in self.name:
+            ids = self.name.split(".")
+        else:
+            # For backwards compatibility
+            ids = self.name.split("-")[:3]
+        return ids
 
     @property
     def project_id(self) -> str:
@@ -86,7 +91,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         resource_paths = set()
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
-                resource_paths.add(f"{xscan.id}-{xscan.type}/{xresource.label}")
+                resource_paths.add(f"{xscan.id}.{xscan.type}/{xresource.label}")
         return resource_paths.issuperset(self.resource_paths)
 
 

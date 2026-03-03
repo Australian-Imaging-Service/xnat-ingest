@@ -276,7 +276,7 @@ def test_stage_and_upload(
             AccessionNumber = f"987654321{i}"
             session_id = f"{PatientID}_{AccessionNumber}"
             session_ids.append(session_id)
-            session_names.append(f"{project_id}-{PatientID}-{AccessionNumber}")
+            session_names.append(f"{project_id}.{PatientID}.{AccessionNumber}")
 
             StudyInstanceUID = (
                 f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
@@ -688,7 +688,7 @@ def test_stage_invalid_ids(
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
-    assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
+    assert ".INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
     assert not list_session_dirs(sorted_dir)
     assert len(list(invalid_dir.iterdir())) == 1
 
