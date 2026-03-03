@@ -1,6 +1,5 @@
 import hashlib
 import inspect
-import json
 import logging
 import platform
 import re
@@ -15,6 +14,7 @@ from pathlib import Path
 import attrs
 import yaml
 from fileformats.core import FileSet, from_mime, from_paths
+from fileformats.application import Yaml
 from fileformats.medimage import DicomCollection, MedicalImage
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
@@ -68,8 +68,11 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
     run_uid: ty.Optional[str] = attrs.field(default=None)
+    _metadata: dict[str, ty.Any] | None = attrs.field(
+        default=None, eq=False, repr=False, init=False
+    )
 
-    DEFAULT_METADATA_FNAME = "METADATA.yaml"
+    METADATA_FNAME = "METADATA.yaml"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -234,30 +237,35 @@ class ImagingSession:
                     uploaded.add((scan.id, resource_name))
                 yield resource
 
-    @cached_property
+    @property
     def metadata(self) -> dict[str, ty.Any]:
-        primary_resources = self.primary_resources
-        all_keys = [list(d.metadata.keys()) for d in primary_resources if d.metadata]
-        common_keys = [
-            k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
-        ]
-        collated = {k: primary_resources[0].metadata[k] for k in common_keys}
-        for i, resource in enumerate(primary_resources[1:], start=1):
-            for key in common_keys:
-                if not resource.metadata:
-                    continue
-                val = resource.metadata[key]
-                if val != collated[key]:
-                    # Check whether the value is the same as the values in the previous
-                    # images in the series
-                    if (
-                        not isinstance(collated[key], list)
-                        or isinstance(val, list)
-                        and not isinstance(collated[key][0], list)
-                    ):
-                        collated[key] = [collated[key]] * i + [val]
-                    collated[key].append(val)
-        return collated
+        """Collated metadata across all file-sets within the session"""
+        if self._metadata is None:
+            primary_resources = self.primary_resources
+            all_keys = [
+                list(d.metadata.keys()) for d in primary_resources if d.metadata
+            ]
+            common_keys = [
+                k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
+            ]
+            collated = {k: primary_resources[0].metadata[k] for k in common_keys}
+            for i, resource in enumerate(primary_resources[1:], start=1):
+                for key in common_keys:
+                    if not resource.metadata:
+                        continue
+                    val = resource.metadata[key]
+                    if val != collated[key]:
+                        # Check whether the value is the same as the values in the previous
+                        # images in the series
+                        if (
+                            not isinstance(collated[key], list)
+                            or isinstance(val, list)
+                            and not isinstance(collated[key][0], list)
+                        ):
+                            collated[key] = [collated[key]] * i + [val]
+                        collated[key].append(val)
+            self._metadata = collated
+        return self._metadata
 
     @classmethod
     def from_paths(
@@ -335,7 +343,7 @@ class ImagingSession:
             raise TypeError(
                 "Invalid type of 'files_path', must be a pathlib.Path, str or list of"
             )
-        fspaths = []
+        fspaths: list[Path] = []
         for fspath in files_path:
             logger.debug("Searching for file types in '%s'", str(fspath))
             if isinstance(fspath, Path) or "*" not in fspath:
@@ -785,6 +793,9 @@ class ImagingSession:
                 )
                 scan.session = session
                 session.scans[scan.id] = scan
+        metadata_path = session_dir / cls.METADATA_FNAME
+        if metadata_path.exists():
+            session._metadata = Yaml(metadata_path).load()
         return session
 
     def save(
@@ -792,7 +803,7 @@ class ImagingSession:
         dest_dir: Path,
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        save_metadata: bool | Path = False,
+        save_metadata: bool = True,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -839,7 +850,7 @@ class ImagingSession:
             saved.scans[saved_scan.id] = saved_scan
         if save_metadata:
             metadata_path = (
-                session_dir / self.DEFAULT_METADATA_FNAME
+                session_dir / self.METADATA_FNAME
                 if save_metadata is True
                 else save_metadata
             )

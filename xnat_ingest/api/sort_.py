@@ -185,10 +185,8 @@ def sort(
                         for scan_dir in saved_dir.iterdir():
                             if scan_dir.is_dir():
                                 scan_dir.rename(session_output_dir / scan_dir.name)
-                        exist_mdata_path = (
-                            session_output_dir / session.DEFAULT_METADATA_FNAME
-                        )
-                        new_mdata_path = saved_dir / session.DEFAULT_METADATA_FNAME
+                        exist_mdata_path = session_output_dir / session.METADATA_FNAME
+                        new_mdata_path = saved_dir / session.METADATA_FNAME
                         if new_mdata_path.exists():
                             if exist_mdata_path.exists():
                                 # Merge metadata files
@@ -216,7 +214,7 @@ def sort(
                 # if save_metadata is True. This ensures that the metadata file is not moved or
                 # deleted until the session is moved from the build directory to the output directory.
                 if save_metadata and isinstance(save_metadata, bool):
-                    src_path = session_output_dir / session.DEFAULT_METADATA_FNAME
+                    src_path = session_output_dir / session.METADATA_FNAME
                     target_fpath = metadata_dir / f"{session.name}.yaml"
                     logger.debug(
                         "Hardlinking metadata file for session '%s' from '%s' to '%s'",

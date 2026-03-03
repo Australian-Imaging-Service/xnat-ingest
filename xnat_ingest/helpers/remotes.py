@@ -101,7 +101,9 @@ class LocalSessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        return {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
+        paths = {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
+        paths.discard(ImagingSession.METADATA_FNAME)
+        return paths
 
     @property
     def name(self) -> str:
@@ -140,7 +142,9 @@ class S3SessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        return {"/".join(o[0][:2]) for o in self.objects}
+        paths = {"/".join(o[0][:2]) for o in self.objects}
+        paths.discard(ImagingSession.METADATA_FNAME)
+        return paths
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
