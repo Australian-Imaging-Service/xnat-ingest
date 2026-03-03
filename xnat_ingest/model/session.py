@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import logging
 import platform
 import re
@@ -12,6 +13,7 @@ from itertools import chain
 from pathlib import Path
 
 import attrs
+import yaml
 from fileformats.core import FileSet, from_mime, from_paths
 from fileformats.medimage import DicomCollection, MedicalImage
 from frametree.core.exceptions import FrameTreeDataMatchError
@@ -66,6 +68,8 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
     run_uid: ty.Optional[str] = attrs.field(default=None)
+
+    DEFAULT_METADATA_FNAME = "METADATA.yaml"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -559,7 +563,7 @@ class ImagingSession:
         patterns: ty.List[AssociatedFiles],
         spaces_to_underscores: bool = True,
         avoid_clashes: bool = False,
-    ) -> None:
+    ) -> list[FileSet]:
         """Adds files associated with the primary files to the session
 
         Parameters
@@ -570,6 +574,7 @@ class ImagingSession:
             when building associated file globs, convert spaces underscores in fields
             extracted from source file metadata, false by default
         """
+        all_associated = []
         for associated_files in patterns:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
@@ -607,14 +612,17 @@ class ImagingSession:
                     scan_type = match.group("type")
                 except IndexError:
                     scan_type = scan_id
+                fspaths = from_paths([fspath], associated_files.datatype)
                 self.add_resource(
                     scan_id,
                     scan_type,
                     resource_name,
-                    from_paths([fspath], associated_files.datatype)[0],
+                    fspaths[0],
                     associated=associated_files,
                     avoid_clashes=avoid_clashes,
                 )
+                all_associated.extend(fspaths)
+        return all_associated
 
     def add_resource(
         self,
@@ -784,6 +792,7 @@ class ImagingSession:
         dest_dir: Path,
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+        save_metadata: bool | Path = False,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -802,6 +811,10 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
+        save_metadata : bool or Path, optional
+            whether to save the session metadata to a YAML file in the session directory,
+            if True, the metadata will be saved to a file named "METADATA.yaml" in the session
+            directory, if a Path, the metadata will be saved to this path, by default False
 
         Returns
         -------
@@ -824,6 +837,15 @@ class ImagingSession:
             saved_scan = scan.save(session_dir, copy_mode=copy_mode)
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
+        if save_metadata:
+            metadata_path = (
+                session_dir / self.DEFAULT_METADATA_FNAME
+                if save_metadata is True
+                else save_metadata
+            )
+            logger.debug("Saving session metadata to '%s'", metadata_path)
+            with open(metadata_path, "w") as f:
+                yaml.dump(self.metadata, f, indent=4)
         return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
@@ -871,3 +893,9 @@ def fix_long_path(p: str | Path) -> Path:
 
 
 from .store import ImagingSessionMockStore  # noqa: E402
+
+
+def json_serializer(obj: ty.Any) -> ty.Any:
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")

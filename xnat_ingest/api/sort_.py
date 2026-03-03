@@ -3,24 +3,25 @@ import time
 import traceback
 from pathlib import Path
 
+from fileformats.application import Yaml
 from fileformats.core import FileSet
+from filelock import SoftFileLock
 from frametree.xnat import Xnat
 from tqdm import tqdm
 
-from ..helpers.arg_types import FieldSpec, MimeType, XnatLogin
+from ..helpers.arg_types import FieldSpec, XnatLogin
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
-PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
-STAGED_NAME_DEFAULT = "STAGED"
-INVALID_NAME_DEFAULT = "INVALID"
-DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
+
+BUILD_NAME_DEFAULT = "__build__"
+INVALID_NAME_DEFAULT = "__invalid__"
 
 
 def sort(
     input_paths: list[str],
-    staging_dir: Path,
-    datatypes: list[MimeType],
+    output_dir: Path,
+    datatypes: list[FileSet],
     project_field: list[FieldSpec],
     subject_field: list[FieldSpec],
     visit_field: list[FieldSpec],
@@ -28,17 +29,15 @@ def sort(
     scan_id_field: list[FieldSpec],
     scan_desc_field: list[FieldSpec],
     resource_field: list[FieldSpec],
-    project_id: str | None,
-    delete: bool,
-    raise_errors: bool,
-    copy_mode: FileSet.CopyMode,
-    pre_stage_dir_name: str,
-    staged_dir_name: str,
-    invalid_dir_name: str,
-    wait_period: int,
-    avoid_clashes: bool,
-    recursive: bool,
-    xnat_login: XnatLogin,
+    project_id: str | None = None,
+    delete: bool = False,
+    raise_errors: bool = False,
+    copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    wait_period: int = 0,
+    avoid_clashes: bool = False,
+    recursive: bool = False,
+    xnat_login: XnatLogin | None = None,
+    save_metadata: bool | Path = False,
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -75,14 +74,6 @@ def sort(
     copy_mode: FileSet.CopyMode
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
-    pre_stage_dir_name: str
-        The name of the temporary directory within the staging directory where sessions will be saved before being moved to the
-        final staged directory. This is to ensure that only fully saved sessions are moved to the final staged directory.
-    staged_dir_name: str
-        The name of the directory within the staging directory where successfully staged sessions will be saved.
-    invalid_dir_name: str
-        The name of the directory within the staging directory where sessions that are identified as invalid during staging
-        will be saved.
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
@@ -96,6 +87,10 @@ def sort(
         If provided, this XNAT login information will be used to log into the XNAT server and check that the project IDs extracted
         from the input files exist on the XNAT server before staging. If not provided, the project IDs will not be checked
         against the XNAT server before staging.
+    save_metadata: bool or Path
+        Whether to save the session metadata to a JSON file in the session directory. If True, the metadata will be saved to a file
+        named "METADATA.json" in the session directory. If a Path, the metadata will be saved to this path. If False, the metadata
+        will not be saved.
     """
 
     errors = []
@@ -120,12 +115,14 @@ def sort(
 
     # Create sub-directories of the output directory for the different phases of the
     # staging process
-    prestage_dir = staging_dir / pre_stage_dir_name
-    staged_dir = staging_dir / staged_dir_name
-    invalid_dir = staging_dir / invalid_dir_name
-    prestage_dir.mkdir(parents=True, exist_ok=True)
-    staged_dir.mkdir(parents=True, exist_ok=True)
+    build_dir = output_dir / BUILD_NAME_DEFAULT
+    invalid_dir = output_dir / INVALID_NAME_DEFAULT
+
+    build_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
+    if save_metadata:
+        metadata_dir = output_dir / "__metadata__"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
@@ -142,7 +139,7 @@ def sort(
         recursive=recursive,
     )
 
-    logger.info("Staging sessions to '%s'", str(staging_dir))
+    logger.info("Staging sessions to '%s'", str(output_dir))
 
     for session in tqdm(sessions, f"Staging resources found in '{input_paths}'"):
 
@@ -164,9 +161,10 @@ def sort(
             # moving them into the final "staged" directory. This is to prevent the
             # files being transferred/deleted until the saved session is in a final state.
             _, saved_dir = session.save(
-                prestage_dir,
+                build_dir,
                 available_projects=project_list,
                 copy_mode=copy_mode,
+                save_metadata=save_metadata,
             )
             logger.info(
                 "Successfully staged session '%s' to '%s'",
@@ -174,9 +172,60 @@ def sort(
                 str(saved_dir),
             )
             if "INVALID" in saved_dir.name:
-                saved_dir.rename(invalid_dir / saved_dir.relative_to(prestage_dir))
+                saved_dir.rename(invalid_dir / saved_dir.relative_to(build_dir))
             else:
-                saved_dir.rename(staged_dir / saved_dir.relative_to(prestage_dir))
+                session_output_dir = output_dir / saved_dir.relative_to(build_dir)
+                with SoftFileLock(session_output_dir.with_suffix(".lock")):
+                    if session_output_dir.exists():
+                        logger.info(
+                            "Merging sorted session '%s' into existing directory '%s'",
+                            saved_dir.name,
+                            session_output_dir,
+                        )
+                        for scan_dir in saved_dir.iterdir():
+                            if scan_dir.is_dir():
+                                scan_dir.rename(session_output_dir / scan_dir.name)
+                        exist_mdata_path = (
+                            session_output_dir / session.DEFAULT_METADATA_FNAME
+                        )
+                        new_mdata_path = saved_dir / session.DEFAULT_METADATA_FNAME
+                        if new_mdata_path.exists():
+                            if exist_mdata_path.exists():
+                                # Merge metadata files
+                                mdata = Yaml(exist_mdata_path).load()
+                                new_mdata = Yaml(new_mdata_path).load()
+                                for key in set(mdata) & set(new_mdata):
+                                    if mdata[key] != new_mdata[key]:
+                                        raise ValueError(
+                                            f"Conflict in metadata for key '{key}' between existing session at "
+                                            f"'{exist_mdata_path}' and new session at '{new_mdata_path}'"
+                                        )
+                                mdata.update(new_mdata)
+                                Yaml(exist_mdata_path).save(mdata)
+                            else:
+                                new_mdata_path.rename(exist_mdata_path)
+                        if remaining := list(saved_dir.iterdir()):
+                            raise ValueError(
+                                f"Unexpected files/directories {remaining} found in saved session directory '{saved_dir}' "
+                                f"after merging with existing session directory '{session_output_dir}'"
+                            )
+                        saved_dir.rmdir()
+                    else:
+                        saved_dir.rename(session_output_dir)
+                # Hardlink the metadata file from the build directory to the metadata directory
+                # if save_metadata is True. This ensures that the metadata file is not moved or
+                # deleted until the session is moved from the build directory to the output directory.
+                if save_metadata and isinstance(save_metadata, bool):
+                    src_path = session_output_dir / session.DEFAULT_METADATA_FNAME
+                    target_fpath = metadata_dir / f"{session.name}.yaml"
+                    logger.debug(
+                        "Hardlinking metadata file for session '%s' from '%s' to '%s'",
+                        session.name,
+                        src_path,
+                        target_fpath,
+                    )
+                    target_fpath.hardlink_to(src_path)
+
             if delete:
                 session.unlink()
         except Exception as e:
@@ -192,3 +241,16 @@ def sort(
                 raise
 
     return errors
+
+
+def list_session_dirs(sorted_dir: Path) -> list[Path]:
+    """List the session directories in the sorted directory, excluding any directories that start with '__'"""
+
+    return [
+        p
+        for p in Path(sorted_dir).iterdir()
+        if p.is_dir()
+        and not p.name.startswith("__")
+        and not p.name.endswith("__")
+        and "." not in p.name
+    ]

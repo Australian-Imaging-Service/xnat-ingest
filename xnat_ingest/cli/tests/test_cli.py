@@ -8,34 +8,31 @@ from unittest.mock import patch
 
 import click
 import xnat4tests  # type: ignore[import-untyped]
-from fileformats.application import Json
+from fileformats.application import Json, Yaml
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,  # type: ignore[import-untyped]
-)
+    get_image as get_ac_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,  # type: ignore[import-untyped]
-)
+    get_image as get_statistics_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,  # type: ignore[import-untyped]
-)
+    get_image as get_topogram_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,  # type: ignore[import-untyped]
-)
+    get_image as get_pet_image,
+)  # type: ignore[import-untyped]
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
 from xnat_ingest.cli import associate_cli, check_upload_cli, sort_cli, upload_cli
-from xnat_ingest.cli.sort import INVALID_NAME_DEFAULT, SORTED_NAME_DEFAULT
-from xnat_ingest.helpers.arg_types import (
-    FieldSpec,
-    MimeType,  # type: ignore[import-untyped]
-    XnatLogin,
-)
+from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
+from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
+from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
 from xnat_ingest.helpers.remotes import upload_file_to_s3
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
@@ -247,10 +244,10 @@ def test_stage_and_upload(
     associated_files_dir = tmp_path / "non-dicoms"
     associated_files_dir.mkdir(exist_ok=True)
 
-    staging_dir = tmp_path / "staging"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir()
+    sorted_dir = tmp_path / "sorted"
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
 
     stage_log_file = tmp_path / "stage-logs.log"
     if stage_log_file.exists():
@@ -270,13 +267,16 @@ def test_stage_and_upload(
 
     # Delete any existing sessions from previous test runs
     session_ids = []
+    session_names = []
     with xnat4tests.connect() as xnat_login:
         for i, c in enumerate("abc"):
             first_name = f"First{c.upper()}"
             last_name = f"Last{c.upper()}"
             PatientID = f"subject{i}"
-            AccessionNumber = f"98765432{i}"
-            session_ids.append(f"{PatientID}_{AccessionNumber}")
+            AccessionNumber = f"987654321{i}"
+            session_id = f"{PatientID}_{AccessionNumber}"
+            session_ids.append(session_id)
+            session_names.append(f"{project_id}-{PatientID}-{AccessionNumber}")
 
             StudyInstanceUID = (
                 f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
@@ -406,7 +406,7 @@ def test_stage_and_upload(
         sort_cli,
         [str(d) for d in dicoms_dirs]
         + [
-            str(staging_dir),
+            str(sorted_dir),
             "--resource-field",
             "ImageType[-1]",
             "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
@@ -417,6 +417,7 @@ def test_stage_and_upload(
             "fileformats",
             "--raise-errors",
             "--delete",
+            "--save-metadata",
             "--xnat-login",
             "http://localhost:8080",
             "admin",
@@ -434,12 +435,17 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
+    mdata_path = sorted_dir / "__metadata__" / f"{session_names[0]}.yaml"
+    assert mdata_path.exists(), show_cli_trace(result)
+    mdata = Yaml(mdata_path).load()  # Check that the metadata file is valid JSON
+    assert mdata.get("PatientID") == "subject0", show_cli_trace(result)
+
     associated_dir = tmp_path / "associated"
 
     result = cli_runner(
         associate_cli,
         [
-            str(staging_dir / SORTED_NAME_DEFAULT),
+            str(sorted_dir),
             str(associated_dir),
             "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
@@ -585,13 +591,11 @@ def test_stage_wait_period(
 ) -> None:
     # Get test image data
 
-    staging_dir = tmp_path / "staging"
+    sorted_dir = tmp_path / "sorted"
     dicoms_path = tmp_path / "dicoms"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir()
-
-    staged_dir = staging_dir / SORTED_NAME_DEFAULT
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
 
     stage_log_file = tmp_path / "stage-logs.log"
     if stage_log_file.exists():
@@ -604,7 +608,7 @@ def test_stage_wait_period(
         sort_cli,
         [
             str(dicoms_path),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -618,7 +622,9 @@ def test_stage_wait_period(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert " as it was last modified " in logs, show_cli_trace(result)
-    assert not list(staged_dir.iterdir())
+    assert not [
+        p for p in sorted_dir.iterdir() if not p.name.startswith("__")
+    ], show_cli_trace(result)
 
     time.sleep(10)
 
@@ -626,7 +632,7 @@ def test_stage_wait_period(
         sort_cli,
         [
             str(dicoms_path),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -640,7 +646,7 @@ def test_stage_wait_period(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
-    assert list(staged_dir.iterdir())
+    assert list(sorted_dir.iterdir())
 
 
 def test_stage_invalid_ids(
@@ -650,14 +656,13 @@ def test_stage_invalid_ids(
 ) -> None:
     # Get test image data
 
-    staging_dir = tmp_path / "staging"
+    sorted_dir = tmp_path / "sorted"
     dicoms_path = tmp_path / "dicoms"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir()
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
 
-    staged_dir = staging_dir / SORTED_NAME_DEFAULT
-    invalid_dir = staging_dir / INVALID_NAME_DEFAULT
+    invalid_dir = sorted_dir / INVALID_NAME_DEFAULT
 
     stage_log_file = tmp_path / "stage-logs.log"
     if stage_log_file.exists():
@@ -670,7 +675,7 @@ def test_stage_invalid_ids(
         sort_cli,
         [
             str(dicoms_path),
-            str(staging_dir),
+            str(sorted_dir),
             "--subject-field",
             "PatientID",
             "generic/file-set",
@@ -684,7 +689,7 @@ def test_stage_invalid_ids(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
-    assert not list(staged_dir.iterdir())
+    assert not list_session_dirs(sorted_dir)
     assert len(list(invalid_dir.iterdir())) == 1
 
 
@@ -704,7 +709,7 @@ def test_check_upload_missing_scan(
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
     inputs_dir = tmp_path / "inputs"
-    staging_dir = tmp_path / "staging"
+    sorted_dir = tmp_path / "sorted"
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -734,7 +739,7 @@ def test_check_upload_missing_scan(
         sort_cli,
         [
             str(inputs_dir),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -749,7 +754,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / SORTED_NAME_DEFAULT,
+        sorted_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -821,7 +826,7 @@ def test_check_upload_empty_scan(
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
     inputs_dir = tmp_path / "inputs"
-    staging_dir = tmp_path / "staging"
+    sorted_dir = tmp_path / "sorted"
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -851,7 +856,7 @@ def test_check_upload_empty_scan(
         sort_cli,
         [
             str(inputs_dir),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -866,7 +871,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / SORTED_NAME_DEFAULT,
+        sorted_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -945,7 +950,7 @@ def test_check_upload_missing_resource(
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
     inputs_dir = tmp_path / "inputs"
-    staging_dir = tmp_path / "staging"
+    sorted_dir = tmp_path / "sorted"
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -976,7 +981,7 @@ def test_check_upload_missing_resource(
         sort_cli,
         [
             str(inputs_dir),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -991,7 +996,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     source_dir = transfer_to_source(
-        staging_dir / SORTED_NAME_DEFAULT,
+        sorted_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -1070,8 +1075,7 @@ def test_check_upload_checksum_fail(
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
     inputs_dir = tmp_path / "inputs"
-    staging_dir = tmp_path / "staging"
-    staged_dir = str(staging_dir / SORTED_NAME_DEFAULT)
+    sorted_dir = tmp_path / "sorted"
     check_upload_log_file = tmp_path / "check-upload-logs.log"
 
     session_metadata = {
@@ -1100,7 +1104,7 @@ def test_check_upload_checksum_fail(
         sort_cli,
         [
             str(inputs_dir),
-            str(staging_dir),
+            str(sorted_dir),
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -1119,7 +1123,7 @@ def test_check_upload_checksum_fail(
     result = cli_runner(
         upload_cli,
         [
-            str(staging_dir / SORTED_NAME_DEFAULT),
+            str(sorted_dir),
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1139,7 +1143,7 @@ def test_check_upload_checksum_fail(
     assert result.exit_code == 0, show_cli_trace(result)
 
     manifest_file = Json(
-        next(next(next(Path(staged_dir).iterdir()).iterdir()).iterdir())
+        next(next(next(iter(list_session_dirs(sorted_dir))).iterdir()).iterdir())
         / "MANIFEST.json"
     )
     manifest_data = manifest_file.load()
@@ -1149,7 +1153,7 @@ def test_check_upload_checksum_fail(
     manifest_file.save(manifest_data)
 
     source_dir = transfer_to_source(
-        staging_dir / SORTED_NAME_DEFAULT,
+        sorted_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
