@@ -68,9 +68,11 @@ class ImagingSession:
         validator=attrs.validators.instance_of(dict),
     )
     run_uid: ty.Optional[str] = attrs.field(default=None)
-    _metadata: dict[str, ty.Any] | None = attrs.field(default=None)
+    _metadata: dict[str, ty.Any] | None = attrs.field(
+        default=None, eq=False, repr=False, init=False
+    )
 
-    DEFAULT_METADATA_FNAME = "METADATA.yaml"
+    METADATA_FNAME = "METADATA.yaml"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -791,7 +793,7 @@ class ImagingSession:
                 )
                 scan.session = session
                 session.scans[scan.id] = scan
-        metadata_path = session_dir / cls.DEFAULT_METADATA_FNAME
+        metadata_path = session_dir / cls.METADATA_FNAME
         if metadata_path.exists():
             session._metadata = Yaml(metadata_path).load()
         return session
@@ -848,7 +850,7 @@ class ImagingSession:
             saved.scans[saved_scan.id] = saved_scan
         if save_metadata:
             metadata_path = (
-                session_dir / self.DEFAULT_METADATA_FNAME
+                session_dir / self.METADATA_FNAME
                 if save_metadata is True
                 else save_metadata
             )
