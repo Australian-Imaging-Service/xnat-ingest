@@ -19,9 +19,6 @@ from ..helpers.arg_types import (
 )
 from ..helpers.logging import logger, set_logger_handling
 
-BUILDING_NAME_DEFAULT = "BUILDING"
-SORTED_NAME_DEFAULT = "SORTED"
-INVALID_NAME_DEFAULT = "INVALID"
 
 
 @base_cli.command(

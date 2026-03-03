@@ -193,6 +193,8 @@ def iterate_s3_sessions(
             continue  # skip directories
         path_parts = obj.key[len(prefix) :].split("/")
         session_name = path_parts[0]
+        if session_name.startswith("__") and session_name.endswith("__"):
+            continue  # skip internal directories
         session_objs[session_name].append((path_parts[1:], obj))
 
     num_sessions = len(session_objs)

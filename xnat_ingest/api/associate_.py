@@ -10,6 +10,7 @@ from xnat_ingest.helpers.remotes import LocalSessionListing
 from ..helpers.arg_types import AssociatedFiles
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
+from .sort_ import list_session_dirs
 
 
 def associate(
@@ -25,7 +26,7 @@ def associate(
 ) -> list[str]:
 
     sessions: list[LocalSessionListing] = [
-        LocalSessionListing(p) for p in Path(input_dir).iterdir()
+        LocalSessionListing(p) for p in list_session_dirs(input_dir)
     ]
     num_sessions = len(sessions)
     logger.info(
@@ -48,7 +49,7 @@ def associate(
                 require_manifest=require_manifest,
                 check_checksums=False,
             )
-            session.associate_files(
+            associated = session.associate_files(
                 associated_files,
                 spaces_to_underscores=spaces_to_underscores,
                 avoid_clashes=avoid_clashes,
@@ -59,9 +60,12 @@ def associate(
                 raise
             logger.error(
                 "Error associating files for session '%s': %s",
-                session_listing.session_dir,
+                session_listing.name,
                 str(e),
             )
             logger.debug(traceback.format_exc())
             errors.append(str(e))
+        else:
+            if delete:
+                associated.unlink()
     return errors

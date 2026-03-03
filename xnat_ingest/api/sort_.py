@@ -3,14 +3,19 @@ import time
 import traceback
 from pathlib import Path
 
-from fileformats.application import Json
+from fileformats.application import Yaml
 from fileformats.core import FileSet
+from filelock import SoftFileLock
 from frametree.xnat import Xnat
 from tqdm import tqdm
 
 from ..helpers.arg_types import FieldSpec, XnatLogin
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
+
+
+BUILD_NAME_DEFAULT = "__build__"
+INVALID_NAME_DEFAULT = "__invalid__"
 
 
 def sort(
@@ -110,8 +115,8 @@ def sort(
 
     # Create sub-directories of the output directory for the different phases of the
     # staging process
-    build_dir = output_dir / "__build__"
-    invalid_dir = output_dir / "__invalid__"
+    build_dir = output_dir / BUILD_NAME_DEFAULT
+    invalid_dir = output_dir / INVALID_NAME_DEFAULT
 
     build_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
@@ -169,21 +174,58 @@ def sort(
             if "INVALID" in saved_dir.name:
                 saved_dir.rename(invalid_dir / saved_dir.relative_to(build_dir))
             else:
-                saved_dir.rename(output_dir / saved_dir.relative_to(build_dir))
-            # Hardlink the metadata file from the build directory to the metadata directory
-            # if save_metadata is True. This ensures that the metadata file is not moved or
-            # deleted until the session is moved from the build directory to the output directory.
-            if save_metadata and isinstance(save_metadata, bool):
-                logger.debug(
-                    "Hardlinking metadata file for session '%s' from '%s' to '%s'",
-                    session.name,
-                    saved_dir / "METADATA.json",
-                    metadata_dir / f"{session.name}.json",
-                )
-                Json(output_dir / session.name / "METADATA.json").copy(
-                    metadata_dir / f"{session.name}.json",
-                    mode=FileSet.CopyMode.hardlink,
-                )
+                session_output_dir = output_dir / saved_dir.relative_to(build_dir)
+                with SoftFileLock(session_output_dir.with_suffix(".lock")):
+                    if session_output_dir.exists():
+                        logger.info(
+                            "Merging sorted session '%s' into existing directory '%s'",
+                            saved_dir.name,
+                            session_output_dir,
+                        )
+                        for scan_dir in saved_dir.iterdir():
+                            if scan_dir.is_dir():
+                                scan_dir.rename(session_output_dir / scan_dir.name)
+                        exist_mdata_path = (
+                            session_output_dir / session.DEFAULT_METADATA_FNAME
+                        )
+                        new_mdata_path = saved_dir / session.DEFAULT_METADATA_FNAME
+                        if new_mdata_path.exists():
+                            if exist_mdata_path.exists():
+                                # Merge metadata files
+                                mdata = Yaml(exist_mdata_path).load()
+                                new_mdata = Yaml(new_mdata_path).load()
+                                for key in set(mdata) & set(new_mdata):
+                                    if mdata[key] != new_mdata[key]:
+                                        raise ValueError(
+                                            f"Conflict in metadata for key '{key}' between existing session at "
+                                            f"'{exist_mdata_path}' and new session at '{new_mdata_path}'"
+                                        )
+                                mdata.update(new_mdata)
+                                Yaml(exist_mdata_path).save(mdata)
+                            else:
+                                new_mdata_path.rename(exist_mdata_path)
+                        if remaining := list(saved_dir.iterdir()):
+                            raise ValueError(
+                                f"Unexpected files/directories {remaining} found in saved session directory '{saved_dir}' "
+                                f"after merging with existing session directory '{session_output_dir}'"
+                            )
+                        saved_dir.rmdir()
+                    else:
+                        saved_dir.rename(session_output_dir)
+                # Hardlink the metadata file from the build directory to the metadata directory
+                # if save_metadata is True. This ensures that the metadata file is not moved or
+                # deleted until the session is moved from the build directory to the output directory.
+                if save_metadata and isinstance(save_metadata, bool):
+                    src_path = session_output_dir / session.DEFAULT_METADATA_FNAME
+                    target_fpath = metadata_dir / f"{session.name}.yaml"
+                    logger.debug(
+                        "Hardlinking metadata file for session '%s' from '%s' to '%s'",
+                        session.name,
+                        src_path,
+                        target_fpath,
+                    )
+                    target_fpath.hardlink_to(src_path)
+
             if delete:
                 session.unlink()
         except Exception as e:
@@ -199,3 +241,16 @@ def sort(
                 raise
 
     return errors
+
+
+def list_session_dirs(sorted_dir: Path) -> list[Path]:
+    """List the session directories in the sorted directory, excluding any directories that start with '__'"""
+
+    return [
+        p
+        for p in Path(sorted_dir).iterdir()
+        if p.is_dir()
+        and not p.name.startswith("__")
+        and not p.name.endswith("__")
+        and "." not in p.name
+    ]

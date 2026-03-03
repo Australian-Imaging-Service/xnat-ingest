@@ -47,7 +47,7 @@ classifiers = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = ["black", "pre-commit", "codespell", "flake8", "flake8-pyproject"]
+dev = ["black", "pre-commit", "codespell", "flake8", "flake8-pyproject", "isort"]
 test = [
     "pytest >=6.2.5",
     "pytest-env>=0.6.2",
@@ -80,6 +80,12 @@ exclude = ["/tests"]
 [tool.black]
 target-version = ['py37', 'py38']
 exclude = "xnat_ingest/_version.py"
+
+[tool.isort]
+profile = "black"
+multi_line_mode = 3
+line_length = 88
+skip_gitignore = true
 
 [tool.codespell]
 ignore-words = ".codespell-ignorewords"

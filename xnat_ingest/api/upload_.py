@@ -28,6 +28,7 @@ from xnat_ingest.helpers.remotes import (
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
+from . import list_session_dirs
 
 
 def upload(
@@ -126,7 +127,7 @@ def upload(
             num_sessions = next(sessions)  # type: ignore[assignment]
         else:
             sessions = []
-            for session_dir in Path(input_dir).iterdir():
+            for session_dir in list_session_dirs(input_dir):
                 if dir_older_than(session_dir, wait_period):
                     sessions.append(LocalSessionListing(session_dir))
                 else:
