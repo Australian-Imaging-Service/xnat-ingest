@@ -276,7 +276,7 @@ def test_stage_and_upload(
             AccessionNumber = f"987654321{i}"
             session_id = f"{PatientID}_{AccessionNumber}"
             session_ids.append(session_id)
-            session_names.append(f"{project_id}-{PatientID}-{AccessionNumber}")
+            session_names.append(f"{project_id}.{PatientID}.{AccessionNumber}")
 
             StudyInstanceUID = (
                 f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"

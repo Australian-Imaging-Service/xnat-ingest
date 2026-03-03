@@ -73,7 +73,7 @@ class ImagingScan:
     ) -> Self:
         # Ensure scan type is a valid directory name
         saved = self.new_empty()
-        scan_dir = dest_dir / f"{self.id}-{self.type}"
+        scan_dir = dest_dir / f"{self.id}.{self.type}"
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
             saved_resource = resource.save(scan_dir, copy_mode=copy_mode)
@@ -85,7 +85,7 @@ class ImagingScan:
     def load(
         cls, scan_dir: Path, require_manifest: bool = True, check_checksums: bool = True
     ) -> Self:
-        scan_id, scan_type = scan_dir.name.split("-", 1)
+        scan_id, scan_type = scan_dir.name.split(".", 1)
         scan = cls(scan_id, scan_type)
         for resource_dir in scan_dir.iterdir():
             if resource_dir.is_dir():

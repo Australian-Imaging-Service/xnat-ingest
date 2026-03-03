@@ -174,7 +174,7 @@ def sort(
             if "INVALID" in saved_dir.name:
                 saved_dir.rename(invalid_dir / saved_dir.relative_to(build_dir))
             else:
-                session_output_dir = output_dir / saved_dir.relative_to(build_dir)
+                session_output_dir = output_dir / session.name
                 with SoftFileLock(session_output_dir.with_suffix(".lock")):
                     if session_output_dir.exists():
                         logger.info(
@@ -250,5 +250,5 @@ def list_session_dirs(sorted_dir: Path) -> list[Path]:
         if p.is_dir()
         and not p.name.startswith("__")
         and not p.name.endswith("__")
-        and "." not in p.name
+        and "." in p.name
     ]

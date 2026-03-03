@@ -39,7 +39,12 @@ class SessionListing(metaclass=abc.ABCMeta):
 
     @property
     def ids(self):
-        return self.name.split("-")[:3]
+        if "." in self.name:
+            ids = self.name.split(".")
+        else:
+            # For backwards compatibility
+            ids = self.name.split("-")[:3]
+        return ids
 
     @property
     def project_id(self) -> str:
