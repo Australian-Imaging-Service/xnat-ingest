@@ -91,7 +91,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         resource_paths = set()
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
-                resource_paths.add(f"{xscan.id}-{xscan.type}/{xresource.label}")
+                resource_paths.add(f"{xscan.id}.{xscan.type}/{xresource.label}")
         return resource_paths.issuperset(self.resource_paths)
 
 

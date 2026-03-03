@@ -166,14 +166,24 @@ def sort(
                 copy_mode=copy_mode,
                 save_metadata=save_metadata,
             )
-            logger.info(
-                "Successfully staged session '%s' to '%s'",
-                session.name,
-                str(saved_dir),
-            )
             if "INVALID" in saved_dir.name:
-                saved_dir.rename(invalid_dir / saved_dir.relative_to(build_dir))
+                target_fpath = invalid_dir / saved_dir.relative_to(build_dir)
+                logger.warning(
+                    (
+                        "Invalid IDs found in when attempting to stage session '%s'. It has been saved to '%s',"
+                        "please manually rename the directory with appropriate IDs and move to '%s'"
+                    ),
+                    session.name,
+                    str(target_fpath),
+                    str(output_dir),
+                )
+                saved_dir.rename(target_fpath)
             else:
+                logger.info(
+                    "Successfully staged session '%s' to '%s'",
+                    session.name,
+                    str(saved_dir),
+                )
                 session_output_dir = output_dir / session.name
                 with SoftFileLock(session_output_dir.with_suffix(".lock")):
                     if session_output_dir.exists():

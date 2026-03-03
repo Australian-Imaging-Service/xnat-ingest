@@ -688,7 +688,7 @@ def test_stage_invalid_ids(
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
-    assert "-INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
+    assert ".INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
     assert not list_session_dirs(sorted_dir)
     assert len(list(invalid_dir.iterdir())) == 1
 

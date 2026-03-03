@@ -173,7 +173,7 @@ def check_upload(
 
             for resource_path, manifests in session_listing.resource_manifests.items():
                 scan_path, resource_name = resource_path.split("/", 1)
-                scan_id, _ = scan_path.split("-", 1)
+                scan_id, _ = scan_path.split(".", 1)
                 datatype = from_mime(manifests["datatype"])
                 checksums = manifests["checksums"]
                 if not any(issubclass(datatype, r) for r in included_formats):
