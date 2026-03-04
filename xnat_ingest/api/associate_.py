@@ -25,10 +25,35 @@ def associate(
     delete: bool = False,
 ) -> list[str]:
 
-    sessions: list[LocalSessionListing] = [
-        LocalSessionListing(p) for p in list_session_dirs(input_dir)
-    ]
-    num_sessions = len(sessions)
+    session_dirs = list_session_dirs(input_dir)
+    sessions: list[LocalSessionListing] = [LocalSessionListing(p) for p in session_dirs]
+
+    # Check __metadata__/ for sessions whose directories have been
+    # removed. Create metadata-only sessions from the YAML files so associated files can still be discovered.
+    metadata_dir = input_dir / "__metadata__"
+    metadata_sessions: list[ImagingSession] = []
+    if metadata_dir.is_dir():
+        existing_names = {p.name for p in session_dirs}
+        for yaml_path in sorted(metadata_dir.glob("*.yaml")):
+            session_name = yaml_path.stem
+            if session_name not in existing_names:
+                try:
+                    metadata_sessions.append(
+                        ImagingSession.from_metadata_yaml(yaml_path)
+                    )
+                    logger.info(
+                        "Created metadata-only session '%s' from '%s'",
+                        session_name,
+                        yaml_path,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to load metadata session from '%s': %s",
+                        yaml_path,
+                        e,
+                    )
+
+    num_sessions = len(sessions) + len(metadata_sessions)
     logger.info(
         "Found %d sessions in staging directory to stage'%s'",
         num_sessions,
@@ -68,4 +93,32 @@ def associate(
         else:
             if delete:
                 associated.unlink()
+
+    for session in tqdm(
+        metadata_sessions,
+        total=len(metadata_sessions),
+        desc="Processing metadata-only sessions",
+    ):
+        try:
+            associated = session.associate_files(
+                associated_files,
+                spaces_to_underscores=spaces_to_underscores,
+                avoid_clashes=avoid_clashes,
+            )
+            session.save(output_dir, copy_mode=copy_mode)
+        except Exception as e:
+            if raise_errors:
+                raise
+            logger.error(
+                "Error associating files for metadata-only session '%s': %s",
+                session.name,
+                str(e),
+            )
+            logger.debug(traceback.format_exc())
+            errors.append(str(e))
+        else:
+            if delete:
+                for fileset in associated:
+                    fileset.unlink()
+
     return errors

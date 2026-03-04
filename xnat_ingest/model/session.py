@@ -588,13 +588,22 @@ class ImagingSession:
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
             associated_fspaths: ty.Set[Path] = set()
-            for parent_dir in self.primary_parents:
-                assoc_glob = str(
-                    parent_dir / associated_files.glob.format(**self.metadata)
-                )
+            primary_parents = self.primary_parents
+            if primary_parents:
+                for parent_dir in primary_parents:
+                    assoc_glob = str(
+                        parent_dir / associated_files.glob.format(**self.metadata)
+                    )
+                    if spaces_to_underscores:
+                        assoc_glob = assoc_glob.replace(" ", "_")
+                    # Select files using the constructed glob pattern
+                    associated_fspaths.update(
+                        Path(p) for p in glob(assoc_glob, recursive=True)
+                    )
+            elif self._metadata:
+                assoc_glob = associated_files.glob.format(**self.metadata)
                 if spaces_to_underscores:
                     assoc_glob = assoc_glob.replace(" ", "_")
-                # Select files using the constructed glob pattern
                 associated_fspaths.update(
                     Path(p) for p in glob(assoc_glob, recursive=True)
                 )
@@ -740,6 +749,37 @@ class ImagingSession:
                     "'avoid_clashes=True' to increment the resource name",
                 )
         scan.resources[resource_name] = resource
+
+    @classmethod
+    def from_metadata_yaml(cls, yaml_path: Path) -> Self:
+        """Creates a metadata-only session from a __metadata__/ YAML file.
+
+        Parameters
+        ----------
+        yaml_path : Path
+            path to a YAML file named PROJECT.SUBJECT.VISIT.yaml
+
+        Returns
+        -------
+        ImagingSession
+            a session with no scans but with metadata populated
+        """
+        stem = yaml_path.stem 
+        parts = stem.split(".")
+        if len(parts) != 3:
+            raise ValueError(
+                f"Expected metadata YAML filename to have format "
+                f"PROJECT.SUBJECT.VISIT.yaml, got '{yaml_path.name}'"
+            )
+        project_id, subject_id, visit_id = parts
+        session = cls(
+            project_id=project_id,
+            subject_id=subject_id,
+            visit_id=visit_id,
+        )
+        with open(yaml_path) as f:
+            session._metadata = yaml.safe_load(f)
+        return session
 
     @classmethod
     def load(
