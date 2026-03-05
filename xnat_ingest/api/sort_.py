@@ -121,7 +121,7 @@ def sort(
     build_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
     if save_metadata:
-        metadata_dir = output_dir / "__metadata__"
+        metadata_dir = output_dir / ImagingSession.METADATA_DIR
         metadata_dir.mkdir(parents=True, exist_ok=True)
 
     sessions = ImagingSession.from_paths(
