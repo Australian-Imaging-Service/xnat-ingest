@@ -4,7 +4,7 @@
 [![CI/CD](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest)
 
-XNAT-Ingest is a toolkit for sorting data into project/subject/sessions, de-identifying images before
+XNAT-Ingest is a toolkit used for sorting data into project/subject/sessions, de-identifying images before
 uploading them to an XNAT instance. Support for various file formats is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
 (e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/)).
@@ -27,7 +27,7 @@ help menu, e.g.
 
 ```
 $ xnat-ingest --help
-``` 
+```
 
 When using docker, the root CLI command is set to be the entrypoint of the Docker image so it can be run
 by
