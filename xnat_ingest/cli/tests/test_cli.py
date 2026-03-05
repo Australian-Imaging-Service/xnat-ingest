@@ -34,6 +34,7 @@ from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
 from xnat_ingest.helpers.remotes import upload_file_to_s3
+from xnat_ingest.model.session import ImagingSession
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -435,7 +436,7 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
-    mdata_path = sorted_dir / "__metadata__" / f"{session_names[0]}.yaml"
+    mdata_path = sorted_dir / ImagingSession.METADATA_DIR / f"{session_names[0]}.yaml"
     assert mdata_path.exists(), show_cli_trace(result)
     mdata = Yaml(mdata_path).load()  # Check that the metadata file is valid JSON
     assert mdata.get("PatientID") == "subject0", show_cli_trace(result)

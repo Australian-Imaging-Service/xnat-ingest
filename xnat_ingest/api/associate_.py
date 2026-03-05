@@ -30,7 +30,7 @@ def associate(
 
     # Check __metadata__/ for sessions whose directories have been
     # removed. Create metadata-only sessions from the YAML files so associated files can still be discovered.
-    metadata_dir = input_dir / "__metadata__"
+    metadata_dir = input_dir / ImagingSession.METADATA_DIR
     metadata_sessions: list[ImagingSession] = []
     if metadata_dir.is_dir():
         existing_names = {p.name for p in session_dirs}

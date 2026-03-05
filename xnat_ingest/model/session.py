@@ -73,6 +73,7 @@ class ImagingSession:
     )
 
     METADATA_FNAME = "METADATA.yaml"
+    METADATA_DIR = "__metadata__"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
