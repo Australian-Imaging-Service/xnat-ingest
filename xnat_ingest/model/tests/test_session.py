@@ -3,6 +3,7 @@ import typing as ty
 from pathlib import Path
 
 import pytest
+import yaml
 from fileformats.core import from_mime
 from fileformats.generic import File
 from fileformats.medimage import DicomSeries
@@ -27,6 +28,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
+from xnat_ingest.api.associate_ import associate
 from xnat_ingest.helpers.arg_types import AssociatedFiles, FieldSpec
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes
@@ -425,3 +427,66 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
         CLASH_RESOURCE_NAME,
         CLASH_RESOURCE_NAME + "__2",
     ]
+
+
+def test_from_metadata_yaml(tmp_path: Path) -> None:
+    metadata = {
+        "PatientName": "FamilyName_GivenName",
+        "PatientID": "PID001",
+        "StudyDate": "20230101",
+    }
+    yaml_path = tmp_path / "PROJ.SUBJ.VIS.yaml"
+    with open(yaml_path, "w") as f:
+        yaml.dump(metadata, f)
+
+    session = ImagingSession.from_metadata_yaml(yaml_path)
+
+    assert session.project_id == "PROJ"
+    assert session.subject_id == "SUBJ"
+    assert session.visit_id == "VIS"
+    assert session.scans == {}
+    assert session.metadata == metadata
+
+
+def test_associate_files_metadata_only(tmp_path: Path) -> None:
+    metadata = {
+        "PatientName": "FamilyName_Given_Name",
+        "PatientID": "PID001",
+    }
+    yaml_path = tmp_path / "PROJ.SUBJ.VIS.yaml"
+    with open(yaml_path, "w") as f:
+        yaml.dump(metadata, f)
+
+    session = ImagingSession.from_metadata_yaml(yaml_path)
+
+    # Verify metadata-only session
+    assert session.scans == {}
+    assert len(session.primary_parents) == 0
+
+    # Generate dummy .ptd files
+    assoc_dir = tmp_path / "assoc"
+    assoc_dir.mkdir()
+    get_raw_data_files(
+        out_dir=assoc_dir,
+        first_name="Given_Name",
+        last_name="FamilyName",
+    )
+
+    session.associate_files(
+        patterns=[
+            AssociatedFiles(
+                SyngoMi_Vr20b_RawData,
+                str(assoc_dir) + "/{PatientName}*.ptd",
+                r".*/[^\.]+\.[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<resource>[^\.]+).*",
+            )
+        ],
+        spaces_to_underscores=False,
+    )
+
+    # Scans should now have been populated from the associated files
+    assert len(session.scans) > 0
+    assert "602" in session.scans
+    assert set(session.scans["602"].resources.keys()) == {
+        "PET_LISTMODE",
+        "PET_COUNTRATE",
+    }
