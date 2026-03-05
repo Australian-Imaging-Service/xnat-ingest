@@ -132,8 +132,31 @@ jobs:
   #       name: built-docs
   #       path: docs/build/html
 
+  deploy-pypi:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download pip build
+      uses: actions/download-artifact@v4
+      with:
+        name: build
+        path: dist
 
-  deploy:
+    - name: Check for PyPI token on tag
+      id: deployable
+      if: github.event_name == 'release'
+      env:
+        PYPI_API_TOKEN: "${{ secrets.PYPI_API_TOKEN }}"
+      run: if [ -n "$PYPI_API_TOKEN" ]; then echo "DEPLOY=true" >> $GITHUB_OUTPUT; fi
+
+    - name: Upload to PyPI
+      if: steps.deployable.outputs.DEPLOY
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }} 
+
+  deploy-docker:
     needs: [build]  #, build-docs]
     runs-on: ubuntu-latest
     steps:
@@ -178,22 +201,3 @@ jobs:
           ${{ steps.versions.outputs.TAG }}
           ${{ steps.versions.outputs.IMAGE }}:latest
 
-    - name: Download pip build
-      uses: actions/download-artifact@v4
-      with:
-        name: build
-        path: dist
-
-    - name: Check for PyPI token on tag
-      id: deployable
-      if: github.event_name == 'release'
-      env:
-        PYPI_API_TOKEN: "${{ secrets.PYPI_API_TOKEN }}"
-      run: if [ -n "$PYPI_API_TOKEN" ]; then echo "DEPLOY=true" >> $GITHUB_OUTPUT; fi
-
-    - name: Upload to PyPI
-      if: steps.deployable.outputs.DEPLOY
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }} 
