@@ -28,7 +28,6 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.api.associate_ import associate
 from xnat_ingest.helpers.arg_types import AssociatedFiles, FieldSpec
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes

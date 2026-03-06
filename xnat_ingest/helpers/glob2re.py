@@ -14,7 +14,7 @@ def transform_paths(
     new_values: dict[str, str],
     spaces_to_underscores: bool = False,
 ) -> list[Path]:
-    """Applys the transforms FS paths matching `glob_pattern` by replacing the template values
+    """Applies the transforms FS paths matching `glob_pattern` by replacing the template values
     found in the `old_values` dict to the values in `new_values`. Used to strip any identifying
     information from file names before they are uploaded by replacing it with values from the
     de-identified metadata.

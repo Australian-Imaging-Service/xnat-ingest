@@ -54,7 +54,7 @@ jobs:
           # alias shview='ls'
           # alias mrview='ls'
     #     conda install -c mrtrix3 mrtrix3
-    #     mrconvert --version        
+    #     mrconvert --version
 
     - name: Update build tools
       run: python3 -m pip install --upgrade pip
@@ -154,7 +154,7 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }} 
+        password: ${{ secrets.PYPI_API_TOKEN }}
 
   deploy-docker:
     needs: [build]  #, build-docs]
@@ -166,9 +166,9 @@ jobs:
       # checkout@v2 adds a header that makes branch protection report errors
       # because the Github action bot is not a collaborator on the repo
       run: git config --local --unset http.https://github.com/.extraheader
-    
+
     - name: Fetch tags
-      run: git fetch --prune --unshallow    
+      run: git fetch --prune --unshallow
 
     - name: Set up Docker buildx
       uses: docker/setup-buildx-action@v2
@@ -200,4 +200,3 @@ jobs:
         tags: |
           ${{ steps.versions.outputs.TAG }}
           ${{ steps.versions.outputs.IMAGE }}:latest
-

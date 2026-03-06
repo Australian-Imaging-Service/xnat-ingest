@@ -20,7 +20,6 @@ from ..helpers.arg_types import (
 from ..helpers.logging import logger, set_logger_handling
 
 
-
 @base_cli.command(
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session

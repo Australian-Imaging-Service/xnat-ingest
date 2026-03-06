@@ -289,7 +289,7 @@ class ImagingSession:
         Parameters
         ----------
         files_path : str or Path
-            Path to a directory containging the resources to load the sessions from, or a
+            Path to a directory containing the resources to load the sessions from, or a
             glob string that selects the paths
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
@@ -424,9 +424,9 @@ class ImagingSession:
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
         sessions: ty.Dict[ty.Tuple[str, str, str] | str, Self] = {}
-        multiple_sessions: ty.DefaultDict[str, ty.Set[ty.Tuple[str, str, str]]] = (
-            defaultdict(set)
-        )
+        multiple_sessions: ty.DefaultDict[
+            str, ty.Set[ty.Tuple[str, str, str]]
+        ] = defaultdict(set)
         missing_ids: dict[str, dict[str, str]] = defaultdict(dict)
         explicit_project_id = project_id is not None
         for resource in tqdm(
@@ -765,7 +765,7 @@ class ImagingSession:
         ImagingSession
             a session with no scans but with metadata populated
         """
-        stem = yaml_path.stem 
+        stem = yaml_path.stem
         parts = stem.split(".")
         if len(parts) != 3:
             raise ValueError(

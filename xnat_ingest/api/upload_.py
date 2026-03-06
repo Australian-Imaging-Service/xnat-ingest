@@ -358,7 +358,7 @@ def upload(
                     logger.warning(
                         f"Failed to trigger pipelines in '{session.name}': {e}"
                     )
-                logger.info(f"Succesfully uploaded all files in '{session.name}'")
+                logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
                     msg = [

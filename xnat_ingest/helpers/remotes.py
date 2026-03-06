@@ -26,7 +26,6 @@ from .logging import logger
 
 
 class SessionListing(metaclass=abc.ABCMeta):
-
     @property
     @abc.abstractmethod
     def cache_path(self) -> Path:
@@ -219,7 +218,7 @@ def iterate_s3_sessions(
 
     for session_name, objs in session_objs.items():
         # Just in case the manifest file is not included in the list of objects
-        # we recreate the project/subject/sesssion directory structure
+        # we recreate the project/subject/session directory structure
         session_tmp_dir = tmp_download_dir / session_name
         session_tmp_dir.mkdir(parents=True, exist_ok=True)
         # Check to see if the session is still being updated
