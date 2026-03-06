@@ -96,7 +96,6 @@ class CliType(click.types.ParamType):
 
 @attrs.define
 class CliTyped:
-
     @classproperty
     def cli_type(cls) -> CliType:
         return CliType(cls)  # type: ignore[arg-type]
@@ -104,7 +103,6 @@ class CliTyped:
 
 @attrs.define
 class MultiCliTyped:
-
     @classproperty
     def cli_type(cls) -> CliType:
         return CliType(cls, multiple=True)  # type: ignore[arg-type]

@@ -82,7 +82,6 @@ def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
 
 
 def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
-
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
     @click.option(
@@ -128,7 +127,6 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
 
 def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
-
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
     @click.option(
@@ -170,7 +168,6 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
 
 def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
-
     @click.command()
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
     @click.option(
