@@ -168,15 +168,12 @@ def sort(
             )
             if "INVALID" in saved_dir.name:
                 target_fpath = invalid_dir / saved_dir.relative_to(build_dir)
-                logger.warning(
-                    (
-                        "Invalid IDs found in when attempting to stage session '%s'. It has been saved to '%s',"
-                        "please manually rename the directory with appropriate IDs and move to '%s'"
-                    ),
-                    session.name,
-                    str(target_fpath),
-                    str(output_dir),
+                msg = (
+                    f"Invalid IDs found in when attempting to stage session '{session.name}'. It has been saved to '{target_fpath}',"
+                    f"please manually rename the directory with appropriate IDs and move to '{output_dir}'"
                 )
+                logger.error(msg)
+                errors.append(msg)
                 saved_dir.rename(target_fpath)
             else:
                 logger.info(
@@ -239,7 +236,7 @@ def sort(
         except Exception as e:
             if not raise_errors:
                 msg = (
-                    f"Skipping '{session.name}' session due to error in staging: \"{e}\""
+                    f"Skipping '{session.name}' session due to error in sorting: \"{e}\""
                     f"\n{traceback.format_exc()}\n\n"
                 )
                 logger.error(msg)
