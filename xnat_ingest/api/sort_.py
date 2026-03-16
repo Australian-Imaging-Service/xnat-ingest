@@ -169,8 +169,9 @@ def sort(
             if "INVALID" in saved_dir.name:
                 target_fpath = invalid_dir / saved_dir.relative_to(build_dir)
                 msg = (
-                    f"Invalid IDs found in when attempting to stage session '{session.name}'. It has been saved to '{target_fpath}',"
-                    f"please manually rename the directory with appropriate IDs and move to '{output_dir}'"
+                    f"Invalid IDs found in when attempting to stage session '{session.name}'. It has been "
+                    f"saved to '{target_fpath}', please manually rename the directory with appropriate IDs "
+                    f"and move to '{output_dir}'"
                 )
                 logger.error(msg)
                 errors.append(msg)
