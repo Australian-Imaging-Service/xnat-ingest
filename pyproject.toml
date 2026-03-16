@@ -65,7 +65,7 @@ all = ["xnat-exported-scans[dev,test]"]
 repository = "https://github.com/Australian-Imaging-Service/xnat_ingest"
 
 [project.scripts]
-xnat-ingest = "xnat_ingest.cli:cli"
+xnat-ingest = "xnat_ingest.cli:base_cli"
 
 [tool.hatch.version]
 source = "vcs"
