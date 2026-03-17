@@ -15,6 +15,7 @@ DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
 @base_cli.command(
+    name="deidentify",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
