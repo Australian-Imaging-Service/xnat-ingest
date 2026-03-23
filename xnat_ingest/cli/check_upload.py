@@ -11,7 +11,7 @@ from ..api import check_upload
 
 
 @base_cli.command(
-    "check-upload",
+    name="check-upload",
     help="""Checks staging directory against uploaded files and logs all files that aren't uploaded
 
 STAGED is either a directory that the files for each session are collated to before they

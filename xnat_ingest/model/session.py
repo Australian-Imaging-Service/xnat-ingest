@@ -934,7 +934,7 @@ def fix_long_path(p: str | Path) -> Path:
         return Path(p)
 
     path = Path(p)
-    path_str = str(path)
+    path_str = str(path.absolute())
 
     # Already has prefix, don't double-apply
     if path_str.startswith("\\\\?\\"):

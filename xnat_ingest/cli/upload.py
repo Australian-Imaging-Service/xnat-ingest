@@ -14,6 +14,7 @@ from ..helpers.logging import logger, set_logger_handling
 
 
 @base_cli.command(
+    name="upload",
     help="""uploads all sessions found in the staging directory (as prepared by the
 `stage` sub-command) to XNAT.
 

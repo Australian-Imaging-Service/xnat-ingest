@@ -37,6 +37,7 @@ class CopyModeParamType(click.ParamType):
 
 
 @base_cli.command(
+    name="associate",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
