@@ -443,14 +443,23 @@ class ImagingSession:
             )
 
             if not explicit_project_id:
-                project_id = FieldSpec.get_value_from_fields(
-                    resource, project_field, missing_ids_session
+                project_id = cls.id_escape_re.sub(
+                    "_",
+                    FieldSpec.get_value_from_fields(
+                        resource, project_field, missing_ids_session
+                    ),
                 )
-            subject_id = FieldSpec.get_value_from_fields(
-                resource, subject_field, missing_ids_session
+            subject_id = cls.id_escape_re.sub(
+                "_",
+                FieldSpec.get_value_from_fields(
+                    resource, subject_field, missing_ids_session
+                ),
             )
-            visit_id = FieldSpec.get_value_from_fields(
-                resource, visit_field, missing_ids_session
+            visit_id = cls.id_escape_re.sub(
+                "_",
+                FieldSpec.get_value_from_fields(
+                    resource, visit_field, missing_ids_session
+                ),
             )
             scan_id = FieldSpec.get_value_from_fields(
                 resource, scan_id_field, missing_ids_session
