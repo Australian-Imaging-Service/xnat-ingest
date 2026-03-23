@@ -225,16 +225,22 @@ class FieldSpec(MultiCliTyped):
         value_str = invalid_path_chars_re.sub("_", value_str)
         return value_str
 
+    xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
+
     @classmethod
     def get_value_from_fields(
         cls,
         resource: ImagingResource,
         id_fields: list["FieldSpec"],
         missing_ids: dict[str, str] | None = None,
+        escape: bool = False,
     ) -> ty.List["FieldSpec"]:
         for id_field in id_fields:
             if isinstance(resource, id_field.datatype):
-                return id_field.get_value(resource, missing_ids=missing_ids)
+                value = id_field.get_value(resource, missing_ids=missing_ids)
+                if escape:
+                    value = cls.xnat_id_escape_re.sub("_", value)
+                return value
         raise ValueError(
             f"No resource label field specification matches type of {resource}, "
             f"provided {id_fields}"
