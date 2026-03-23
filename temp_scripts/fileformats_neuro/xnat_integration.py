@@ -1,5 +1,11 @@
 """
 Register EEG/MEG data types to XNAT Repo to support XNAT Ingest workflows
+
+Authors:
+ - Miao Cao
+
+Email:
+- miaocao@swin.edu.au
 """
 import os
 import mne

@@ -1,3 +1,14 @@
+"""
+MEG file formats for XNAT Ingest workflows.
+Defines and validates common MEG file formats (FIF, CTF, KIT) for use in XNAT Ingest pipelines.
+
+Authors:
+- Miao Cao
+
+Email:
+- miaocao@swin.edu.au
+"""
+
 import os
 from typing import Optional
 

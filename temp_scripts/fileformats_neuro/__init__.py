@@ -1,7 +1,15 @@
 """
-Arcana Fileformats extension package: Neuroimaging (EEG/MEG) data types
-Defines and validates EEG/MEG file formats for XNAT Ingest workflows
+Arcana Fileformats extension package: Neuroimaging (EEG/MEG) data types.
+
+Defines and validates EEG/MEG file formats for XNAT Ingest workflows.
+
+Authors:
+- Miao Cao
+
+Email:
+- miaocao@swin.edu.au
 """
+
 # Export core data types for external use
 from .eeg import (
     EegFif,        # MNE FIF format EEG

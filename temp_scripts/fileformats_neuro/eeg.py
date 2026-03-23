@@ -1,3 +1,14 @@
+"""
+EEG file formats for XNAT Ingest workflows.
+Defines and validates common EEG file formats (FIF, EDF, BrainVision) for use in XNAT Ingest pipelines.
+
+Authors:
+- Miao Cao
+
+Email:
+- miaocao@swin.edu.au
+"""
+
 import os
 
 import mne  # MNE library for professional EEG file validation

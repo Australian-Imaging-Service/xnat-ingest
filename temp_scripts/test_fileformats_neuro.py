@@ -1,6 +1,12 @@
 """
 Test validation and XNAT integration of EEG/MEG data types
-Uses MNE sample data (auto-downloaded) for testing
+Uses sample data (MNE auto-downloaded) for testing.
+
+Authors:
+- Miao Cao
+
+Email:
+- miaocao@swin.edu.au
 """
 import os
 import mne
