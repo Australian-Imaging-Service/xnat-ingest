@@ -184,7 +184,7 @@ class MegKit(DirectoryFormat, MegFormat):
         }
         for file_desc, file_path in optional_files.items():
             if not os.path.exists(file_path):
-                print(f"⚠️  Warning: Missing optional {file_desc} for KIT MEG data (path: {file_path})")
+                print(f"Warning: Missing optional {file_desc} for KIT MEG data (path: {file_path})")
         
         # Step 4: Validate KIT data with MNE read_raw_kit
         try:
@@ -205,4 +205,4 @@ class MegKit(DirectoryFormat, MegFormat):
         except Exception as e:
             raise ValueError(f"KIT MEG validation failed: {str(e)}") from e
         
-        print(f"✅ KIT MEG validation passed (main file: {main_file_path}, marker file: {mrk_path})")
+        print(f"KIT MEG validation passed (main file: {main_file_path}, marker file: {mrk_path})")

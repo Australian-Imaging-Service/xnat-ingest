@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import mne  # MNE library for professional EEG file validation
 
@@ -106,7 +105,7 @@ class EegBv(DirectoryFormat, EegFormat):
         
         if not valid_prefix:
             raise ValueError(
-                f"BrainVision EEG directory {self.path} is incomplete："
+                f"BrainVision EEG directory {self.path} is incomplete:"
                 "Missing one or more of .vhdr/.vmrk/.eeg files"
             )
         
@@ -118,4 +117,4 @@ class EegBv(DirectoryFormat, EegFormat):
             if len(eeg_chs) == 0:
                 raise ValueError("No EEG channels")
         except Exception as e:
-            raise ValueError(f"BrainVision EEG validation failed：{str(e)}") from e
+            raise ValueError(f"BrainVision EEG validation failed:{str(e)}") from e

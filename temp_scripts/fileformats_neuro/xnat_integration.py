@@ -1,10 +1,11 @@
 """
 Register EEG/MEG data types to XNAT Repo to support XNAT Ingest workflows
 """
+import os
 import mne
 from arcana.xnat import XnatRepo
 from .eeg import EegFif, EegEdf, EegBv
-from .meg import MegFif, MegCtf
+from .meg import MegFif, MegCtf, MegKit
 
 # ------------------------------
 # Register EEG Formats to XNAT

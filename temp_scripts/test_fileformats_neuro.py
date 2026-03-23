@@ -52,34 +52,34 @@ if __name__ == "__main__":
     # Test FIF format
     eeg_fif = EegFif(test_data["eeg_fif"])
     eeg_fif.validate()
-    print("✅ EEG FIF format validation passed")
+    print(" EEG FIF format validation passed")
     
     # Test EDF format
     eeg_edf = EegEdf(test_data["eeg_edf"])
     eeg_edf.validate()
-    print("✅ EEG EDF format validation passed")
+    print(" EEG EDF format validation passed")
     
     # Test BrainVision format
     eeg_bv = EegBv(test_data["eeg_bv"])
     eeg_bv.validate()
-    print("✅ EEG BrainVision format validation passed")
+    print(" EEG BrainVision format validation passed")
     
     # 2. Test MEG formats
     print("\n=== Testing MEG Format Validation ===")
     # Test FIF format
     meg_fif = MegFif(test_data["meg_fif"])
     meg_fif.validate()
-    print("✅ MEG FIF format validation passed")
+    print(" MEG FIF format validation passed")
     
     # Test CTF format
     meg_ctf = MegCtf(test_data["meg_ctf"])
     meg_ctf.validate()
-    print("✅ MEG CTF format validation passed")
+    print(" MEG CTF format validation passed")
     
-    # Test KIT/RIKEN format ← NEW
+    # Test KIT/RIKEN format
     meg_kit = MegKit(test_data["meg_kit"])
     meg_kit.validate()
-    print("✅ MEG KIT/RIKEN (Ricon) format validation passed")
+    print(" MEG KIT/RIKEN (Ricon) format validation passed")
     
     # 3. Test XNAT registration (verify no errors)
     print("\n=== Testing XNAT Format Registration ===")
@@ -88,6 +88,6 @@ if __name__ == "__main__":
     assert "EEG_FIF" in [f["xnat_resource"] for f in registered_formats]
     assert "MEG_FIF" in [f["xnat_resource"] for f in registered_formats]
     assert "MEG_KIT" in [f["xnat_resource"] for f in registered_formats]
-    print("✅ XNAT format registration validation passed")
+    print(" XNAT format registration validation passed")
     
-    print("\n🎉 All tests passed! EEG/MEG data types (including KIT/RIKEN) are ready for XNAT Ingest workflow")
+    print("\n All tests passed! EEG/MEG data types (including KIT/RIKEN) are ready for XNAT Ingest workflow")
