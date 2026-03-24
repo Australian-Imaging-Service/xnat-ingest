@@ -847,6 +847,7 @@ class ImagingSession:
         dest_dir: Path,
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+        collation: FileSet.CopyCollation = FileSet.CopyCollation.any,
         save_metadata: bool = True,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
@@ -889,7 +890,7 @@ class ImagingSession:
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
-            saved_scan = scan.save(session_dir, copy_mode=copy_mode)
+            saved_scan = scan.save(session_dir, copy_mode=copy_mode, collation=collation)
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         if save_metadata:

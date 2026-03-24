@@ -234,6 +234,15 @@ are uploaded to XNAT
     ),
     envvar="XINGEST_SAVE_METADATA",
 )
+@click.option(
+    "--collate-resources/--dont-collate-resources",
+    default=False,
+    envvar="XINGEST_COLLATE_RESOURCES",
+    help=(
+        "Flatten files into the resource directory during sort, regardless of source "
+        "directory structure (e.g. when sorting from Orthanc) (XINGEST_COLLATE_RESOURCES env. var)"
+    ),
+)
 def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
@@ -257,6 +266,7 @@ def sort_cli(
     recursive: bool,
     copy_mode: FileSet.CopyMode,
     save_metadata: bool,
+    collate_resources: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -298,6 +308,7 @@ def sort_cli(
             recursive=recursive,
             xnat_login=xnat_login,
             save_metadata=save_metadata,
+            collation=(FileSet.CopyCollation.siblings if collate_resources else FileSet.CopyCollation.any),
         )
         if errors:
             logger.error(

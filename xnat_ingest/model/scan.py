@@ -70,13 +70,14 @@ class ImagingScan:
         self,
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+        collation: FileSet.CopyCollation = FileSet.CopyCollation.any,
     ) -> Self:
         # Ensure scan type is a valid directory name
         saved = self.new_empty()
         scan_dir = dest_dir / f"{self.id}.{self.type}"
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
-            saved_resource = resource.save(scan_dir, copy_mode=copy_mode)
+            saved_resource = resource.save(scan_dir, copy_mode=copy_mode, collation=collation)
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
         return saved

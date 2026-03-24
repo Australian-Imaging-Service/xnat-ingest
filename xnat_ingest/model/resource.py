@@ -77,6 +77,7 @@ class ImagingResource:
         self,
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+        collation: FileSet.CopyCollation = FileSet.CopyCollation.any,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
     ) -> Self:
@@ -141,10 +142,11 @@ class ImagingResource:
                     "incomplete, overwriting"
                 )
                 shutil.rmtree(resource_dir)
-        saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True)
-        manifest = {"datatype": self.fileset.mime_like, "checksums": checksums}
+        saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True, collation=collation)
+        saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir)
+        manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
-        return type(self)(name=self.name, fileset=saved_fileset, checksums=checksums)
+        return type(self)(name=self.name, fileset=saved_fileset, checksums=saved_checksums)
 
     @classmethod
     def load(
@@ -159,7 +161,7 @@ class ImagingResource:
         from the files that were found
         """
         manifest_file = resource_dir / cls.MANIFEST_FNAME
-        fspaths = [p for p in resource_dir.iterdir() if p.name != cls.MANIFEST_FNAME]
+        fspaths = [p for p in resource_dir.rglob("*") if p.is_file() and p.name != cls.MANIFEST_FNAME]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
             checksums = manifest["checksums"]
