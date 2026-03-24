@@ -79,7 +79,6 @@ class ImagingSession:
         for scan in self.scans.values():
             scan.session = self
 
-    id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
@@ -444,13 +443,13 @@ class ImagingSession:
 
             if not explicit_project_id:
                 project_id = FieldSpec.get_value_from_fields(
-                    resource, project_field, missing_ids_session
+                    resource, project_field, missing_ids_session, escape=True
                 )
             subject_id = FieldSpec.get_value_from_fields(
-                resource, subject_field, missing_ids_session
+                resource, subject_field, missing_ids_session, escape=True
             )
             visit_id = FieldSpec.get_value_from_fields(
-                resource, visit_field, missing_ids_session
+                resource, visit_field, missing_ids_session, escape=True
             )
             scan_id = FieldSpec.get_value_from_fields(
                 resource, scan_id_field, missing_ids_session

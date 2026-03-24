@@ -489,3 +489,32 @@ def test_associate_files_metadata_only(tmp_path: Path) -> None:
         "PET_LISTMODE",
         "PET_COUNTRATE",
     }
+
+
+def test_id_escape(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw"
+    raw_data_dir.mkdir()
+    get_raw_data_files(
+        out_dir=raw_data_dir,
+        first_name="GivenName",
+        last_name="FamilyName",
+        PatientID="INSTRUMENT_SURNAME^FIRST_NAME",
+        StudyID="Study1",
+        AccessionNumber="Accession1",
+        StudyInstanceUID="StudyInstanceUID1",
+    )
+
+    sessions = ImagingSession.from_paths(
+        f"{raw_data_dir}/**/*.ptd",
+        datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
+        project_field=[FieldSpec("StudyID")],
+        subject_field=[FieldSpec("PatientID")],
+        visit_field=[FieldSpec("AccessionNumber")],
+        session_field=[FieldSpec("StudyInstanceUID")],
+        scan_id_field=[FieldSpec("SeriesNumber")],
+        scan_desc_field=[FieldSpec("SeriesDescription")],
+        resource_field=[FieldSpec("ImageType[2:]")],
+    )
+
+    assert len(sessions) == 1
+    assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
