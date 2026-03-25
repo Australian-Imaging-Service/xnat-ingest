@@ -11,19 +11,19 @@ Email:
 
 from fileformats.core import validated_property, mtime_cached_property
 from fileformats.core.exceptions import FormatMismatchError
-from fileformats.generic import FileSet, File
+from fileformats.generic import FileSet, BinaryFile, UnicodeFile
 from fileformats.core.mixin import WithMagicNumber, WithAdjacentFiles
 from fileformats.application import Gzip
 
 
-class Ephys(FileSet):
-    """Base class for physiological recordings"""
+class Biosig(FileSet):
+    """Base class for biophysical time-series recordings"""
 
     pass
 
 
-class Eeg(Ephys):
-    """Base class for all Electroencephalography"""
+class Eeg(Biosig):
+    """Base class for all Electroencephalography recordings"""
 
     pass
 
@@ -31,36 +31,31 @@ class Eeg(Ephys):
 # ------------------------------
 # Implementation of Specific EEG Formats
 # ------------------------------
-class Fif(WithMagicNumber, File, Ephys):
+class Fif(WithMagicNumber, BinaryFile, Biosig):
     """
-    MNE FIF format EEG (standard format for NeuroMag/MEGIN devices)
-    Most commonly used binary EEG format, supports compression (.fif.gz)
+    MNE FIF format (standard format for NeuroMag/MEGIN MEG/EEG devices)
+    Most commonly used binary format, supports compression (.fif.gz)
     """
 
-    # File extensions (supports regular and compressed versions)
     ext = ".fif"
     # FIF file magic number (hex identifier, from MNE official documentation)
     magic_number = b"\x46\x49\x46\x32"  # "FIF2"
 
 
-class FifGz(Gzip[Fif]):
-    """
-    MNE FIF format EEG (standard format for NeuroMag/MEGIN devices)
-    Most commonly used binary EEG format, supports compression (.fif.gz)
-    """
+class FifGz(Gzip[Fif], Fif):
+    """Gzip-compressed MNE FIF format"""
 
-    # File extensions (supports regular and compressed versions)
     ext = ".fif.gz"
 
 
-class Edf(WithMagicNumber, Eeg):
+class Edf(WithMagicNumber, BinaryFile, Eeg):
     """
-    EDF/EDF+ format EEG (European Data Format, generic text+binary hybrid format)
-    Supports EDF (basic version) and EDF+ (extended version)
+    EDF format EEG (European Data Format) — binary file with fixed-width ASCII
+    header followed by binary signal data.
     """
 
     extensions = ".edf"
-    # EDF file magic number (first 8 bytes are "0       ")
+    # First 8 bytes are "0       " (version field)
     magic_number = b"\x30\x20\x20\x20\x20\x20\x20\x20"
     mime_type = "application/x-eeg-edf"
 
@@ -82,7 +77,7 @@ class Edf(WithMagicNumber, Eeg):
 
     @validated_property
     def local_patient_identification(self) -> list[str]:
-        parts = self.header[88:168].split()
+        parts = self.header[8:88].split()
         if len(parts) != 4:
             raise FormatMismatchError(
                 'Unrecognised "local patient identification" string, '
@@ -92,38 +87,44 @@ class Edf(WithMagicNumber, Eeg):
 
     @property
     def _edf_type(self) -> str:
-        return self.header[192:236]
+        return self.header[192:236].strip()
 
     @validated_property
     def edf_type(self) -> str:
         if self._edf_type != "":
             raise FormatMismatchError(
-                'EDF type field ("reserved") should be blank for plain EDF "'
+                'EDF type field ("reserved") should be blank for plain EDF '
                 "(i.e. not EDF+)"
             )
+        return ""
 
 
 class EdfPlus(Edf):
     """
-    EDF/EDF+ format EEG (European Data Format, generic text+binary hybrid format)
-    Supports EDF (basic version) and EDF+ (extended version)
+    EDF+ format — extension of EDF supporting discontinuous recordings and
+    additional annotation channels. Distinguished by "EDF+C" or "EDF+D" in
+    the reserved header field.
     """
 
     extensions = ".edf+"
 
+    valid_edf_types = ["EDF+C", "EDF+D"]
+
     @validated_property
     def edf_type(self) -> str:
-        if self._edf_type not in ("EDF+C", "EDF+D"):
+        if self._edf_type not in self.valid_edf_types:
             raise FormatMismatchError(
-                'EDF type field ("reserved") should be "EDF+C" or "EDF+D" for plain EDF+"'
-                "(i.e. not EDF+)"
+                f'EDF type field ("reserved") should be in {self.valid_edf_types} '
+                f"for EDF+, found: {self._edf_type!r}"
             )
+        return self._edf_type
 
 
-class BrainVisionHeader(WithMagicNumber, File, Ephys):
+class BrainVisionHeader(WithMagicNumber, UnicodeFile, Biosig):
     """
-    BrainVision header file (.vhdr) — plain-text file describing channel configuration,
-    sampling rate, amplifier settings, and references to the data and marker files.
+    BrainVision header file (.vhdr) — plain-text INI file describing channel
+    configuration, sampling rate, amplifier settings, and references to the
+    data and marker files.
     """
 
     ext = ".vhdr"
@@ -132,10 +133,10 @@ class BrainVisionHeader(WithMagicNumber, File, Ephys):
     mime_type = "application/x-ephys-brainvision-header"
 
 
-class BrainVisionMarker(WithMagicNumber, File, Ephys):
+class BrainVisionMarker(WithMagicNumber, UnicodeFile, Biosig):
     """
-    BrainVision marker file (.vmrk) — plain-text file containing event markers
-    and annotations time-stamped to samples in the data file.
+    BrainVision marker file (.vmrk) — plain-text INI file containing event
+    markers and annotations time-stamped to samples in the data file.
     """
 
     ext = ".vmrk"
@@ -144,7 +145,7 @@ class BrainVisionMarker(WithMagicNumber, File, Ephys):
     mime_type = "application/x-ephys-brainvision-marker"
 
 
-class BrainVision(WithAdjacentFiles, File, Ephys):
+class BrainVision(WithAdjacentFiles, BinaryFile, Biosig):
     """
     BrainVision binary data file (.eeg) — raw multiplexed sample data,
     format described by the accompanying .vhdr header file. No magic number.
