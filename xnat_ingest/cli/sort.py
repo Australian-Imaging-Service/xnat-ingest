@@ -235,12 +235,15 @@ are uploaded to XNAT
     envvar="XINGEST_SAVE_METADATA",
 )
 @click.option(
-    "--collate-resources/--dont-collate-resources",
-    default=False,
+    "--collate-resources",
+    type=MimeType.cli_type,
+    metavar="<mime-type>",
+    multiple=True,
+    default=(),
     envvar="XINGEST_COLLATE_RESOURCES",
     help=(
-        "Flatten files into the resource directory during sort, regardless of source "
-        "directory structure (e.g. when sorting from Orthanc) (XINGEST_COLLATE_RESOURCES env. var)"
+        "Flatten files of the given datatype into the resource directory during sort, "
+        "regardless of source directory structure (e.g. when sorting from Orthanc). "
     ),
 )
 def sort_cli(
@@ -266,7 +269,7 @@ def sort_cli(
     recursive: bool,
     copy_mode: FileSet.CopyMode,
     save_metadata: bool,
-    collate_resources: bool,
+    collate_resources: tuple[MimeType, ...],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -308,7 +311,7 @@ def sort_cli(
             recursive=recursive,
             xnat_login=xnat_login,
             save_metadata=save_metadata,
-            collation=(FileSet.CopyCollation.siblings if collate_resources else FileSet.CopyCollation.any),
+            collate_datatypes=tuple(mt.datatype for mt in collate_resources),
         )
         if errors:
             logger.error(
