@@ -257,6 +257,21 @@ class MimeType(str, MultiCliTyped):
         return from_mime(self.mime)
 
 
+@attrs.define
+class CollationSpec(MultiCliTyped):
+
+    mime: str
+    collation: str = attrs.field(default="siblings")
+
+    @property
+    def datatype(self) -> ty.Type[DataType]:
+        return from_mime(self.mime)
+
+    @property
+    def collation_level(self) -> FileSet.CopyCollation:
+        return FileSet.CopyCollation[self.collation.lower()]
+
+
 class CopyModeParamType(click.ParamType):
     name = "copy_mode"
 
