@@ -34,7 +34,7 @@ def sort(
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    collate_datatypes: tuple[ty.Type[FileSet], ...] = (),
+    collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
     wait_period: int = 0,
     avoid_clashes: bool = False,
     recursive: bool = False,
@@ -166,7 +166,7 @@ def sort(
                 build_dir,
                 available_projects=project_list,
                 copy_mode=copy_mode,
-                collate_datatypes=collate_datatypes,
+                collation_map=collation_map,
                 save_metadata=save_metadata,
             )
             if "INVALID" in saved_dir.name:

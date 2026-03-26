@@ -11,6 +11,7 @@ from xnat_ingest.cli.base import base_cli
 
 from ..api.sort_ import sort
 from ..helpers.arg_types import (
+    CollationSpec,
     CopyModeParamType,
     FieldSpec,
     LoggerConfig,
@@ -236,14 +237,16 @@ are uploaded to XNAT
 )
 @click.option(
     "--collate-resources",
-    type=MimeType.cli_type,
-    metavar="<mime-type>",
+    type=CollationSpec.cli_type,
+    metavar="<mime-type> <collation>",
+    nargs=2,
     multiple=True,
     default=(),
     envvar="XINGEST_COLLATE_RESOURCES",
     help=(
         "Flatten files of the given datatype into the resource directory during sort, "
         "regardless of source directory structure (e.g. when sorting from Orthanc). "
+        "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
 def sort_cli(
@@ -269,7 +272,7 @@ def sort_cli(
     recursive: bool,
     copy_mode: FileSet.CopyMode,
     save_metadata: bool,
-    collate_resources: tuple[MimeType, ...],
+    collate_resources: tuple[CollationSpec, ...],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -311,7 +314,7 @@ def sort_cli(
             recursive=recursive,
             xnat_login=xnat_login,
             save_metadata=save_metadata,
-            collate_datatypes=tuple(mt.datatype for mt in collate_resources),
+            collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
         )
         if errors:
             logger.error(

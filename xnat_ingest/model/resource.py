@@ -77,7 +77,7 @@ class ImagingResource:
         self,
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
-        collate_datatypes: tuple[ty.Type[FileSet], ...] = (),
+        collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
     ) -> Self:
@@ -142,11 +142,12 @@ class ImagingResource:
                     "incomplete, overwriting"
                 )
                 shutil.rmtree(resource_dir)
-        collation = (
-            FileSet.CopyCollation.siblings
-            if collate_datatypes and isinstance(self.fileset, collate_datatypes)
-            else FileSet.CopyCollation.any
-        )
+        collation = FileSet.CopyCollation.any
+        if collation_map:
+            for dtype, coll_level in collation_map.items():
+                if isinstance(self.fileset, dtype):
+                    collation = coll_level
+                    break
         saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True, collation=collation)
         saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir)
         manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
