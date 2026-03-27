@@ -496,7 +496,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -535,7 +535,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -573,7 +573,7 @@ def test_stage_and_upload(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"file debug {check_upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -776,7 +776,7 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -795,7 +795,7 @@ def test_check_upload_missing_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -893,7 +893,7 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -919,7 +919,7 @@ def test_check_upload_empty_scan(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1018,7 +1018,7 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1044,7 +1044,7 @@ def test_check_upload_missing_resource(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1134,7 +1134,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1170,7 +1170,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
             "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
