@@ -152,7 +152,7 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         os.environ,
         {
             "XINGEST_XNAT_LOGIN": (
-                "https://xnat.example.com:8888,a_user,a_passwordwithspecialchars*#%,;##@"
+                "https://xnat.example.com:8888 a_user a_passwordwithspecialchars*#%,;##@"
             )
         },
     ):
@@ -195,11 +195,11 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     for val, expected in [
         ["ImageType[2:]", ["ImageType[2:],core/file-set"]],
         [
-            "ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
+            "ImageType[-1] medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             ["ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data"],
         ],
         [
-            "SeriesNumber,medimage/dicom-series;UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
+            "SeriesNumber medimage/dicom-series;UID medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             [
                 "SeriesNumber,medimage/dicom-series",
                 "UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
@@ -422,7 +422,7 @@ def test_stage_and_upload(
             "admin",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -455,7 +455,7 @@ def test_stage_and_upload(
             # "--raise-errors",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,info,{associate_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file info {associate_log_file};stream info stdout",
         },
     )
 
@@ -495,7 +495,7 @@ def test_stage_and_upload(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -534,7 +534,7 @@ def test_stage_and_upload(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file,debug,{upload_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -572,7 +572,7 @@ def test_stage_and_upload(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file,debug,{check_upload_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {check_upload_log_file};stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -613,7 +613,7 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -637,7 +637,7 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -680,7 +680,7 @@ def test_stage_invalid_ids(
             "--raise-errors",
         ],
         env={
-            "XINGEST_LOGGERS": f"file,debug,{stage_log_file};stream,info,stdout",
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -744,7 +744,7 @@ def test_check_upload_missing_scan(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
     )
@@ -775,7 +775,7 @@ def test_check_upload_missing_scan(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream,info,stdout",
+            "XINGEST_LOGGERS": "stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -794,7 +794,7 @@ def test_check_upload_missing_scan(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -861,7 +861,7 @@ def test_check_upload_empty_scan(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
     )
@@ -892,7 +892,7 @@ def test_check_upload_empty_scan(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream,info,stdout",
+            "XINGEST_LOGGERS": "stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -918,7 +918,7 @@ def test_check_upload_empty_scan(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -986,7 +986,7 @@ def test_check_upload_missing_resource(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
     )
@@ -1017,7 +1017,7 @@ def test_check_upload_missing_resource(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream,info,stdout",
+            "XINGEST_LOGGERS": "stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -1043,7 +1043,7 @@ def test_check_upload_missing_resource(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -1109,7 +1109,7 @@ def test_check_upload_checksum_fail(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream,debug,stdout",
+            "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
     )
@@ -1133,7 +1133,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream,info,stdout",
+            "XINGEST_LOGGERS": "stream info stdout",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
@@ -1169,7 +1169,7 @@ def test_check_upload_checksum_fail(
             "XINGEST_HOST": xnat_server,
             "XINGEST_USER": "admin",
             "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream,debug,stdout;file,error,{check_upload_log_file}",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
             "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF,randomstringofcharacters0912341241234",
         },
     )
