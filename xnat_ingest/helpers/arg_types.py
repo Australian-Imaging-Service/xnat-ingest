@@ -68,12 +68,12 @@ class CliType(click.types.ParamType):
             for entry in envvar.split(";"):
                 if not entry.strip():
                     continue
-                args = entry.split(",", maxsplit=self.arity - 1)
+                args = entry.split(maxsplit=self.arity - 1)
                 # Allow for default values supplied by the attrs type class
                 tokens.extend(self._add_defaults_for_missing_args(args, self.type))
             return tokens
         else:
-            args = envvar.split(",", maxsplit=self.arity - 1)
+            args = envvar.split(maxsplit=self.arity - 1)
             return self._add_defaults_for_missing_args(args, self.type)
 
     def _add_defaults_for_missing_args(self, args: list[str], type_: type) -> list[str]:
