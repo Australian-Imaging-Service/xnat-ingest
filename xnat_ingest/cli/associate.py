@@ -56,38 +56,15 @@ are uploaded to XNAT
 @click.argument(
     "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
+@click.argument("datatype", type=str, envvar="XINGEST_DATATYPE")
+@click.argument("glob", type=str, envvar="XINGEST_GLOB")
+@click.argument("id_pattern", type=str, envvar="XINGEST_ID_PATTERN")
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
     envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
-)
-@click.option(
-    "--associated-files",
-    type=AssociatedFiles.cli_type,
-    nargs=3,
-    default=None,
-    multiple=True,
-    envvar="XINGEST_ASSOCIATED",
-    metavar="<datatype> <glob> <id-pattern>",
-    help=(
-        'The "glob" arg is a glob pattern by which to detect associated files to be '
-        "attached to the DICOM sessions. Note that when this pattern corresponds to a "
-        "relative path it is considered to be relative to the parent directory containing "
-        "the DICOMs for the session NOT the current working directory Can contain string "
-        "templates corresponding to DICOM metadata fields, which are substituted before "
-        "the glob is called. For example, "
-        '"./associated/{PatientName.family_name}_{PatientName.given_name}/*)" '
-        "will find all files under the subdirectory within '/path/to/dicoms/associated' that matches "
-        "<GIVEN-NAME>_<FAMILY-NAME>. Will be interpreted as being relative to `dicoms_dir` "
-        "if a relative path is provided.\n"
-        'The "id-pattern" arg is a regular expression that is used to extract the scan ID & '
-        "type/resource from the associated filename. Should be a regular-expression "
-        "(Python syntax) with named groups called 'id' and 'type', e.g. "
-        r"'[^\.]+\.[^\.]+\.(?P<id>\d+)\.(?P<type>\w+)\..*'"
-        "(XINGEST_ASSOCIATED env. var)"
-    ),
 )
 @click.option(
     "--delete/--dont-delete",
@@ -167,6 +144,9 @@ are uploaded to XNAT
 def associate_cli(
     input_dir: Path,
     output_dir: Path,
+    datatype: str,
+    glob: str,
+    id_pattern: str,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
@@ -174,7 +154,6 @@ def associate_cli(
     avoid_clashes: bool,
     loop: int,
     temp_dir: Path | None,
-    associated_files: ty.List[AssociatedFiles],
     copy_mode: FileSet.CopyMode,
     delete: bool,
     require_manifest: bool,
@@ -201,7 +180,7 @@ def associate_cli(
         errors = associate(
             input_dir=input_dir,
             output_dir=output_dir,
-            associated_files=associated_files,
+            associated_files=[AssociatedFiles(datatype, glob, id_pattern)],
             spaces_to_underscores=spaces_to_underscores,
             avoid_clashes=avoid_clashes,
             raise_errors=raise_errors,
