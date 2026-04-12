@@ -209,7 +209,7 @@ def iterate_s3_sessions(
     )
     bucket_name, prefix = bucket_path[5:].split("/", 1)
     bucket = s3.Bucket(bucket_name)
-    if not prefix.endswith("/"):
+    if prefix and not prefix.endswith("/"):
         prefix += "/"
     all_objects = bucket.objects.filter(Prefix=prefix)
     session_objs = defaultdict(list)
