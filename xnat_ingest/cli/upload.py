@@ -4,7 +4,10 @@ import time
 import typing as ty
 from pathlib import Path
 
+import botocore.exceptions
 import click
+import requests.exceptions
+from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import base_cli
 
@@ -240,34 +243,55 @@ def upload_cli(
     # Loop the upload process if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = upload(
-            input_dir=staged,
-            server=server,
-            user=user,
-            password=password,
-            always_include=always_include,
-            raise_errors=raise_errors,
-            store_credentials=store_credentials,
-            require_manifest=require_manifest,
-            use_curl_jsession=use_curl_jsession,
-            verify_ssl=verify_ssl,
-            methods=methods,
-            wait_period=wait_period,
-            num_files_per_batch=num_files_per_batch,
-            check_checksums=check_checksums,
-            dry_run=dry_run,
-            s3_cache_dir=(
-                Path(temp_dir) / "s3_cache"
-                if temp_dir is not None
-                else tempfile.mkdtemp()
-            ),
-        )
-        if errors:
-            logger.error(
-                f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
+        try:
+            errors = upload(
+                input_dir=staged,
+                server=server,
+                user=user,
+                password=password,
+                always_include=always_include,
+                raise_errors=raise_errors,
+                store_credentials=store_credentials,
+                require_manifest=require_manifest,
+                use_curl_jsession=use_curl_jsession,
+                verify_ssl=verify_ssl,
+                methods=methods,
+                wait_period=wait_period,
+                num_files_per_batch=num_files_per_batch,
+                check_checksums=check_checksums,
+                dry_run=dry_run,
+                s3_cache_dir=(
+                    Path(temp_dir) / "s3_cache"
+                    if temp_dir is not None
+                    else tempfile.mkdtemp()
+                ),
             )
-        else:
-            logger.info("Upload completed successfully without errors")
+            if errors:
+                logger.error(
+                    f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
+                )
+            else:
+                logger.info("Upload completed successfully without errors")
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ConnectTimeout,
+            requests.exceptions.ReadTimeout,
+            XNATResponseError,
+            botocore.exceptions.EndpointConnectionError,
+            botocore.exceptions.ConnectTimeoutError,
+            botocore.exceptions.ReadTimeoutError,
+        ) as e:
+            # Transient network or XNAT-side error. In loop mode, log and continue
+            # instead of crashing the process (which causes container restarts in
+            # Kubernetes deployments). In one-shot mode, re-raise so callers see
+            # the failure.
+            if loop < 0:
+                raise
+            logger.error(
+                "Transient error connecting to XNAT or S3 store: %s. "
+                "Will retry on next loop iteration.",
+                e,
+            )
         if loop < 0:
             break
         end_time = datetime.datetime.now()
