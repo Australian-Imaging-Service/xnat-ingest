@@ -60,6 +60,12 @@ class ImagingResource:
         return self.fileset.mime_like
 
     def __lt__(self, other: Self) -> bool:
+        if self.scan is None and other.scan is None:
+            return self.name < other.name
+        if self.scan is None:
+            return True  # session resources sort before scan resources
+        if other.scan is None:
+            return False
         try:
             scan_id = int(self.scan.id)
         except ValueError:
@@ -215,6 +221,8 @@ class ImagingResource:
 
     @property
     def path(self) -> str:
+        if self.scan is None:
+            return self.name
         return self.scan.path + ":" + self.name
 
     MANIFEST_FNAME = "MANIFEST.json"

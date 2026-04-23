@@ -67,6 +67,7 @@ class ImagingSession:
         converter=scans_converter,
         validator=attrs.validators.instance_of(dict),
     )
+    session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
     _metadata: dict[str, ty.Any] | None = attrs.field(
         default=None, eq=False, repr=False, init=False
@@ -136,7 +137,9 @@ class ImagingSession:
 
     @property
     def resources(self) -> ty.List[ImagingResource]:
-        return [r for p in self.scans.values() for r in p.resources.values()]
+        return list(self.session_resources.values()) + [
+            r for p in self.scans.values() for r in p.resources.values()
+        ]
 
     @property
     def primary_resources(self) -> ty.List[ImagingResource]:
@@ -201,6 +204,10 @@ class ImagingSession:
                     raise ValueError(
                         f"{mime_like!r} does not correspond to a file format ({fileformat})"
                     )
+            for resource in self.session_resources.values():
+                if isinstance(resource.fileset, fileformat):
+                    uploaded.add((None, resource.name))
+                    yield resource
             for scan in self.scans.values():
                 for resource in scan.resources.values():
                     if isinstance(resource.fileset, fileformat):
@@ -750,6 +757,35 @@ class ImagingSession:
                 )
         scan.resources[resource_name] = resource
 
+    def add_session_resource(
+        self,
+        resource_name: str,
+        fileset: FileSet,
+        overwrite: bool = False,
+    ) -> None:
+        """Adds a session-level resource
+
+        Parameters
+        ----------
+        resource_name : str
+            the name of the resource
+        fileset : FileSet
+            the fileset to add as the resource
+        overwrite : bool
+            whether to overwrite an existing resource with the same name
+        """
+        resource = ImagingResource(name=resource_name, fileset=fileset)
+        if resource_name in self.session_resources:
+            existing = self.session_resources[resource_name]
+            if resource.checksums == existing.checksums:
+                return
+            if not overwrite:
+                raise KeyError(
+                    f"Session resource '{resource_name}' already exists in {self.name}. "
+                    "Use 'overwrite=True' to overwrite."
+                )
+        self.session_resources[resource_name] = resource
+
     @classmethod
     def from_metadata_yaml(cls, yaml_path: Path) -> Self:
         """Creates a metadata-only session from a __metadata__/ YAML file.
@@ -828,15 +864,26 @@ class ImagingSession:
             visit_id=visit_id,
             run_uid=run_uid,
         )
-        for scan_dir in session_dir.iterdir():
-            if scan_dir.is_dir():
+        for item in session_dir.iterdir():
+            if not item.is_dir():
+                continue
+            if "." in item.name:
+                # scan directory: <scan_id>.<scan_type>
                 scan = ImagingScan.load(
-                    scan_dir,
+                    item,
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
                 scan.session = session
                 session.scans[scan.id] = scan
+            else:
+                # session resource directory: <resource_name> (no dot)
+                resource = ImagingResource.load(
+                    item,
+                    require_manifest=require_manifest,
+                    check_checksums=check_checksums,
+                )
+                session.session_resources[resource.name] = resource
         metadata_path = session_dir / cls.METADATA_FNAME
         if metadata_path.exists():
             session._metadata = Yaml(metadata_path).load()
@@ -893,6 +940,9 @@ class ImagingSession:
             saved_scan = scan.save(session_dir, copy_mode=copy_mode, collation_map=collation_map)
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
+        for resource in self.session_resources.values():
+            saved_resource = resource.save(session_dir, copy_mode=copy_mode)
+            saved.session_resources[saved_resource.name] = saved_resource
         if save_metadata:
             metadata_path = (
                 session_dir / self.METADATA_FNAME
