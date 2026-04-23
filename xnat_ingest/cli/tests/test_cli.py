@@ -445,7 +445,6 @@ def test_stage_and_upload(
         [
             str(sorted_dir),
             str(associated_dir),
-            "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             (
                 str(associated_files_dir)
