@@ -91,6 +91,8 @@ class SessionListing(metaclass=abc.ABCMeta):
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
                 resource_paths.add(f"{xscan.id}.{xscan.type}/{xresource.label}")
+        for xresource in xsession.resources.values():
+            resource_paths.add(xresource.label)
         return resource_paths.issuperset(self.resource_paths)
 
 
@@ -106,6 +108,10 @@ class LocalSessionListing(SessionListing):
     @property
     def resource_paths(self) -> set[str]:
         paths = {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
+        # session resources: top-level dirs with no "." in name
+        for item in self.fspath.iterdir():
+            if item.is_dir() and "." not in item.name:
+                paths.add(item.name)
         paths.discard(ImagingSession.METADATA_FNAME)
         return paths
 
@@ -146,7 +152,18 @@ class S3SessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        paths = {"/".join(o[0][:2]) for o in self.objects}
+        paths = set()
+        for path_parts, _ in self.objects:
+            if not path_parts:
+                continue
+            first = path_parts[0]
+            if "." in first:
+                # scan resource: <scan_id>.<scan_type>/<resource_name>
+                if len(path_parts) >= 2:
+                    paths.add(f"{first}/{path_parts[1]}")
+            else:
+                # session resource: <resource_name> (no dot in dir name)
+                paths.add(first)
         paths.discard(ImagingSession.METADATA_FNAME)
         return paths
 
@@ -192,7 +209,7 @@ def iterate_s3_sessions(
     )
     bucket_name, prefix = bucket_path[5:].split("/", 1)
     bucket = s3.Bucket(bucket_name)
-    if not prefix.endswith("/"):
+    if prefix and not prefix.endswith("/"):
         prefix += "/"
     all_objects = bucket.objects.filter(Prefix=prefix)
     session_objs = defaultdict(list)
@@ -346,6 +363,32 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     """
     xclasses = xsession.xnat_session.classes
     resource_name = resource.name
+
+    if resource.scan is None:
+        try:
+            xresource = xsession.resources[resource_name]
+        except KeyError:
+            pass
+        else:
+            checksums = get_xnat_checksums(xresource)
+            if checksums != resource.checksums:
+                difference = {
+                    k: (v, resource.checksums[k])
+                    for k, v in checksums.items()
+                    if v != resource.checksums[k]
+                }
+                logger.error(
+                    "'%s' session resource already exists on XNAT. Please delete on XNAT to overwrite:\n%s",
+                    resource_name,
+                    pprint.pformat(difference),
+                )
+            return None
+        logger.debug("Creating session resource %s in %s", resource_name, xsession.label)
+        uri = f"{xsession.uri}/resources/{resource_name}"
+        xsession.xnat_session.put(uri)
+        xsession.clearcache()
+        return xsession.xnat_session.create_object(uri)
+
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:

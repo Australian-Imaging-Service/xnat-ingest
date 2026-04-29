@@ -491,6 +491,28 @@ def test_associate_files_metadata_only(tmp_path: Path) -> None:
     }
 
 
+def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
+    """Session-level resources (no-dot dirs) survive a save/load roundtrip."""
+    pdf = File.sample(seed=42)
+
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="VIS",
+        scans=[],
+    )
+    session.add_session_resource("radiology-doc-report", pdf)
+
+    saved, _ = session.save(tmp_path)
+    assert "radiology-doc-report" in saved.session_resources
+
+    session_dir = tmp_path.joinpath(*session.staging_relpath)
+    reloaded = ImagingSession.load(session_dir)
+
+    assert "radiology-doc-report" in reloaded.session_resources
+    assert reloaded.session_resources["radiology-doc-report"].checksums == saved.session_resources["radiology-doc-report"].checksums
+
+
 def test_id_escape(tmp_path: Path) -> None:
     raw_data_dir = tmp_path / "raw"
     raw_data_dir.mkdir()
