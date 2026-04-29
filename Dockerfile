@@ -38,3 +38,5 @@ RUN pip install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
+LABEL org.opencontainers.image.source=https://github.com/akshitbeniwal/xnat-ingest
+LABEL org.opencontainers.image.description="xnat-ingest fork with AIS_LOG_FORMAT=json + loop-resilience patches"
