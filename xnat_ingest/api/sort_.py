@@ -40,6 +40,11 @@ def sort(
     recursive: bool = False,
     xnat_login: XnatLogin | None = None,
     save_metadata: bool | Path = False,
+    orthanc_url: str | None = None,
+    orthanc_user: str | None = None,
+    orthanc_password: str | None = None,
+    orthanc_storage_dir: Path | None = None,
+    orthanc_label: str = "xnat-sorted",
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -125,6 +130,28 @@ def sort(
     if save_metadata:
         metadata_dir = output_dir / ImagingSession.METADATA_DIR
         metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    if orthanc_url:
+        if orthanc_storage_dir is None:
+            raise ValueError(
+                "--orthanc-storage-dir must be provided when using --orthanc-url"
+            )
+        ImagingSession.from_orthanc(
+            orthanc_url=orthanc_url,
+            output_dir=output_dir,
+            orthanc_storage_dir=orthanc_storage_dir,
+            project_field=project_field,
+            subject_field=subject_field,
+            visit_field=visit_field,
+            scan_id_field=scan_id_field,
+            scan_desc_field=scan_desc_field,
+            project_id=project_id,
+            orthanc_user=orthanc_user,
+            orthanc_password=orthanc_password,
+            orthanc_label=orthanc_label,
+            available_projects=project_list,
+        )
+        return errors
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,

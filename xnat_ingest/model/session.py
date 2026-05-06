@@ -1,8 +1,11 @@
 import hashlib
 import inspect
+import json
 import logging
+import os
 import platform
 import re
+import requests
 import typing as ty
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -529,6 +532,175 @@ class ImagingSession:
                 )
             )
         return list(sessions.values())
+
+    @classmethod
+    def from_orthanc(
+        cls,
+        orthanc_url: str,
+        output_dir: Path,
+        orthanc_storage_dir: Path,
+        project_field: list[FieldSpec],
+        subject_field: list[FieldSpec],
+        visit_field: list[FieldSpec],
+        scan_id_field: list[FieldSpec],
+        scan_desc_field: list[FieldSpec],
+        project_id: str | None = None,
+        orthanc_user: str | None = None,
+        orthanc_password: str | None = None,
+        orthanc_label: str = "xnat-sorted",
+        available_projects: list[str] | None = None,
+    ) -> ty.List["ImagingSession"]:
+        """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
+        Requires orthanc_storage_dir and output_dir to be on the same filesystem.
+
+        Parameters
+        ----------
+        orthanc_url : str
+            Base URL of the Orthanc REST API, e.g. 'http://orthanc:8042'
+        output_dir : Path
+            Staging directory. Hardlinks land here directly, must be on the same
+            filesystem as orthanc_storage_dir.
+        orthanc_storage_dir : Path
+            Orthanc's StorageDirectory as mounted.
+        project_field, subject_field, visit_field : list[FieldSpec]
+            Field specs to extract XNAT IDs from Orthanc's indexed tags.
+        scan_id_field, scan_desc_field : list[FieldSpec]
+            Field specs to extract scan naming from series-level tags.
+        project_id : str, optional
+            Override project ID for all studies.
+        orthanc_user, orthanc_password : str, optional
+            Orthanc basic auth credentials.
+        orthanc_label : str, optional
+            Label applied after staging to prevent re-processing, by default 'xnat-sorted'.
+            Remove via the Orthanc UI to re-sort a study.
+        available_projects : list[str], optional
+            Valid XNAT project IDs; unrecognised projects get an INVALID_ prefix.
+
+        Returns
+        -------
+        list[ImagingSession]
+            Staged sessions loaded from output_dir.
+        """
+        auth = (orthanc_user, orthanc_password) if orthanc_user else None
+
+        def get_json(path: str) -> ty.Any:
+            resp = requests.get(f"{orthanc_url}{path}", auth=auth)
+            resp.raise_for_status()
+            return resp.json()
+
+        class _TagsAdapter:
+            """Adapter so FieldSpec.get_value() can read an Orthanc tag dict."""
+            def __init__(self, tags: dict) -> None:
+                self.metadata = tags
+
+        def eval_field(specs: list[FieldSpec], tags: dict, escape: bool = False) -> str:
+            """Return the first FieldSpec value that resolves, or 'UNKNOWN'.
+
+            Parameters
+            ----------
+            escape : bool
+                If True, replace non-alphanumeric/underscore characters with '_'
+            """
+            adapter = _TagsAdapter(tags)
+            for spec in specs:
+                try:
+                    val = spec.get_value(adapter)
+                    if val:
+                        if escape:
+                            val = FieldSpec.xnat_id_escape_re.sub("_", val)
+                        return val
+                except Exception:
+                    continue
+            return "UNKNOWN"
+
+        resp = requests.post(
+            f"{orthanc_url}/tools/find",
+            auth=auth,
+            json={
+                "Level": "Study",
+                "Query": {},
+                "Labels": [orthanc_label],
+                "LabelsConstraint": "None",
+            },
+        )
+        resp.raise_for_status()
+        study_ids = resp.json()
+        logger.info(
+            "Found %d unstaged studies in Orthanc at '%s'", len(study_ids), orthanc_url
+        )
+
+        staged: list[ImagingSession] = []
+        for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
+            study = get_json(f"/studies/{study_id}")
+            study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
+
+            proj = project_id if project_id is not None else eval_field(project_field, study_tags, escape=True)
+            if available_projects is not None and proj not in available_projects:
+                proj = "INVALID_UNRECOGNISED_" + proj
+            subj = eval_field(subject_field, study_tags, escape=True)
+            visit = eval_field(visit_field, study_tags, escape=True)
+
+            session_dir = output_dir / f"{proj}.{subj}.{visit}"
+            session_dir.mkdir(parents=True, exist_ok=True)
+
+            modalities: set[str] = set()
+            for series_id in study["Series"]:
+                series = get_json(f"/series/{series_id}")
+                if modality := series["MainDicomTags"].get("Modality"):
+                    modalities.add(modality)
+                all_tags = {**study_tags, **series["MainDicomTags"]}
+                scan_id = eval_field(scan_id_field, all_tags)
+                scan_type = eval_field(scan_desc_field, all_tags)
+
+                resource_dir = session_dir / f"{scan_id}.{scan_type}" / "DICOM"
+                resource_dir.mkdir(parents=True, exist_ok=True)
+
+                instances = get_json(f"/series/{series_id}/instances")
+                checksums: dict[str, str] = {}
+                for instance in instances:
+                    instance_id = instance["ID"]
+                    sop_uid = instance["MainDicomTags"].get("SOPInstanceUID", instance_id)
+                    fname = f"{sop_uid}.dcm"
+                    dest_path = resource_dir / fname
+                    if dest_path.exists():
+                        continue
+                    attachment = get_json(
+                        f"/instances/{instance_id}/attachments/dicom/info"
+                    )
+                    if attachment["CompressedSize"] != attachment["UncompressedSize"]:
+                        raise ValueError(
+                            f"Instance '{instance_id}' in series '{series_id}' is stored "
+                            "compressed in Orthanc — disable StorageCompression in the "
+                            "Orthanc config to use hardlink sorting."
+                        )
+                    uuid = attachment["Uuid"]
+                    src_path = Path(orthanc_storage_dir) / uuid[0:2] / uuid[2:4] / uuid
+                    os.link(src_path, dest_path)
+                    checksums[fname] = attachment["UncompressedMD5"]
+
+                manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
+                with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
+                    json.dump(manifest, f, indent=2)
+
+            metadata_path = session_dir / cls.METADATA_FNAME
+            if not metadata_path.exists():
+                if modalities:
+                    study_tags["Modality"] = (
+                        next(iter(modalities)) if len(modalities) == 1 else list(modalities)
+                    )
+                with open(metadata_path, "w") as f:
+                    yaml.dump(study_tags, f, indent=4)
+
+            requests.put(
+                f"{orthanc_url}/studies/{study_id}/labels/{orthanc_label}", auth=auth
+            ).raise_for_status()
+            logger.info(
+                "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
+            )
+
+            staged.append(cls.load(session_dir))
+
+        return staged
 
     def deidentify(
         self,
