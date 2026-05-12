@@ -110,6 +110,13 @@ are uploaded to XNAT
     ),
 )
 @click.option(
+    "--require-manifest/--dont-require-manifest",
+    default=True,
+    envvar="XINGEST_REQUIRE_MANIFEST",
+    help=("Whether to require manifest files in the staged resources or not"),
+    type=bool,
+)
+@click.option(
     "--recursive/--not-recursive",
     type=bool,
     default=False,
@@ -127,6 +134,7 @@ def deidentify_cli(
     loop: int,
     avoid_clashes: bool,
     delete: bool,
+    recursive: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -152,6 +160,7 @@ def deidentify_cli(
             copy_mode=copy_mode,
             require_manifest=require_manifest,
             delete=delete,
+            recursive=recursive,
         )
         if errors:
             logger.error(

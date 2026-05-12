@@ -18,11 +18,19 @@ def deidentify(
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
     require_manifest: bool = True,
     delete: bool = False,
+    recursive: bool = False,
 ) -> list[str]:
 
-    sessions: list[LocalSessionListing] = [
-        LocalSessionListing(p) for p in Path(input_dir).iterdir()
-    ]
+    if recursive:
+        sessions = [
+            LocalSessionListing(p)
+            for p in Path(input_dir).rglob("*")
+            if p.is_dir()
+        ]
+    else:
+        sessions = [
+            LocalSessionListing(p) for p in Path(input_dir).iterdir()
+        ]
     num_sessions = len(sessions)
     logger.info(
         "Found %d sessions in staging directory to stage'%s'",
