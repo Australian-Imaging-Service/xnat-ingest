@@ -249,6 +249,52 @@ are uploaded to XNAT
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
+@click.option(
+    "--orthanc-url",
+    type=str,
+    default=None,
+    envvar="XINGEST_ORTHANC_URL",
+    help=(
+        "Base URL of an Orthanc REST API to sort from (e.g. http://orthanc:8042). "
+        "(XINGEST_ORTHANC_URL env. var)"
+    ),
+)
+@click.option(
+    "--orthanc-user",
+    type=str,
+    default=None,
+    envvar="XINGEST_ORTHANC_USER",
+    help="Orthanc auth username (XINGEST_ORTHANC_USER env. var)",
+)
+@click.option(
+    "--orthanc-password",
+    type=str,
+    default=None,
+    envvar="XINGEST_ORTHANC_PASSWORD",
+    help="Orthanc auth password (XINGEST_ORTHANC_PASSWORD env. var)",
+)
+@click.option(
+    "--orthanc-storage-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    envvar="XINGEST_ORTHANC_STORAGE_DIR",
+    help=(
+        "Path to Orthanc's StorageDirectory as mounted in pod. DICOM files are "
+        "hardlinked from here directly to the staging directory"
+        "(XINGEST_ORTHANC_STORAGE_DIR env. var)"
+    ),
+)
+@click.option(
+    "--orthanc-label",
+    type=str,
+    default="xnat-sorted",
+    envvar="XINGEST_ORTHANC_LABEL",
+    help=(
+        "Label applied to Orthanc studies after staging to prevent re-processing. "
+        "Can be removed via the Orthanc UI "
+        "(XINGEST_ORTHANC_LABEL env. var)"
+    ),
+)
 def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
@@ -273,6 +319,11 @@ def sort_cli(
     copy_mode: FileSet.CopyMode,
     save_metadata: bool,
     collate_resources: tuple[CollationSpec, ...],
+    orthanc_url: str | None,
+    orthanc_user: str | None,
+    orthanc_password: str | None,
+    orthanc_storage_dir: Path | None,
+    orthanc_label: str,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -315,6 +366,11 @@ def sort_cli(
             xnat_login=xnat_login,
             save_metadata=save_metadata,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
+            orthanc_url=orthanc_url,
+            orthanc_user=orthanc_user,
+            orthanc_password=orthanc_password,
+            orthanc_storage_dir=orthanc_storage_dir,
+            orthanc_label=orthanc_label,
         )
         if errors:
             logger.error(
