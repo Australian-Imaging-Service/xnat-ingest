@@ -287,12 +287,21 @@ are uploaded to XNAT
 @click.option(
     "--orthanc-label",
     type=str,
-    default="xnat-sorted",
+    default=None,
     envvar="XINGEST_ORTHANC_LABEL",
     help=(
-        "Label applied to Orthanc studies after staging to prevent re-processing. "
-        "Can be removed via the Orthanc UI "
-        "(XINGEST_ORTHANC_LABEL env. var)"
+        "Only studies bearing this Orthanc label are staged. If unset, "
+        "all studies are eligible for staging (XINGEST_ORTHANC_LABEL env. var)"
+    ),
+)
+@click.option(
+    "--orthanc-skip-label",
+    type=str,
+    default="xnat-sorted",
+    envvar="XINGEST_ORTHANC_SKIP_LABEL",
+    help=(
+        "Studies with this Orthanc label are skipped. Applied to Orthanc studies after "
+        "staging to prevent re-processing (XINGEST_ORTHANC_SKIP_LABEL env. var)"
     ),
 )
 def sort_cli(
@@ -323,7 +332,8 @@ def sort_cli(
     orthanc_user: str | None,
     orthanc_password: str | None,
     orthanc_storage_dir: Path | None,
-    orthanc_label: str,
+    orthanc_label: str | None,
+    orthanc_skip_label: str,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -371,6 +381,7 @@ def sort_cli(
             orthanc_password=orthanc_password,
             orthanc_storage_dir=orthanc_storage_dir,
             orthanc_label=orthanc_label,
+            orthanc_skip_label=orthanc_skip_label,
         )
         if errors:
             logger.error(

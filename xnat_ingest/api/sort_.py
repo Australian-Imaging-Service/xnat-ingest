@@ -44,7 +44,8 @@ def sort(
     orthanc_user: str | None = None,
     orthanc_password: str | None = None,
     orthanc_storage_dir: Path | None = None,
-    orthanc_label: str = "xnat-sorted",
+    orthanc_label: str | None = None,
+    orthanc_skip_label: str = "xnat-sorted",
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -149,6 +150,7 @@ def sort(
             orthanc_user=orthanc_user,
             orthanc_password=orthanc_password,
             orthanc_label=orthanc_label,
+            orthanc_skip_label=orthanc_skip_label,
             available_projects=project_list,
         )
         return errors
