@@ -555,17 +555,19 @@ DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 
 def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
-    """Return a File instance with an injected deidentify() method for testing.
+    """Return a File instance with contains_phi=True and an injected deidentify().
 
-    The instance has no ``contains_phi`` attribute so session.deidentify() routes
-    it through the spec-based branch rather than the plain copy branch.
+    Setting contains_phi=True routes it through the deidentify branch in
+    session.deidentify().  The injected method is called as an unbound function
+    (instance attribute), so it receives no implicit ``self``.
     """
     f = File.sample(seed=seed)
+    f.contains_phi = True
 
-    def _deidentify(out_dir: Path, spec: ty.Any = None) -> tuple:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        return f.copy(out_dir), dict(expected_reid)
+    def _deidentify(spec: ty.Any = None, out_dir: ty.Optional[Path] = None) -> tuple:
+        dest = Path(out_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        return f.copy(dest), dict(expected_reid)
 
     f.deidentify = _deidentify
     return f
@@ -581,13 +583,17 @@ def test_deidentify_empty_session(tmp_path: Path) -> None:
     assert reid_mdata == {}
 
 
-def test_deidentify_contains_phi_copies_files(
-    imaging_session: ImagingSession, tmp_path: Path
-) -> None:
-    """MedicalImagingData (contains_phi=True) is copied as-is; no reid metadata collected."""
-    deid_session, reid_mdata = imaging_session.deidentify(tmp_path / "dest")
-
-    assert set(deid_session.scans) == set(imaging_session.scans)
+def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
+    """Resources without contains_phi are copied as-is; no reid metadata collected."""
+    f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
+    assert "1" in deid_session.scans
     assert reid_mdata == {}
     for scan in deid_session.scans.values():
         for resource in scan.resources.values():

@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import time
@@ -10,6 +11,7 @@ import click
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json, Yaml
 from fileformats.medimage import DicomSeries
+from fileformats.medimage.base import MedicalImagingData
 from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
@@ -29,7 +31,13 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
-from xnat_ingest.cli import associate_cli, check_upload_cli, sort_cli, upload_cli
+from xnat_ingest.cli import (
+    associate_cli,
+    check_upload_cli,
+    deidentify_cli,
+    sort_cli,
+    upload_cli,
+)
 from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
@@ -37,6 +45,11 @@ from xnat_ingest.helpers.remotes import upload_file_to_s3
 from xnat_ingest.model.session import ImagingSession
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
+
+
+DICOM_DEID_SPEC = """
+# Specification for de-identifying DICOM files for project PROJ goes here
+"""
 
 
 @click.command(
@@ -1180,6 +1193,188 @@ def test_check_upload_checksum_fail(
     assert "MISSING RESOURCE" not in logs
     assert "EMPTY SCAN" not in logs
     assert "CHECKSUM FAIL" in logs
+
+
+def _mock_dicom_deidentify(
+    self: MedicalImagingData,
+    spec: ty.Any = None,
+    out_dir: ty.Optional[Path] = None,
+) -> tuple:
+    """Stand-in for dicom_deidentify (not yet implemented by the colleague).
+
+    Copies the fileset to out_dir and returns a minimal reid metadata dict
+    containing the original PatientName and PatientID so the tests can assert
+    that PHI values are captured and persisted.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    copied = self.copy(out_dir)
+    reid = {
+        "PatientName": str(self.metadata.get("PatientName", "")),
+        "PatientID": str(self.metadata.get("PatientID", "")),
+    }
+    return copied, reid
+
+
+def test_deidentify_cli_dicom(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Sort DICOM sessions then run deidentify_cli end-to-end.
+
+    MedicalImagingData.deidentify is mocked (the real implementation will be
+    provided by a colleague).  The test verifies the full pipeline: staging →
+    session loading → spec parsing → deidentification → reid persistence.
+    """
+    PROJECT_ID = "TESTDEIDPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
+
+    # 1. Generate DICOM test data for multiple scan types in subdirectories
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    for get_image, subdir in [
+        (get_pet_image, "pet"),
+        (get_ac_image, "ac"),
+        (get_topogram_image, "topogram"),
+    ]:
+        get_image(
+            dicoms_dir / subdir,
+            StudyID=PROJECT_ID,
+            PatientID=PATIENT_ID,
+            AccessionNumber=ACCESSION,
+            StudyInstanceUID=STUDY_UID,
+        )
+
+    # 2. Stage with sort_cli
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    sort_log = tmp_path / "sort.log"
+    result = cli_runner(
+        sort_cli,
+        [
+            str(dicoms_dir),
+            str(staged_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+        ],
+        env={"XINGEST_LOGGERS": f"file debug {sort_log};stream info stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    assert (staged_dir / session_name).exists(), "Session not staged"
+
+    # 3. Project spec mapping DicomSeries to an empty spec dict
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / f"{PROJECT_ID}.json").write_text(
+        '{"medimage/dicom-series": DICOM_DEID_SPEC}'
+    )
+
+    # 4. Run deidentify_cli with the mock deidentify implementation
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    deid_log = tmp_path / "deid.log"
+
+    with patch.object(MedicalImagingData, "deidentify", _mock_dicom_deidentify):
+        result = cli_runner(
+            deidentify_cli,
+            [
+                str(staged_dir),
+                str(output_dir),
+                str(spec_dir),
+                str(reid_dir),
+                "--raise-errors",
+            ],
+            env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
+        )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 5. Log reports success
+    logs = deid_log.read_text()
+    assert "Deidentification completed successfully" in logs, show_cli_trace(result)
+
+    # 6. Reid metadata captures original PHI values
+    reid_file = reid_dir / f"{session_name}.json"
+    assert reid_file.exists(), f"Reid file missing: {reid_file}"
+    reid = json.loads(reid_file.read_bytes())
+    assert reid.get("PatientID") == PATIENT_ID
+    assert reid.get("PatientName") != ""
+
+    # 7. Deidentified session directory contains files
+    deid_session_root = output_dir / session_name
+    assert deid_session_root.exists()
+    assert any(
+        p.is_file() for p in deid_session_root.rglob("*")
+    ), f"No files found under {deid_session_root}"
+
+
+def test_deidentify_cli_dicom_encrypted_reid(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file."""
+    from cryptography.fernet import Fernet
+
+    PROJECT_ID = "TESTDEIDENCPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.1"
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        sort_cli,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / f"{PROJECT_ID}.json").write_text(
+        '{"medimage/dicom-series": DICOM_DEID_SPEC}'
+    )
+
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    key = Fernet.generate_key()
+
+    with patch.object(MedicalImagingData, "deidentify", _mock_dicom_deidentify):
+        result = cli_runner(
+            deidentify_cli,
+            [
+                str(staged_dir),
+                str(output_dir),
+                str(spec_dir),
+                str(reid_dir),
+                "--raise-errors",
+                "--reid-encrypt-key",
+                key.decode(),
+            ],
+        )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    enc_file = reid_dir / f"{session_name}.json.enc"
+    assert enc_file.exists(), f"Encrypted reid file missing: {enc_file}"
+    assert not (reid_dir / f"{session_name}.json").exists()
+
+    decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
+    assert decrypted.get("PatientID") == PATIENT_ID
 
 
 def transfer_to_source(

@@ -8,6 +8,7 @@ from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import base_cli
 
+from ..api.deidentify_ import deidentify as deidentify_sessions
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
@@ -97,17 +98,16 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
 @click.option(
     "--raise-errors/--dont-raise-errors",
     default=False,
-    type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
 @click.option(
-    "--deidentify/--dont-deidentify",
-    default=False,
-    type=bool,
-    envvar="XINGEST_DEIDENTIFY",
+    "--require-manifest/--no-require-manifest",
+    default=True,
+    envvar="XINGEST_REQUIRE_MANIFEST",
     help=(
-        "whether to deidentify the file names and DICOM metadata before staging "
-        "(XINGEST_DEIDENTIFY env. var)"
+        "Whether to require a MANIFEST.json file in each resource directory. "
+        "If False, resources are loaded as generic FileSets without checksum validation "
+        "(XINGEST_REQUIRE_MANIFEST env. var)"
     ),
 )
 @click.option(
@@ -135,14 +135,8 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     ),
 )
 @click.option(
-    "--recursive/--not-recursive",
-    type=bool,
-    default=False,
-    help=("Whether to recursively search input directories for input files"),
-)
-@click.option(
     "--reid-encrypt-key",
-    type=bytes,
+    type=str,
     default=None,
     envvar="XINGEST_REID_ENCRYPT_KEY",
     help=(
@@ -152,7 +146,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     ),
 )
 def deidentify_cli(
-    input_dir: Path,
+    input_dir: ty.Tuple[Path, ...],
     output_dir: Path,
     spec_dir: Path,
     reid_dir: Path,
@@ -160,12 +154,11 @@ def deidentify_cli(
     additional_loggers: ty.List[str],
     require_manifest: bool,
     raise_errors: bool,
-    deidentify: bool,
     copy_mode: FileSet.CopyMode,
     loop: int,
     avoid_clashes: bool,
     delete: bool,
-    reid_encrypt_key: bytes | None = None,
+    reid_encrypt_key: str | None = None,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -179,35 +172,40 @@ def deidentify_cli(
         additional_loggers=additional_loggers,
     )
 
+    encrypt_key_bytes: bytes | None = (
+        reid_encrypt_key.encode() if reid_encrypt_key is not None else None
+    )
+
     # Run the staging process in a loop if loop is set to a positive value, otherwise
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = deidentify(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            spec_dir=spec_dir,
-            reid_dir=reid_dir,
-            avoid_clashes=avoid_clashes,
-            raise_errors=raise_errors,
-            copy_mode=copy_mode,
-            require_manifest=require_manifest,
-            delete=delete,
-            reid_encrypt_key=reid_encrypt_key,
-        )
-        if errors:
-            logger.error(
-                f"Staging completed with {len(errors)} errors:\n\n{''.join(errors)}"
+        for in_dir in input_dir:
+            errors = deidentify_sessions(
+                input_dir=in_dir,
+                output_dir=output_dir,
+                spec_dir=spec_dir,
+                reid_dir=reid_dir,
+                avoid_clashes=avoid_clashes,
+                raise_errors=raise_errors,
+                copy_mode=copy_mode,
+                require_manifest=require_manifest,
+                delete=delete,
+                reid_encrypt_key=encrypt_key_bytes,
             )
-        else:
-            logger.info("Staging completed successfully")
+            if errors:
+                logger.error(
+                    f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
+                )
+            else:
+                logger.info("Deidentification completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Deidentify took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,
