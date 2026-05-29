@@ -23,6 +23,21 @@ INPUT_DIR is either the path to a directory containing the files to deidentify
 
 OUTPUT_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
+
+SPEC_DIR is the directory containing the project-specific deidentification specifications.
+Each project specification should be a JSON file named <project_id>.json that contains a mapping
+from file format identifiers (e.g. DICOM, NIfTI, etc.) to the deidentification specification to use for
+files of that format in that project. The file format identifiers should be in the form of
+MIME types (e.g. 'application/dicom') or more specific file format identifiers recognized by the
+fileformats package (e.g. 'application/dicom; transfer-syntax=1.2.840.10008.1.2.1').
+
+REID_DIR is the directory to save the re-identification metadata to, which can be used to
+re-identify the de-identified data if needed. The re-identification metadata is saved in
+JSON format, with one JSON file per session, containing a list of mappings from original
+to de-identified identifiers for each resource in the session, as well as any additional
+metadata needed for re-identification (e.g. DICOM tags that were modified during de-identification).
+The re-identification metadata files are named <session_id>.json (or <session_id>.json.enc if encrypted
+by --reid-encrypt-key option) and saved in the REID_DIR.
 """,
 )
 @click.argument(
@@ -33,6 +48,16 @@ are uploaded to XNAT
 )
 @click.argument(
     "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+)
+@click.argument(
+    "spec_dir",
+    type=click.Path(path_type=Path, exists=True),
+    envvar="XINGEST_SPEC_DIR",
+)
+@click.argument(
+    "reid_dir",
+    type=click.Path(path_type=Path),
+    envvar="XINGEST_REID_DIR",
 )
 @click.option(
     "--delete/--dont-delete",
@@ -115,9 +140,22 @@ are uploaded to XNAT
     default=False,
     help=("Whether to recursively search input directories for input files"),
 )
+@click.option(
+    "--reid-encrypt-key",
+    type=bytes,
+    default=None,
+    envvar="XINGEST_REID_ENCRYPT_KEY",
+    help=(
+        "An optional encryption key to use for encrypting the re-identification metadata "
+        "(XINGEST_REID_ENCRYPT_KEY env. var). This should be a URL-safe base64-encoded 32-byte key, "
+        "e.g. generated using `Fernet.generate_key()` from the cryptography package"
+    ),
+)
 def deidentify_cli(
     input_dir: Path,
     output_dir: Path,
+    spec_dir: Path,
+    reid_dir: Path,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     require_manifest: bool,
@@ -127,6 +165,7 @@ def deidentify_cli(
     loop: int,
     avoid_clashes: bool,
     delete: bool,
+    reid_encrypt_key: bytes | None = None,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -147,11 +186,14 @@ def deidentify_cli(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
             avoid_clashes=avoid_clashes,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             require_manifest=require_manifest,
             delete=delete,
+            reid_encrypt_key=reid_encrypt_key,
         )
         if errors:
             logger.error(

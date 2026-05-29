@@ -14,8 +14,9 @@ from pathlib import Path
 import attrs
 import yaml
 from fileformats.core import FileSet, from_mime, from_paths
+from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
-from fileformats.medimage import DicomCollection, MedicalImage
+from fileformats.medimage import DicomCollection
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
@@ -79,7 +80,6 @@ class ImagingSession:
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
             scan.session = self
-
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
@@ -533,37 +533,102 @@ class ImagingSession:
     def deidentify(
         self,
         dest_dir: Path,
+        project_spec: dict[type[FileSet], ty.Any] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
         avoid_clashes: bool = False,
-    ) -> Self:
+        require_matching_spec: bool = True,
+    ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
         Parameters
         ----------
         dest_dir : Path
             the directory to save the deidentified files into
+        project_spec : dict[type[FileSet], Any], optional
+            a project-specific specification that defines how to deidentify the different
+            file types within the imaging session. The keys of the project spec are
+            the mime-like of the file types (see https://arcanaframework.github.io/fileformats/)
+            and the values are arbitrary file-format-specific specifications.
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.copy
+        avoid_clashes : bool, optional
+            when copying a file that doesn't need to be deidentified, if a resource
+            with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found,
+            by default False
+        require_matching_spec : bool, optional
+            whether to require a matching specification for each fileset, by default True
 
         Returns
         -------
         ImagingSession
             a new session with deidentified images
+        dict[str, Any]
+            a mapping containing the original values of metadata fields that
+            have been removed or modified
         """
+        if project_spec is None:
+            project_spec = {}
+
+        def select_spec(fileset: FileSet) -> ty.Any:
+            """Select the appropriate deidentification specification for the
+            resource based on its file type
+            """
+            matching_specs = {
+                k: v for k, v in project_spec.items() if isinstance(resource.fileset, k)
+            }
+            if not matching_specs:
+                return None
+            elif len(matching_specs) > 1:
+                for k in matching_specs:
+                    if all(issubclass(k, other_k) for other_k in matching_specs):
+                        return matching_specs[k]
+                raise KeyError(
+                    f"Multiple deidentification specifications found for {resource.fileset} "
+                    f"fileset in {scan.id}/{resource_name} resource and none it is ambiguous, "
+                    f" to use. Please provide a more specific project specification for "
+                    f"{type(resource.fileset).__name__} in the "
+                    f"file format hierarchy to disambiguate between the following matching "
+                    f"specifications: {list(matching_specs)}"
+                )
+            return next(iter(matching_specs.values()))
+
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
+        reid_series = []
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
-                if not isinstance(resource.fileset, MedicalImage):
+                if getattr(resource.fileset, "contains_phi", False):
                     deid_resource = resource.fileset.copy(
                         resource_dest_dir, mode=copy_mode, new_stem=resource_name
                     )
                 else:
-                    deid_resource = resource.fileset.deidentify(
-                        resource_dest_dir, copy_mode=copy_mode, new_stem=resource_name
+                    resource_spec = select_spec(resource.fileset)
+                    if resource_spec is None:
+                        msg = (
+                            "No deidentification specification found for %s fileset in %s/%s resource. "
+                            "Please provide a project specification for %s in the file format hierarchy to "
+                            "deidentify this resource. Returning None and copying the files without "
+                            "deidentification, which may lead to PHI being uploaded to XNAT if the fileset "
+                            "contains PHI. Matching specifications found in project spec: %s",
+                        )
+                        msg_vars = (
+                            type(resource.fileset).__name__,
+                            scan.id,
+                            resource_name,
+                            type(resource.fileset).__name__,
+                            list(project_spec),
+                        )
+                        if require_matching_spec:
+                            raise KeyError(msg % msg_vars)
+                        else:
+                            logger.warning(msg, *msg_vars)
+                    deid_resource, reid_mdata = resource.fileset.deidentify(
+                        resource_dest_dir, spec=resource_spec
                     )
+                    reid_series.append(reid_mdata)
                 deidentified.add_resource(
                     scan.id,
                     scan.type,
@@ -571,7 +636,7 @@ class ImagingSession:
                     deid_resource,
                     avoid_clashes=avoid_clashes,
                 )
-        return deidentified
+        return deidentified, collate_metadata_series(reid_series)
 
     def associate_files(
         self,
@@ -937,7 +1002,9 @@ class ImagingSession:
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
-            saved_scan = scan.save(session_dir, copy_mode=copy_mode, collation_map=collation_map)
+            saved_scan = scan.save(
+                session_dir, copy_mode=copy_mode, collation_map=collation_map
+            )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         for resource in self.session_resources.values():
