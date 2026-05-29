@@ -534,7 +534,7 @@ class ImagingSession:
         self,
         dest_dir: Path,
         project_spec: dict[type[FileSet], ty.Any] = None,
-        copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
     ) -> tuple[Self, dict[str, ty.Any]]:
@@ -551,7 +551,7 @@ class ImagingSession:
             and the values are arbitrary file-format-specific specifications.
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
-            by default FileSet.CopyMode.copy
+            by default FileSet.CopyMode.hardlink_or_copy
         avoid_clashes : bool, optional
             when copying a file that doesn't need to be deidentified, if a resource
             with the same name already exists in the scan, increment the
@@ -600,9 +600,12 @@ class ImagingSession:
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
-                if getattr(resource.fileset, "contains_phi", False):
+                if not getattr(resource.fileset, "contains_phi", False):
                     deid_resource = resource.fileset.copy(
-                        resource_dest_dir, mode=copy_mode, new_stem=resource_name
+                        resource_dest_dir,
+                        mode=copy_mode,
+                        new_stem=resource_name,
+                        avoid_clashes=True,
                     )
                 else:
                     resource_spec = select_spec(resource.fileset)
@@ -612,7 +615,7 @@ class ImagingSession:
                             "Please provide a project specification for %s in the file format hierarchy to "
                             "deidentify this resource. Returning None and copying the files without "
                             "deidentification, which may lead to PHI being uploaded to XNAT if the fileset "
-                            "contains PHI. Matching specifications found in project spec: %s",
+                            "contains PHI. Matching specifications found in project spec: %s"
                         )
                         msg_vars = (
                             type(resource.fileset).__name__,
