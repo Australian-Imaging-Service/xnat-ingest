@@ -11,7 +11,6 @@ from fileformats.medimage.base import MedicalImagingData
 from fileformats.medimage.dicom import DicomImage
 from fileformats.core import FileSet
 from tqdm import tqdm
-import yaml
 
 from xnat_ingest.helpers.remotes import LocalSessionListing
 
@@ -56,8 +55,8 @@ def deidentify(
                 require_manifest=require_manifest,
                 check_checksums=False,
             )
-            with open(spec_dir / f"{session.project_id}.yaml") as f:
-                project_spec_mime = yaml.load(f)
+            with open(spec_dir / f"{session.project_id}.json") as f:
+                project_spec_mime = json.load(f)
                 # Convert the project spec keys from mime-like strings to FileSet types
                 try:
                     project_spec = {
@@ -66,7 +65,7 @@ def deidentify(
                 except FormatRecognitionError as e:
                     raise ValueError(
                         f"Error parsing project specification for project {session.project_id} from "
-                        f"{spec_dir / f'{session.project_id}.yaml'}, unrecognised fileformat: {str(e)}"
+                        f"{spec_dir / f'{session.project_id}.json'}, unrecognised fileformat: {str(e)}"
                     ) from e
 
             deidentified_session, reid_mdata = session.deidentify(
