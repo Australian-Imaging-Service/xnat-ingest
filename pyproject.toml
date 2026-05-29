@@ -22,7 +22,7 @@ dependencies = [
     "cryptography",
     "natsort",
     "paramiko",
-    "xnat",
+    "xnat==0.7.2",
     "frametree",
     "frametree-xnat",
 ]
