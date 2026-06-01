@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.deidentify_ import deidentify as deidentify_sessions
+from ..api.deidentify_ import deidentify
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
@@ -20,7 +20,10 @@ DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
-INPUT_DIR is either the path to a directory containing the files to deidentify
+INPUT_DIR is the path to the directory containing the session directories to de-identify.
+Each session directory should be named in the format <project_id>.<subject_id>.<visit_id>
+and contain subdirectories for each scan, which in turn contain the resource files for
+each scan.
 
 OUTPUT_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
@@ -44,7 +47,6 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
 @click.argument(
     "input_dir",
     type=click.Path(path_type=Path, exists=True),
-    nargs=-1,
     envvar="XINGEST_INPUT_DIR",
 )
 @click.argument(
@@ -146,7 +148,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     ),
 )
 def deidentify_cli(
-    input_dir: ty.Tuple[Path, ...],
+    input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
     reid_dir: Path,
@@ -180,25 +182,24 @@ def deidentify_cli(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        for in_dir in input_dir:
-            errors = deidentify_sessions(
-                input_dir=in_dir,
-                output_dir=output_dir,
-                spec_dir=spec_dir,
-                reid_dir=reid_dir,
-                avoid_clashes=avoid_clashes,
-                raise_errors=raise_errors,
-                copy_mode=copy_mode,
-                require_manifest=require_manifest,
-                delete=delete,
-                reid_encrypt_key=encrypt_key_bytes,
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            avoid_clashes=avoid_clashes,
+            raise_errors=raise_errors,
+            copy_mode=copy_mode,
+            require_manifest=require_manifest,
+            delete=delete,
+            reid_encrypt_key=encrypt_key_bytes,
+        )
+        if errors:
+            logger.error(
+                f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
             )
-            if errors:
-                logger.error(
-                    f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
-                )
-            else:
-                logger.info("Deidentification completed successfully")
+        else:
+            logger.info("Deidentification completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

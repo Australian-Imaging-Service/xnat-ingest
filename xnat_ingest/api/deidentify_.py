@@ -6,7 +6,6 @@ import typing as ty
 
 from cryptography.fernet import Fernet
 from fileformats.core import extra_implementation, from_mime
-from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage.base import MedicalImagingData
 from fileformats.medimage.dicom import DicomImage
 from fileformats.core import FileSet
@@ -16,6 +15,7 @@ from xnat_ingest.helpers.remotes import LocalSessionListing
 
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
+from . import list_session_dirs
 
 
 def deidentify(
@@ -32,7 +32,7 @@ def deidentify(
 ) -> list[str]:
 
     sessions: list[LocalSessionListing] = [
-        LocalSessionListing(p) for p in Path(input_dir).iterdir()
+        LocalSessionListing(d) for d in list_session_dirs(input_dir)
     ]
     num_sessions = len(sessions)
     logger.info(
@@ -40,6 +40,10 @@ def deidentify(
         num_sessions,
         input_dir,
     )
+
+    # Ensure the output and reid directories exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+    reid_dir.mkdir(parents=True, exist_ok=True)
 
     errors: list[str] = []
 
@@ -55,25 +59,20 @@ def deidentify(
                 require_manifest=require_manifest,
                 check_checksums=False,
             )
-            with open(spec_dir / f"{session.project_id}.json") as f:
-                project_spec_mime = json.load(f)
-                # Convert the project spec keys from mime-like strings to FileSet types
-                try:
-                    project_spec = {
-                        from_mime(k): v for k, v in project_spec_mime.items()
-                    }
-                except FormatRecognitionError as e:
-                    raise ValueError(
-                        f"Error parsing project specification for project {session.project_id} from "
-                        f"{spec_dir / f'{session.project_id}.json'}, unrecognised fileformat: {str(e)}"
-                    ) from e
+            # Get the project-specific deidentification specs for this session
+            # for each file type
+            project_spec_dir = spec_dir / session.project_id
+            project_spec = {
+                from_mime(p.name.replace("@", "/")): p
+                for p in project_spec_dir.iterdir()
+                if "@" in p.name
+            }
 
             deidentified_session, reid_mdata = session.deidentify(
                 output_dir,
                 copy_mode=copy_mode,
                 avoid_clashes=avoid_clashes,
                 project_spec=project_spec,
-                reid_dir=reid_dir,
             )
             deidentified_session.save(output_dir / session_listing.name)
             reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
