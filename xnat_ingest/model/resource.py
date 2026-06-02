@@ -74,6 +74,10 @@ class ImagingResource:
             other_scan_id = int(other.scan.id)
         except ValueError:
             other_scan_id = other.scan.id  # type: ignore[assignment]
+        if isinstance(scan_id, int) and isinstance(other_scan_id, str):
+            return True  # numeric scan IDs sort before string IDs
+        if isinstance(scan_id, str) and isinstance(other_scan_id, int):
+            return False
         return (scan_id, self.name) < (other_scan_id, other.name)
 
     def newer_than_or_equal(self, other: Self) -> bool:
@@ -155,7 +159,7 @@ class ImagingResource:
                     collation = coll_level
                     break
         saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True, collation=collation)
-        saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir)
+        saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir.resolve())
         manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
         return type(self)(name=self.name, fileset=saved_fileset, checksums=saved_checksums)

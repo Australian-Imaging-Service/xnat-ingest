@@ -22,7 +22,7 @@ from tqdm import tqdm
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, FieldSpec
+from ..helpers.arg_types import AssociatedFiles, FieldSpec, invalid_path_chars_re
 from .resource import ImagingResource
 from .scan import ImagingScan
 
@@ -591,9 +591,64 @@ class ImagingSession:
         """
         all_associated = []
         for associated_files in patterns:
-            # substitute string templates int the glob template with values from the
-            # DICOM metadata to construct a glob pattern to select files associated
-            # with current session
+            # Metadata-based matching: identity_pattern starts with "metadata:"
+            # Format: "metadata:<session_field>:<scan_field>:<resource_name>"
+            # Files are matched to the session by comparing a metadata field read
+            # from the file content (e.g. StudyInstanceUID) rather than the filename.
+            if associated_files.identity_pattern.startswith("metadata:"):
+                _, session_field, scan_field, resource_name = (
+                    associated_files.identity_pattern.split(":")
+                )
+                candidate_fspaths: ty.Set[Path] = set(
+                    Path(p) for p in glob(associated_files.glob, recursive=True)
+                )
+                logger.info(
+                    "Found %s candidate file paths for metadata-based matching '%s'",
+                    len(candidate_fspaths),
+                    associated_files.glob,
+                )
+                session_field_value = (self.metadata or {}).get(session_field)
+                for fspath in tqdm(
+                    candidate_fspaths, "matching files to session by metadata"
+                ):
+                    fileset = from_paths([fspath], associated_files.datatype)[0]
+                    try:
+                        file_meta = fileset.metadata
+                    except Exception:
+                        logger.debug(
+                            "Could not read metadata from '%s', skipping", fspath
+                        )
+                        continue
+                    if file_meta.get(session_field) != session_field_value:
+                        continue
+                    # Normalise scan field value the same way sort does (e.g. hyphens → underscores)
+                    raw_scan_value = file_meta.get(scan_field, "")
+                    normalised = invalid_path_chars_re.sub("_", str(raw_scan_value))
+                    matching_scan = next(
+                        (s for s in self.scans.values() if s.type == normalised),
+                        None,
+                    )
+                    if matching_scan:
+                        scan_id = matching_scan.id
+                        scan_type = matching_scan.type
+                        # Use existing scan's associated value to avoid mismatch
+                        scan_associated = matching_scan.associated
+                    else:
+                        scan_id = normalised or fspath.stem
+                        scan_type = normalised or fspath.stem
+                        scan_associated = associated_files
+                    self.add_resource(
+                        scan_id,
+                        scan_type,
+                        resource_name,
+                        fileset,
+                        associated=scan_associated,
+                        avoid_clashes=avoid_clashes,
+                    )
+                    all_associated.append(fileset)
+                continue
+
+            # Filename-based matching: use glob with metadata substitution + regex on path
             associated_fspaths: ty.Set[Path] = set()
             primary_parents = self.primary_parents
             if primary_parents:
@@ -603,7 +658,6 @@ class ImagingSession:
                     )
                     if spaces_to_underscores:
                         assoc_glob = assoc_glob.replace(" ", "_")
-                    # Select files using the constructed glob pattern
                     associated_fspaths.update(
                         Path(p) for p in glob(assoc_glob, recursive=True)
                     )
@@ -621,7 +675,6 @@ class ImagingSession:
                 associated_files.glob,
             )
 
-            # Identify scan id, type and resource names from deidentified file paths
             assoc_re = re.compile(associated_files.identity_pattern)
             for fspath in tqdm(associated_fspaths, "sorting files into resources"):
                 match = assoc_re.match(str(fspath))
