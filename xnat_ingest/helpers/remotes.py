@@ -120,6 +120,19 @@ class LocalSessionListing(SessionListing):
         return self.fspath.name
 
     @property
+    def session_id(self) -> str:
+        import yaml
+
+        metadata_path = self.fspath / ImagingSession.METADATA_FNAME
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                meta = yaml.safe_load(f) or {}
+            override = meta.get("__session_id__")
+            if override is not None:
+                return override
+        return "_".join((self.subject_id, self.visit_id))
+
+    @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for relpath in sorted(self.resource_paths):

@@ -69,6 +69,7 @@ class ImagingSession:
     )
     session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
+    session_id_override: ty.Optional[str] = attrs.field(default=None)
     _metadata: dict[str, ty.Any] | None = attrs.field(
         default=None, eq=False, repr=False, init=False
     )
@@ -106,6 +107,8 @@ class ImagingSession:
 
     @property
     def session_id(self) -> str:
+        if self.session_id_override is not None:
+            return self.session_id_override
         return self.make_session_id(self.project_id, self.subject_id, self.visit_id)
 
     @classmethod
@@ -156,6 +159,7 @@ class ImagingSession:
             project_id=self.project_id,
             subject_id=self.subject_id,
             visit_id=self.visit_id,
+            session_id_override=self.session_id_override,
         )
 
     def select_resources(
@@ -285,7 +289,8 @@ class ImagingSession:
         scan_id_field: list[FieldSpec],
         scan_desc_field: list[FieldSpec],
         resource_field: list[FieldSpec],
-        session_field: list[FieldSpec] | None = None,
+        session_uid_field: list[FieldSpec] | None = None,
+        session_id_field: list[FieldSpec] | None = None,
         project_id: str | None = None,
         avoid_clashes: bool = False,
         recursive: bool = False,
@@ -318,10 +323,13 @@ class ImagingSession:
         resource_field: list[IdField]
             the metadata field that contains the XNAT resource ID for the imaging session,
             by default {FileSet: "ImageType[-1]"}
-        session_field: list[IdField], optional
-            the name of the metadata field that uniquely identifies the session, used
-            to check that the values extracted from the IDs across the DICOM scans are
-            consistent across DICOM files within the session, by default "StudyInstanceUID"
+        session_uid_field: list[IdField], optional
+            the metadata field that uniquely identifies the session, used to group files
+            together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
+        session_id_field: list[IdField], optional
+            when provided, the value of this field is used directly as the XNAT session label
+            instead of concatenating subject and visit IDs. Mutually exclusive with visit_field
+            being used as the label source.
         project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
@@ -414,7 +422,8 @@ class ImagingSession:
             scan_id_field,
             scan_desc_field,
             resource_field,
-            session_field,
+            session_uid_field,
+            session_id_field,
         ):
             if spec is not None:
                 for field in spec:
@@ -440,8 +449,8 @@ class ImagingSession:
             "Sorting resources into XNAT tree structure...",
         ):
             session_uid = (
-                FieldSpec.get_value_from_fields(resource, session_field)
-                if session_field
+                FieldSpec.get_value_from_fields(resource, session_uid_field)
+                if session_uid_field
                 else None
             )
             missing_ids_session = (
@@ -455,9 +464,16 @@ class ImagingSession:
             subject_id = FieldSpec.get_value_from_fields(
                 resource, subject_field, missing_ids_session, escape=True
             )
-            visit_id = FieldSpec.get_value_from_fields(
-                resource, visit_field, missing_ids_session, escape=True
-            )
+            if session_id_field:
+                extracted_session_id = FieldSpec.get_value_from_fields(
+                    resource, session_id_field, missing_ids_session, escape=True
+                )
+                visit_id = extracted_session_id
+            else:
+                extracted_session_id = None
+                visit_id = FieldSpec.get_value_from_fields(
+                    resource, visit_field, missing_ids_session, escape=True
+                )
             scan_id = FieldSpec.get_value_from_fields(
                 resource, scan_id_field, missing_ids_session
             )
@@ -492,6 +508,7 @@ class ImagingSession:
                     subject_id=subject_id,
                     visit_id=visit_id,
                     run_uid=run_uid,
+                    session_id_override=extracted_session_id,
                 )
                 sessions[session_uid] = session
             else:
@@ -886,7 +903,9 @@ class ImagingSession:
                 session.session_resources[resource.name] = resource
         metadata_path = session_dir / cls.METADATA_FNAME
         if metadata_path.exists():
-            session._metadata = Yaml(metadata_path).load()
+            raw_meta = Yaml(metadata_path).load() or {}
+            session.session_id_override = raw_meta.pop("__session_id__", None)
+            session._metadata = raw_meta if raw_meta else None
         return session
 
     def save(
@@ -943,15 +962,18 @@ class ImagingSession:
         for resource in self.session_resources.values():
             saved_resource = resource.save(session_dir, copy_mode=copy_mode)
             saved.session_resources[saved_resource.name] = saved_resource
-        if save_metadata:
+        if save_metadata or self.session_id_override is not None:
             metadata_path = (
                 session_dir / self.METADATA_FNAME
-                if save_metadata is True
+                if isinstance(save_metadata, bool)
                 else save_metadata
             )
             logger.debug("Saving session metadata to '%s'", metadata_path)
+            meta = dict(self.metadata) if save_metadata and self.metadata else {}
+            if self.session_id_override is not None:
+                meta["__session_id__"] = self.session_id_override
             with open(metadata_path, "w") as f:
-                yaml.dump(self.metadata, f, indent=4)
+                yaml.dump(meta, f, indent=4)
         return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
