@@ -16,7 +16,9 @@ from .sort_ import list_session_dirs
 def associate(
     input_dir: Path,
     output_dir: Path,
-    associated_files: ty.List[AssociatedFiles],
+    datatype: ty.Type[FileSet],
+    glob: str,
+    identity_pattern: str,
     spaces_to_underscores: bool = False,
     avoid_clashes: bool = False,
     raise_errors: bool = False,
@@ -75,7 +77,7 @@ def associate(
                 check_checksums=False,
             )
             associated = session.associate_files(
-                associated_files,
+                [AssociatedFiles(datatype, glob, identity_pattern)],
                 spaces_to_underscores=spaces_to_underscores,
                 avoid_clashes=avoid_clashes,
             )
@@ -101,7 +103,7 @@ def associate(
     ):
         try:
             associated = session.associate_files(
-                associated_files,
+                [AssociatedFiles(datatype, glob, identity_pattern)],
                 spaces_to_underscores=spaces_to_underscores,
                 avoid_clashes=avoid_clashes,
             )

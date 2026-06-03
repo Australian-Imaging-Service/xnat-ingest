@@ -9,7 +9,7 @@ from fileformats.core import FileSet
 
 from ..api import associate
 from ..cli.base import base_cli
-from ..helpers.arg_types import AssociatedFiles, LoggerConfig
+from ..helpers.arg_types import LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
 PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
@@ -180,7 +180,9 @@ def associate_cli(
         errors = associate(
             input_dir=input_dir,
             output_dir=output_dir,
-            associated_files=[AssociatedFiles(datatype, glob, id_pattern)],
+            datatype=datatype,
+            glob=glob,
+            identity_pattern=id_pattern,
             spaces_to_underscores=spaces_to_underscores,
             avoid_clashes=avoid_clashes,
             raise_errors=raise_errors,
