@@ -27,11 +27,6 @@ jobs:
         env:
           ORTHANC__AUTHENTICATION_ENABLED: "false"
           ORTHANC__DICOM_AET: "ORTHANC"
-        options: >-
-          --health-cmd "curl -sf http://localhost:8042/system || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
     strategy:
       matrix:
         os: [ubuntu-latest]  # , windows-latest]  #, macos-latest
