@@ -647,6 +647,81 @@ def test_stage_wait_period(
     assert list(sorted_dir.iterdir())
 
 
+def test_sort_orthanc_collate_resources(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    # Create DICOM files and arrange them in an Orthanc-like content-addressed nested
+    # structure, where each instance is in its own hash-addressed subdirectory
+    pet_dir = tmp_path / "pet_source"
+    get_pet_image(
+        pet_dir,
+        StudyID="TESTPROJECT",
+        PatientID="subject1",
+        AccessionNumber="acc1",
+    )
+
+    orthanc_dir = tmp_path / "orthanc"
+    dcm_files = list(pet_dir.iterdir())[:4]
+    for i, dcm in enumerate(dcm_files):
+        nested = orthanc_dir / f"hash{i // 2}" / f"subhash{i % 2}"
+        nested.mkdir(parents=True, exist_ok=True)
+        os.link(dcm, nested / dcm.name)
+
+    # Without --collate-resources the nested source structure is preserved in the resource dir
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert any(
+        item.is_dir() for item in resource_dir.iterdir()
+    ), "Expected nested sub-directory structure without collation"
+
+    # With --collate-resources siblings, all files are placed flat in the resource dir
+    sorted_collated_dir = tmp_path / "sorted_collated"
+    sorted_collated_dir.mkdir()
+
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_collated_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+            "--collate-resources",
+            "medimage/dicom-series",
+            "siblings",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_collated_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert all(
+        item.is_file() for item in resource_dir.iterdir()
+    ), "Expected flat structure with 'siblings' collation"
+
+
 def test_stage_invalid_ids(
     cli_runner: ty.Any,
     tmp_path: Path,
