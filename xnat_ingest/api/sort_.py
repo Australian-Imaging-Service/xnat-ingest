@@ -253,13 +253,14 @@ def sort(
 
 
 def list_session_dirs(sorted_dir: Path) -> list[Path]:
-    """List the session directories in the sorted directory, excluding any directories that start with '__'"""
+    """List the session directories in the sorted directory, excluding any directories that start with '__'.
 
+    Includes both dotted dirs (PROJ.SUBJ.VISIT) and no-dot dirs (session label only).
+    """
     return [
         p
         for p in Path(sorted_dir).iterdir()
         if p.is_dir()
         and not p.name.startswith("__")
         and not p.name.endswith("__")
-        and "." in p.name
     ]

@@ -17,6 +17,7 @@ from xnat.exceptions import XNATResponseError
 from xnat_ingest.helpers.remotes import (
     LocalSessionListing,
     SessionListing,
+    SessionOnlyListing,
     calculate_checksums,
     dir_older_than,
     get_xnat_checksums,
@@ -27,6 +28,7 @@ from xnat_ingest.helpers.remotes import (
 
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
+from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 from . import list_session_dirs
 
@@ -129,7 +131,10 @@ def upload(
             sessions = []
             for session_dir in list_session_dirs(input_dir):
                 if dir_older_than(session_dir, wait_period):
-                    sessions.append(LocalSessionListing(session_dir))
+                    if "." in session_dir.name:
+                        sessions.append(LocalSessionListing(session_dir))
+                    else:
+                        sessions.append(SessionOnlyListing(session_dir))
                 else:
                     logger.info(
                         "Skipping '%s' session as it has been modified recently",
@@ -165,6 +170,40 @@ def upload(
                         session_listing.name,
                     )
                     continue  # skip as session already exists
+
+                if isinstance(session_listing, SessionOnlyListing):
+                    xsession = session_listing.find_xnat_session(xnat_repo.connection)
+                    if xsession is None:
+                        raise RuntimeError(
+                            f"No XNAT session found with label '{session_listing.session_id}'. "
+                            "Ensure the session exists on XNAT before uploading session-only resources."
+                        )
+                    for resource_name in session_listing.resource_paths:
+                        resource = ImagingResource.load(
+                            session_listing.cache_path / resource_name,
+                            require_manifest=require_manifest,
+                            check_checksums=check_checksums,
+                        )
+                        uri = f"{xsession.uri}/resources/{resource.name}"
+                        xnat_repo.connection.put(uri)
+                        xnat_repo.connection.clearcache()
+                        xresource = xnat_repo.connection.create_object(uri)
+                        xresource.upload_dir(
+                            session_listing.cache_path / resource.name,
+                            method=UploadMethod.select_method(
+                                methods, type(resource.fileset)
+                            ),
+                        )
+                        logger.info(
+                            "Uploaded '%s' to session '%s'",
+                            resource.name,
+                            session_listing.session_id,
+                        )
+                    logger.info(
+                        "Successfully uploaded all resources to '%s'",
+                        session_listing.session_id,
+                    )
+                    continue
 
                 session = ImagingSession.load(
                     session_listing.cache_path,
