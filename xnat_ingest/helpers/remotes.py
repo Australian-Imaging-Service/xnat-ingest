@@ -121,15 +121,14 @@ class LocalSessionListing(SessionListing):
 
     @property
     def session_id(self) -> str:
-        import yaml
+        from fileformats.application import Yaml
 
         metadata_path = self.fspath / ImagingSession.METADATA_FNAME
         if metadata_path.exists():
-            with open(metadata_path) as f:
-                meta = yaml.safe_load(f) or {}
+            meta = Yaml(metadata_path).load() or {}
             override = meta.get("__session_id__")
             if override is not None:
-                return override
+                return str(override)
         return "_".join((self.subject_id, self.visit_id))
 
     @property
