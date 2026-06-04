@@ -342,21 +342,26 @@ def upload(
                     )
                 except XNATResponseError as e:
                     logger.warning(
-                        f"Failed to extract metadata from DICOMs in '{session.name}': {e}"
+                        f"Failed to extract metadata: {e}\nResponse: "
+                        f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
                     )
                 try:
                     xnat_repo.connection.put(
                         f"/data/experiments/{xsession.id}?fixScanTypes=true"
                     )
                 except XNATResponseError as e:
-                    logger.warning(f"Failed to fix scan types in '{session.name}': {e}")
+                    logger.warning(
+                        f"Failed to fix scan types in '{session.name}': {e}\nResponse: "
+                        f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
+                    )
                 try:
                     xnat_repo.connection.put(
                         f"/data/experiments/{xsession.id}?triggerPipelines=true"
                     )
                 except XNATResponseError as e:
                     logger.warning(
-                        f"Failed to trigger pipelines in '{session.name}': {e}"
+                        f"Failed to trigger pipelines in '{session.name}': {e}\nResponse: "
+                        f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
                     )
                 logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
