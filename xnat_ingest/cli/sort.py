@@ -16,6 +16,7 @@ from ..helpers.arg_types import (
     FieldSpec,
     LoggerConfig,
     MimeType,
+    OrthancLogin,
     XnatLogin,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -249,6 +250,31 @@ are uploaded to XNAT
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
+@click.option(
+    "--orthanc",
+    "orthanc",
+    nargs=4,
+    type=OrthancLogin.cli_type,
+    default=None,
+    metavar="<url> <user> <password> <storage-dir>",
+    envvar="XINGEST_ORTHANC",
+    help=(
+        "Orthanc connection details: base URL, username, password, and path to Orthanc's "
+        "StorageDirectory as mounted in pod. DICOM files are hardlinked from the storage "
+        "directory directly to the staging directory. (XINGEST_ORTHANC env. var)"
+    ),
+)
+@click.option(
+    "--orthanc-label",
+    type=str,
+    default="xnat-sorted",
+    envvar="XINGEST_ORTHANC_LABEL",
+    help=(
+        "Label applied to Orthanc studies after staging to prevent re-processing. "
+        "Can be removed via the Orthanc UI "
+        "(XINGEST_ORTHANC_LABEL env. var)"
+    ),
+)
 def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
@@ -273,6 +299,8 @@ def sort_cli(
     copy_mode: FileSet.CopyMode,
     save_metadata: bool,
     collate_resources: tuple[CollationSpec, ...],
+    orthanc: OrthancLogin | None,
+    orthanc_label: str,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -315,6 +343,8 @@ def sort_cli(
             xnat_login=xnat_login,
             save_metadata=save_metadata,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
+            orthanc=orthanc,
+            orthanc_label=orthanc_label,
         )
         if errors:
             logger.error(

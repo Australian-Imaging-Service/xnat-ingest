@@ -10,7 +10,7 @@ from filelock import SoftFileLock
 from frametree.xnat import Xnat
 from tqdm import tqdm
 
-from ..helpers.arg_types import FieldSpec, XnatLogin
+from ..helpers.arg_types import FieldSpec, OrthancLogin, XnatLogin
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -40,6 +40,8 @@ def sort(
     recursive: bool = False,
     xnat_login: XnatLogin | None = None,
     save_metadata: bool | Path = False,
+    orthanc: OrthancLogin | None = None,
+    orthanc_label: str = "xnat-sorted",
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -125,6 +127,24 @@ def sort(
     if save_metadata:
         metadata_dir = output_dir / ImagingSession.METADATA_DIR
         metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    if orthanc:
+        ImagingSession.from_orthanc(
+            orthanc_url=orthanc.url,
+            output_dir=output_dir,
+            orthanc_storage_dir=orthanc.storage_dir,
+            project_field=project_field,
+            subject_field=subject_field,
+            visit_field=visit_field,
+            scan_id_field=scan_id_field,
+            scan_desc_field=scan_desc_field,
+            project_id=project_id,
+            orthanc_user=orthanc.user,
+            orthanc_password=orthanc.password,
+            orthanc_label=orthanc_label,
+            available_projects=project_list,
+        )
+        return errors
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
