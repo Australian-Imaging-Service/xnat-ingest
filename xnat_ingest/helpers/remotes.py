@@ -442,7 +442,7 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         xscan = ScanClass(
             id=resource.scan.id,
             type=resource.scan.type,
-            series_description=resource.scan.description,
+            series_description=resource.scan.type,
             parent=xsession,
         )
     try:
