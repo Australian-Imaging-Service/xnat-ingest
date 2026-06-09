@@ -23,9 +23,9 @@ def dirs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     spec_dir = tmp_path / "spec"
     reid_dir = tmp_path / "reid"
     for d in [input_dir, output_dir, spec_dir, reid_dir]:
-        d.mkdir()
+        d.mkdir(parents=True)
     (input_dir / SESSION_NAME).mkdir()
-    (spec_dir / f"{PROJECT_ID}.json").write_text("{}")
+    (spec_dir / PROJECT_ID).mkdir()
     return input_dir, output_dir, spec_dir, reid_dir
 
 
@@ -137,7 +137,7 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
     session_names = [f"PROJ.SUBJ{i}.SESS{i}" for i in range(3)]
     for name in session_names:
         (input_dir / name).mkdir()
-    (spec_dir / "PROJ.json").write_text("{}")
+    (spec_dir / "PROJ").mkdir()
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
@@ -154,7 +154,7 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
 
 def test_deidentify_missing_spec_collected(dirs):
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    (spec_dir / f"{PROJECT_ID}.json").unlink()
+    (spec_dir / PROJECT_ID).rmdir()
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
