@@ -17,7 +17,7 @@ REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101", "PatientID": "PID001
 
 
 @pytest.fixture
-def dirs(tmp_path: Path):
+def dirs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
     spec_dir = tmp_path / "spec"
@@ -29,11 +29,11 @@ def dirs(tmp_path: Path):
     return input_dir, output_dir, spec_dir, reid_dir
 
 
-def _mock_deidentify(self, dest_dir, **kwargs):
+def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
     return self.new_empty(), dict(REID_MDATA)
 
 
-def test_deidentify_plain_json(dirs):
+def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
     input_dir, output_dir, spec_dir, reid_dir = dirs
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
@@ -50,7 +50,7 @@ def test_deidentify_plain_json(dirs):
     assert json.loads(reid_file.read_bytes()) == REID_MDATA
 
 
-def test_deidentify_encrypted(dirs):
+def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
     input_dir, output_dir, spec_dir, reid_dir = dirs
     key = Fernet.generate_key()
 
@@ -71,7 +71,7 @@ def test_deidentify_encrypted(dirs):
     assert decrypted == REID_MDATA
 
 
-def test_deidentify_wrong_key_fails(dirs):
+def test_deidentify_wrong_key_fails(dirs: tuple[Path, Path, Path, Path]):
     input_dir, output_dir, spec_dir, reid_dir = dirs
     encrypt_key = Fernet.generate_key()
     wrong_key = Fernet.generate_key()
@@ -90,7 +90,7 @@ def test_deidentify_wrong_key_fails(dirs):
         Fernet(wrong_key).decrypt(enc_file.read_bytes())
 
 
-def test_deidentify_error_collected(dirs):
+def test_deidentify_error_collected(dirs: tuple[Path, Path, Path, Path]):
     input_dir, output_dir, spec_dir, reid_dir = dirs
 
     def failing_deidentify(self, dest_dir, **kwargs):
@@ -109,7 +109,7 @@ def test_deidentify_error_collected(dirs):
     assert not list(reid_dir.iterdir())
 
 
-def test_deidentify_raise_errors(dirs):
+def test_deidentify_raise_errors(dirs: tuple[Path, Path, Path, Path]):
     input_dir, output_dir, spec_dir, reid_dir = dirs
 
     def failing_deidentify(self, dest_dir, **kwargs):
