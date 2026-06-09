@@ -170,7 +170,7 @@ def raw_frameset(tmp_path: Path) -> FrameSet:
 # )
 def test_session_select_resources(
     imaging_session: ImagingSession, dataset: FrameSet, tmp_path: Path
-):
+) -> None:
 
     assoc_dir = tmp_path / "assoc"
     assoc_dir.mkdir()
@@ -225,7 +225,9 @@ def test_session_select_resources(
     )
 
 
-def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession):
+def test_session_save_roundtrip(
+    tmp_path: Path, imaging_session: ImagingSession
+) -> None:
 
     # Save imaging sessions to a temporary directory
     saved, _ = imaging_session.save(tmp_path)
@@ -255,7 +257,7 @@ def test_session_save_roundtrip(tmp_path: Path, imaging_session: ImagingSession)
     # assert loaded_no_manifest == saved
 
 
-def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path):
+def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None:
 
     raw_data_dir = tmp_path / "raw"
     raw_data_dir.mkdir()
@@ -510,7 +512,10 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     reloaded = ImagingSession.load(session_dir)
 
     assert "radiology-doc-report" in reloaded.session_resources
-    assert reloaded.session_resources["radiology-doc-report"].checksums == saved.session_resources["radiology-doc-report"].checksums
+    assert (
+        reloaded.session_resources["radiology-doc-report"].checksums
+        == saved.session_resources["radiology-doc-report"].checksums
+    )
 
 
 def test_id_escape(tmp_path: Path) -> None:
@@ -540,3 +545,119 @@ def test_id_escape(tmp_path: Path) -> None:
 
     assert len(sessions) == 1
     assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
+
+
+# ---------------------------------------------------------------------------
+# ImagingSession.deidentify tests
+# ---------------------------------------------------------------------------
+
+DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
+
+
+def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
+    """Return a File instance with an injected deidentify() method for testing.
+
+    The instance has no ``contains_phi`` attribute so session.deidentify() routes
+    it through the spec-based branch rather than the plain copy branch.
+    """
+    f = File.sample(seed=seed)
+
+    def _deidentify(out_dir: Path, spec: ty.Any = None) -> tuple:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return f.copy(out_dir), dict(expected_reid)
+
+    f.deidentify = _deidentify
+    return f
+
+
+def test_deidentify_empty_session(tmp_path: Path) -> None:
+    session = ImagingSession(
+        project_id="PROJ", subject_id="SUBJ", visit_id="SESS", scans=[]
+    )
+    deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
+    assert deid_session.project_id == "PROJ"
+    assert deid_session.scans == {}
+    assert reid_mdata == {}
+
+
+def test_deidentify_contains_phi_copies_files(
+    imaging_session: ImagingSession, tmp_path: Path
+) -> None:
+    """MedicalImagingData (contains_phi=True) is copied as-is; no reid metadata collected."""
+    deid_session, reid_mdata = imaging_session.deidentify(tmp_path / "dest")
+
+    assert set(deid_session.scans) == set(imaging_session.scans)
+    assert reid_mdata == {}
+    for scan in deid_session.scans.values():
+        for resource in scan.resources.values():
+            for fspath in resource.fileset.fspaths:
+                assert fspath.exists()
+
+
+def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
+    """deidentify() returns reid metadata from resources that implement deidentify."""
+    f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    deid_session, reid_mdata = session.deidentify(
+        tmp_path / "dest", project_spec={File: {}}
+    )
+    assert reid_mdata == DEIDENTIFY_REID_MDATA
+    assert "1" in deid_session.scans
+
+
+def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
+    """Empty project_spec with require_matching_spec=True raises KeyError."""
+    f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    with pytest.raises(KeyError):
+        session.deidentify(
+            tmp_path / "dest", project_spec={}, require_matching_spec=True
+        )
+
+
+def test_deidentify_missing_spec_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Empty project_spec with require_matching_spec=False logs a warning and proceeds."""
+    f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
+        deid_session, reid_mdata = session.deidentify(
+            tmp_path / "dest", project_spec={}, require_matching_spec=False
+        )
+    assert "No deidentification specification" in caplog.text
+    assert "1" in deid_session.scans
+    assert reid_mdata == DEIDENTIFY_REID_MDATA
+
+
+def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> None:
+    """Reid metadata from multiple resources is collated into a single dict."""
+    f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
+    f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
+    session = ImagingSession(
+        project_id="PROJ",
+        subject_id="SUBJ",
+        visit_id="SESS",
+        scans=[
+            ImagingScan(id="1", type="scan-a", resources={"FILE": f1}),
+            ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),
+        ],
+    )
+    _, reid_mdata = session.deidentify(tmp_path / "dest", project_spec={File: {}})
+    assert reid_mdata == {"PatientName": "Alice", "DOB": "19901201"}

@@ -20,6 +20,7 @@ dependencies = [
     "tqdm >=4.64.1",
     "boto3",
     "requests",
+    "cryptography",
     "natsort",
     "paramiko",
     "xnat",
