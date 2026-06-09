@@ -610,9 +610,7 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
         visit_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
-    deid_session, reid_mdata = session.deidentify(
-        tmp_path / "dest", project_spec={File: {}}
-    )
+    deid_session, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
     assert reid_mdata == DEIDENTIFY_REID_MDATA
     assert "1" in deid_session.scans
 
@@ -627,9 +625,7 @@ def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
-        session.deidentify(
-            tmp_path / "dest", project_spec={}, require_matching_spec=True
-        )
+        session.deidentify(tmp_path / "dest", specs={}, require_matching_spec=True)
 
 
 def test_deidentify_missing_spec_warns(
@@ -645,7 +641,7 @@ def test_deidentify_missing_spec_warns(
     )
     with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
         deid_session, reid_mdata = session.deidentify(
-            tmp_path / "dest", project_spec={}, require_matching_spec=False
+            tmp_path / "dest", specs={}, require_matching_spec=False
         )
     assert "No deidentification specification" in caplog.text
     assert "1" in deid_session.scans
@@ -665,5 +661,5 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
             ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),
         ],
     )
-    _, reid_mdata = session.deidentify(tmp_path / "dest", project_spec={File: {}})
+    _, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
     assert reid_mdata == {"PatientName": "Alice", "DOB": "19901201"}
