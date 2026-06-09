@@ -87,14 +87,27 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--session-field",
+    "--session-uid-field",
     type=FieldSpec.cli_type,
     nargs=2,
     multiple=True,
     default=[["StudyInstanceUID", "generic/file-set"]],
-    envvar="XINGEST_SESSION",
+    envvar="XINGEST_SESSION_UID",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging session ID from (XINGEST_SESSION env. var)"
+        "The metadata field used to group files into the same session before IDs are extracted "
+        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
+    ),
+)
+@click.option(
+    "--session-label-field",
+    type=FieldSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=None,
+    envvar="XINGEST_SESSION_LABEL",
+    help=(
+        "The metadata field to use as the XNAT session label directly, instead of concatenating "
+        "subject and visit IDs. (XINGEST_SESSION_LABEL env. var)"
     ),
 )
 @click.option(
@@ -282,7 +295,8 @@ def sort_cli(
     project_field: list[FieldSpec],
     subject_field: list[FieldSpec],
     visit_field: list[FieldSpec],
-    session_field: list[FieldSpec] | None,
+    session_uid_field: list[FieldSpec] | None,
+    session_label_field: list[FieldSpec] | None,
     scan_id_field: list[FieldSpec],
     scan_desc_field: list[FieldSpec],
     resource_field: list[FieldSpec],
@@ -329,7 +343,8 @@ def sort_cli(
             project_field=project_field,
             subject_field=subject_field,
             visit_field=visit_field,
-            session_field=session_field,
+            session_uid_field=session_uid_field,
+            session_id_field=session_label_field or None,
             scan_id_field=scan_id_field,
             scan_desc_field=scan_desc_field,
             resource_field=resource_field,
