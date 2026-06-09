@@ -593,8 +593,8 @@ def test_stage_and_upload(
                         f"Scan {xscan.id!r} in {session_id!r} has frames={xscan.frames!r}, "
                         f"expected {expected['frames']!r} — DICOM headers may not have been extracted"
                     )
-                    assert xscan.UID == expected["UID"], (
-                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.UID!r}, "
+                    assert xscan.uid == expected["UID"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.uid!r}, "
                         f"expected {expected['UID']!r} — DICOM headers may not have been extracted"
                     )
 
