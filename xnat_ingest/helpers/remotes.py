@@ -449,7 +449,9 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                     pprint.pformat(difference),
                 )
             return None
-        logger.debug("Creating session resource %s in %s", resource_name, xsession.label)
+        logger.debug(
+            "Creating session resource %s in %s", resource_name, xsession.label
+        )
         uri = f"{xsession.uri}/resources/{resource_name}"
         xsession.xnat_session.put(uri)
         xsession.clearcache()
@@ -506,6 +508,7 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         xscan = ScanClass(
             id=resource.scan.id,
             type=resource.scan.type,
+            series_description=resource.scan.type,
             parent=xsession,
         )
     try:

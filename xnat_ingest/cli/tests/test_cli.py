@@ -543,6 +543,25 @@ def test_stage_and_upload(
         "as all the resources already exist on XNAT" in result.stdout
     ), show_cli_trace(result)
 
+    dicom_scan_headers = {
+        "1": {
+            "frames": 1,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421141748900003651",
+        },
+        "2": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421255920000017965",
+        },
+        "4": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422262922600127929",
+        },
+        "6": {
+            "frames": 0,  # PET Statistics, not a image
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422251027100000102",
+        },
+    }
+
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[project_id]
         for session_id in session_ids:
@@ -557,6 +576,26 @@ def test_stage_and_upload(
                 "602",
                 # "603",
             ]
+
+            for xscan in xsession.scans.values():
+                assert (
+                    xscan.resources
+                ), f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                for xresource in xscan.resources.values():
+                    assert xresource.files, (
+                        f"Resource {xresource.label!r} on scan {xscan.id!r} "
+                        f"in {session_id!r} has no files"
+                    )
+                if xscan.id in dicom_scan_headers:
+                    expected = dicom_scan_headers[xscan.id]
+                    assert xscan.frames == expected["frames"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has frames={xscan.frames!r}, "
+                        f"expected {expected['frames']!r} — DICOM headers may not have been extracted"
+                    )
+                    assert xscan.uid == expected["UID"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.uid!r}, "
+                        f"expected {expected['UID']!r} — DICOM headers may not have been extracted"
+                    )
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
