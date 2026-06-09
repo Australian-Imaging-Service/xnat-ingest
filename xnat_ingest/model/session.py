@@ -818,7 +818,7 @@ class ImagingSession:
                         else:
                             logger.warning(msg, *msg_vars)
                     deid_resource, reid_mdata = resource.fileset.deidentify(
-                        resource_dest_dir, spec=resource_spec
+                        out_dir=resource_dest_dir, spec=resource_spec
                     )
                     reid_series.append(reid_mdata)
                 deidentified.add_resource(
