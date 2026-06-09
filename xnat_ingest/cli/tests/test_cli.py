@@ -47,11 +47,6 @@ from xnat_ingest.model.session import ImagingSession
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
 
-DICOM_DEID_SPEC = """
-# Specification for de-identifying DICOM files for project PROJ goes here
-"""
-
-
 @click.command(
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -1328,6 +1323,10 @@ def test_deidentify_cli_dicom(
     ACCESSION = "ACC001"
     STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
 
+    DICOM_DEID_SPEC = """
+# Specification for de-identifying DICOM files for project PROJ goes here
+"""
+
     # 1. Generate DICOM test data for multiple scan types in subdirectories
     dicoms_dir = tmp_path / "dicoms"
     dicoms_dir.mkdir()
@@ -1448,7 +1447,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
     spec_dir = tmp_path / "spec"
     project_spec_dir = spec_dir / PROJECT_ID
     project_spec_dir.mkdir(parents=True)
-    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
+    (project_spec_dir / "medimage@dicom-series").write_text("Dummy spec")
 
     output_dir = tmp_path / "deidentified"
     reid_dir = tmp_path / "reid"
