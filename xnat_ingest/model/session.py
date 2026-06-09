@@ -16,7 +16,7 @@ from pathlib import Path
 
 import attrs
 import yaml
-from fileformats.core import FileSet, from_mime, from_paths
+from fileformats.core import FileSet, from_mime, from_paths, to_mime
 from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
 from fileformats.medimage import DicomCollection
@@ -607,6 +607,7 @@ class ImagingSession:
 
         class _TagsAdapter:
             """Adapter so FieldSpec.get_value() can read an Orthanc tag dict."""
+
             def __init__(self, tags: dict) -> None:
                 self.metadata = tags
 
@@ -651,7 +652,11 @@ class ImagingSession:
             study = get_json(f"/studies/{study_id}")
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
-            proj = project_id if project_id is not None else eval_field(project_field, study_tags, escape=True)
+            proj = (
+                project_id
+                if project_id is not None
+                else eval_field(project_field, study_tags, escape=True)
+            )
             if available_projects is not None and proj not in available_projects:
                 proj = "INVALID_UNRECOGNISED_" + proj
             subj = eval_field(subject_field, study_tags, escape=True)
@@ -676,7 +681,9 @@ class ImagingSession:
                 checksums: dict[str, str] = {}
                 for instance in instances:
                     instance_id = instance["ID"]
-                    sop_uid = instance["MainDicomTags"].get("SOPInstanceUID", instance_id)
+                    sop_uid = instance["MainDicomTags"].get(
+                        "SOPInstanceUID", instance_id
+                    )
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
                     if dest_path.exists():
@@ -703,7 +710,9 @@ class ImagingSession:
             if not metadata_path.exists():
                 if modalities:
                     study_tags["Modality"] = (
-                        next(iter(modalities)) if len(modalities) == 1 else list(modalities)
+                        next(iter(modalities))
+                        if len(modalities) == 1
+                        else list(modalities)
                     )
                 with open(metadata_path, "w") as f:
                     yaml.dump(study_tags, f, indent=4)
@@ -722,7 +731,7 @@ class ImagingSession:
     def deidentify(
         self,
         dest_dir: Path,
-        project_spec: dict[type[FileSet], ty.Any] = None,
+        specs: dict[type[FileSet], ty.Any] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
@@ -733,7 +742,7 @@ class ImagingSession:
         ----------
         dest_dir : Path
             the directory to save the deidentified files into
-        project_spec : dict[type[FileSet], Any], optional
+        specs : dict[type[FileSet], Any], optional
             a project-specific specification that defines how to deidentify the different
             file types within the imaging session. The keys of the project spec are
             the mime-like of the file types (see https://arcanaframework.github.io/fileformats/)
@@ -757,16 +766,14 @@ class ImagingSession:
             a mapping containing the original values of metadata fields that
             have been removed or modified
         """
-        if project_spec is None:
-            project_spec = {}
+        if specs is None:
+            specs = {}
 
         def select_spec(fileset: FileSet) -> ty.Any:
             """Select the appropriate deidentification specification for the
             resource based on its file type
             """
-            matching_specs = {
-                k: v for k, v in project_spec.items() if isinstance(resource.fileset, k)
-            }
+            matching_specs = {k: v for k, v in specs.items() if isinstance(fileset, k)}
             if not matching_specs:
                 return None
             elif len(matching_specs) > 1:
@@ -774,11 +781,8 @@ class ImagingSession:
                     if all(issubclass(k, other_k) for other_k in matching_specs):
                         return matching_specs[k]
                 raise KeyError(
-                    f"Multiple deidentification specifications found for {resource.fileset} "
-                    f"fileset in {scan.id}/{resource_name} resource and none it is ambiguous, "
-                    f" to use. Please provide a more specific project specification for "
-                    f"{type(resource.fileset).__name__} in the "
-                    f"file format hierarchy to disambiguate between the following matching "
+                    f"Multiple deidentification specifications found for '{to_mime(type(fileset))}'"
+                    f"file types. Please provide a more specific formats to map the specification"
                     f"specifications: {list(matching_specs)}"
                 )
             return next(iter(matching_specs.values()))
@@ -811,7 +815,7 @@ class ImagingSession:
                             scan.id,
                             resource_name,
                             type(resource.fileset).__name__,
-                            list(project_spec),
+                            list(specs),
                         )
                         if require_matching_spec:
                             raise KeyError(msg % msg_vars)
