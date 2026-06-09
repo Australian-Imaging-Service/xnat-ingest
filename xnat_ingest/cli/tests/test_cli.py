@@ -8,10 +8,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
+import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json, Yaml
 from fileformats.medimage import DicomSeries
-from fileformats.medimage.base import MedicalImagingData
 from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
@@ -1308,36 +1308,20 @@ def test_check_upload_checksum_fail(
     assert "CHECKSUM FAIL" in logs
 
 
-def _mock_dicom_deidentify(
-    self: MedicalImagingData,
-    spec: ty.Any = None,
-    out_dir: ty.Optional[Path] = None,
-) -> tuple:
-    """Stand-in for dicom_deidentify (not yet implemented by the colleague).
-
-    Copies the fileset to out_dir and returns a minimal reid metadata dict
-    containing the original PatientName and PatientID so the tests can assert
-    that PHI values are captured and persisted.
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    copied = self.copy(out_dir)
-    reid = {
-        "PatientName": str(self.metadata.get("PatientName", "")),
-        "PatientID": str(self.metadata.get("PatientID", "")),
-    }
-    return copied, reid
-
-
+@pytest.mark.xfail(
+    reason=(
+        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
+        "test the full deidentification pipeline once that is done"
+    ),
+)
 def test_deidentify_cli_dicom(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
     """Sort DICOM sessions then run deidentify_cli end-to-end.
 
-    MedicalImagingData.deidentify is mocked (the real implementation will be
-    provided by a colleague).  The test verifies the full pipeline: staging →
-    session loading → spec parsing → deidentification → reid persistence.
+    Verifies the full pipeline: staging → session loading → spec parsing →
+    deidentification → reid persistence.
     """
     PROJECT_ID = "TESTDEIDPROJECT"
     PATIENT_ID = "subject1"
@@ -1382,29 +1366,28 @@ def test_deidentify_cli_dicom(
     assert (staged_dir / session_name).exists(), "Session not staged"
 
     # 3. Project spec mapping DicomSeries to an empty spec dict
+
     spec_dir = tmp_path / "spec"
-    spec_dir.mkdir()
-    (spec_dir / f"{PROJECT_ID}.json").write_text(
-        '{"medimage/dicom-series": DICOM_DEID_SPEC}'
-    )
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
 
     # 4. Run deidentify_cli with the mock deidentify implementation
     output_dir = tmp_path / "deidentified"
     reid_dir = tmp_path / "reid"
     deid_log = tmp_path / "deid.log"
 
-    with patch.object(MedicalImagingData, "deidentify", _mock_dicom_deidentify):
-        result = cli_runner(
-            deidentify_cli,
-            [
-                str(staged_dir),
-                str(output_dir),
-                str(spec_dir),
-                str(reid_dir),
-                "--raise-errors",
-            ],
-            env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
-        )
+    result = cli_runner(
+        deidentify_cli,
+        [
+            str(staged_dir),
+            str(output_dir),
+            str(spec_dir),
+            str(reid_dir),
+            "--raise-errors",
+        ],
+        env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
+    )
     assert result.exit_code == 0, show_cli_trace(result)
 
     # 5. Log reports success
@@ -1430,8 +1413,14 @@ def test_deidentify_cli_dicom_encrypted_reid(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
-    """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file."""
+    """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file.
+
+    ImagingSession.deidentify is mocked so the test focuses on the encryption
+    logic rather than the deidentification implementation.
+    """
     from cryptography.fernet import Fernet
+    from unittest.mock import MagicMock
+    from xnat_ingest.model.session import ImagingSession
 
     PROJECT_ID = "TESTDEIDENCPROJECT"
     PATIENT_ID = "subject1"
@@ -1457,16 +1446,20 @@ def test_deidentify_cli_dicom_encrypted_reid(
     assert result.exit_code == 0, show_cli_trace(result)
 
     spec_dir = tmp_path / "spec"
-    spec_dir.mkdir()
-    (spec_dir / f"{PROJECT_ID}.json").write_text(
-        '{"medimage/dicom-series": DICOM_DEID_SPEC}'
-    )
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
 
     output_dir = tmp_path / "deidentified"
     reid_dir = tmp_path / "reid"
     key = Fernet.generate_key()
 
-    with patch.object(MedicalImagingData, "deidentify", _mock_dicom_deidentify):
+    def mock_deidentify(self, dest_dir, **kwargs):
+        mock_session = MagicMock()
+        mock_session.save = MagicMock()
+        return mock_session, {"PatientID": PATIENT_ID}
+
+    with patch.object(ImagingSession, "deidentify", mock_deidentify):
         result = cli_runner(
             deidentify_cli,
             [
