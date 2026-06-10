@@ -1395,7 +1395,7 @@ def test_deidentify_cli_dicom(
     reid_file = reid_dir / f"{session_name}.json"
     assert reid_file.exists(), f"Reid file missing: {reid_file}"
     reid = json.loads(reid_file.read_bytes())
-    #assert reid.get("PatientID") == PATIENT_ID
+#    assert reid.get("PatientID") == PATIENT_ID
     assert reid.get("PatientName") != ""
 
     # 7. Deidentified session directory contains files
