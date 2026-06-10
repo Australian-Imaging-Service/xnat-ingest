@@ -453,7 +453,6 @@ def test_stage_and_upload(
         [
             str(sorted_dir),
             str(associated_dir),
-            "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             (
                 str(associated_files_dir)
@@ -552,6 +551,25 @@ def test_stage_and_upload(
         "as all the resources already exist on XNAT" in result.stdout
     ), show_cli_trace(result)
 
+    dicom_scan_headers = {
+        "1": {
+            "frames": 1,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421141748900003651",
+        },
+        "2": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421255920000017965",
+        },
+        "4": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422262922600127929",
+        },
+        "6": {
+            "frames": 0,  # PET Statistics, not a image
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422251027100000102",
+        },
+    }
+
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[project_id]
         for session_id in session_ids:
@@ -566,6 +584,26 @@ def test_stage_and_upload(
                 "602",
                 # "603",
             ]
+
+            for xscan in xsession.scans.values():
+                assert (
+                    xscan.resources
+                ), f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                for xresource in xscan.resources.values():
+                    assert xresource.files, (
+                        f"Resource {xresource.label!r} on scan {xscan.id!r} "
+                        f"in {session_id!r} has no files"
+                    )
+                if xscan.id in dicom_scan_headers:
+                    expected = dicom_scan_headers[xscan.id]
+                    assert xscan.frames == expected["frames"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has frames={xscan.frames!r}, "
+                        f"expected {expected['frames']!r} — DICOM headers may not have been extracted"
+                    )
+                    assert xscan.uid == expected["UID"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.uid!r}, "
+                        f"expected {expected['UID']!r} — DICOM headers may not have been extracted"
+                    )
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
@@ -653,6 +691,81 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(sorted_dir.iterdir())
+
+
+def test_sort_orthanc_collate_resources(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    # Create DICOM files and arrange them in an Orthanc-like content-addressed nested
+    # structure, where each instance is in its own hash-addressed subdirectory
+    pet_dir = tmp_path / "pet_source"
+    get_pet_image(
+        pet_dir,
+        StudyID="TESTPROJECT",
+        PatientID="subject1",
+        AccessionNumber="acc1",
+    )
+
+    orthanc_dir = tmp_path / "orthanc"
+    dcm_files = list(pet_dir.iterdir())[:4]
+    for i, dcm in enumerate(dcm_files):
+        nested = orthanc_dir / f"hash{i // 2}" / f"subhash{i % 2}"
+        nested.mkdir(parents=True, exist_ok=True)
+        os.link(dcm, nested / dcm.name)
+
+    # Without --collate-resources the nested source structure is preserved in the resource dir
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert any(
+        item.is_dir() for item in resource_dir.iterdir()
+    ), "Expected nested sub-directory structure without collation"
+
+    # With --collate-resources siblings, all files are placed flat in the resource dir
+    sorted_collated_dir = tmp_path / "sorted_collated"
+    sorted_collated_dir.mkdir()
+
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_collated_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+            "--collate-resources",
+            "medimage/dicom-series",
+            "siblings",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_collated_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert all(
+        item.is_file() for item in resource_dir.iterdir()
+    ), "Expected flat structure with 'siblings' collation"
 
 
 def test_stage_invalid_ids(

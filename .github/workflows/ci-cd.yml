@@ -18,6 +18,15 @@ env:
 
 jobs:
   test:
+    services:
+      orthanc:
+        image: orthancteam/orthanc:latest  # or jodogne/orthanc
+        ports:
+          - 8042:8042   # REST API
+          - 4242:4242   # DICOM
+        env:
+          ORTHANC__AUTHENTICATION_ENABLED: "false"
+          ORTHANC__DICOM_AET: "ORTHANC"
     strategy:
       matrix:
         os: [ubuntu-latest]  # , windows-latest]  #, macos-latest
@@ -28,7 +37,12 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+
+    - name: Wait for Orthanc
+      run: |
+        timeout 30 bash -c \
+          'until wget -O- http://localhost:8042/system; do sleep 2; done'
 
     - name: Disable etelemetry
       run:  echo "NO_ET=TRUE" >> $GITHUB_ENV
