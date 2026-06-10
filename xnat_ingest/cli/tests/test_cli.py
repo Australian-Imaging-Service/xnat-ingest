@@ -1190,12 +1190,12 @@ def test_check_upload_checksum_fail(
     assert "CHECKSUM FAIL" in logs
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
-        "test the full deidentification pipeline once that is done"
-    ),
-)
+#@pytest.mark.xfail(
+#    reason=(
+#        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
+#        "test the full deidentification pipeline once that is done"
+#    ),
+#)
 def test_deidentify_cli_dicom(
     cli_runner: ty.Any,
     tmp_path: Path,
@@ -1211,8 +1211,14 @@ def test_deidentify_cli_dicom(
     STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
 
     DICOM_DEID_SPEC = """
-# Specification for de-identifying DICOM files for project PROJ goes here
-"""
+    # Specification for de-identifying DICOM files for project PROJ goes here. Temporary one for testing purposes is below.
+    Format DICOM
+    
+    %header
+
+    ADD PatientIdentityRemoved YES
+    REPLACE PatientName var:anon_patient_name
+    """
 
     # 1. Generate DICOM test data for multiple scan types in subdirectories
     dicoms_dir = tmp_path / "dicoms"

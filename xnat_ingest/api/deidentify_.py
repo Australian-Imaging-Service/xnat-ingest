@@ -130,6 +130,18 @@ def dicom_deidentify(
     """
     import tempfile
     import pydicom
+    
+    # Add value error when spec is none, since dicom_deid requires a spec to run.
+    if spec is None:
+        raise ValueError(
+            "No deidentification spec provided to dicom_deidentify(). "
+            "Ensure a project-specific recipe file exists in spec_dir for this project and is named using the mime-type convention (e.g. 'medimage@dicom-image')."
+        )
+    recipe_path = Path(spec)
+    if not recipe_path.exists():
+        raise FileNotFoundError(
+            f"Recipe file not found at: {recipe_path}"
+    )
 
     # Resolve output path
     if out_dir is None:
