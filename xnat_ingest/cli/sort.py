@@ -111,6 +111,19 @@ are uploaded to XNAT
     ),
 )
 @click.option(
+    "--session-label-from-date",
+    type=str,
+    nargs=2,
+    default=None,
+    metavar="<date-field> <time-field>",
+    envvar="XINGEST_SESSION_LABEL_FROM_DATE",
+    help=(
+        "Two metadata field names (date and time) to derive the XNAT session label from a "
+        "recording datetime, formatted as YYYYMMDDHHMMSS. "
+        "Mutually exclusive with --session-label-field. (XINGEST_SESSION_LABEL_FROM_DATE env. var)"
+    ),
+)
+@click.option(
     "--scan-id-field",
     type=FieldSpec.cli_type,
     nargs=2,
@@ -315,6 +328,7 @@ def sort_cli(
     collate_resources: tuple[CollationSpec, ...],
     orthanc: OrthancLogin | None,
     orthanc_label: str,
+    session_label_from_date: tuple[str, str] | None,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -360,6 +374,8 @@ def sort_cli(
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
             orthanc=orthanc,
             orthanc_label=orthanc_label,
+            session_label_date_field=session_label_from_date[0] if session_label_from_date else None,
+            session_label_time_field=session_label_from_date[1] if session_label_from_date else None,
         )
         if errors:
             logger.error(

@@ -39,6 +39,8 @@ def sort(
     wait_period: int = 0,
     avoid_clashes: bool = False,
     recursive: bool = False,
+    session_label_date_field: str | None = None,
+    session_label_time_field: str | None = None,
     xnat_login: XnatLogin | None = None,
     save_metadata: bool | Path = False,
     orthanc: OrthancLogin | None = None,
@@ -161,6 +163,8 @@ def sort(
         project_id=project_id,
         avoid_clashes=avoid_clashes,
         recursive=recursive,
+        session_label_date_field=session_label_date_field,
+        session_label_time_field=session_label_time_field,
     )
 
     logger.info("Staging sessions to '%s'", str(output_dir))

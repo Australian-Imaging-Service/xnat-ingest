@@ -32,6 +32,33 @@ from .scan import ImagingScan
 
 logger = logging.getLogger("xnat-ingest")
 
+_DATE_FORMATS = ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d", "%Y%m%d", "%m/%d/%y", "%m/%d/%Y"]
+_TIME_FORMATS = ["%H.%M.%S", "%H:%M:%S", "%H%M%S"]
+
+
+def _parse_datetime_to_str(date_str: str, time_str: str | None) -> str:
+    """Parse date (and optional time) strings using common formats, return YYYYMMDDHHMMSS or YYYYMMDD."""
+    parsed_date = None
+    for fmt in _DATE_FORMATS:
+        try:
+            parsed_date = datetime.strptime(date_str, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed_date is None:
+        raise ValueError(f"Cannot parse date '{date_str}' — tried formats: {_DATE_FORMATS}")
+
+    if time_str:
+        for fmt in _TIME_FORMATS:
+            try:
+                parsed_time = datetime.strptime(time_str, fmt)
+                return parsed_date.strftime("%Y%m%d") + parsed_time.strftime("%H%M%S")
+            except ValueError:
+                continue
+        raise ValueError(f"Cannot parse time '{time_str}' — tried formats: {_TIME_FORMATS}")
+
+    return parsed_date.strftime("%Y%m%d")
+
 
 def scans_converter(
     scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]],
@@ -297,6 +324,8 @@ class ImagingSession:
         project_id: str | None = None,
         avoid_clashes: bool = False,
         recursive: bool = False,
+        session_label_date_field: str | None = None,
+        session_label_time_field: str | None = None,
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -472,6 +501,21 @@ class ImagingSession:
                     resource, session_id_field, missing_ids_session, escape=True
                 )
                 visit_id = extracted_session_id
+            elif session_label_date_field:
+                extracted_session_id = None
+                date_str = resource.metadata.get(session_label_date_field)
+                time_str = resource.metadata.get(session_label_time_field) if session_label_time_field else None
+                if date_str:
+                    visit_id = _parse_datetime_to_str(str(date_str), str(time_str) if time_str else None)
+                else:
+                    logger.warning(
+                        "Field '%s' not found in metadata for '%s', falling back to visit_field",
+                        session_label_date_field,
+                        resource,
+                    )
+                    visit_id = FieldSpec.get_value_from_fields(
+                        resource, visit_field, missing_ids_session, escape=True
+                    )
             else:
                 extracted_session_id = None
                 visit_id = FieldSpec.get_value_from_fields(
