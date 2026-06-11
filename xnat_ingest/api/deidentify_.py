@@ -19,6 +19,8 @@ from . import list_session_dirs
 
 from dicom_deid.engine import DeidEngine
 from dicom_deid.header_reid import build_reid_document, snapshot_from_pydicom
+DEFAULT_SPEC_DIR = "__default__"
+
 
 def deidentify(
     input_dir: Path,
@@ -49,6 +51,8 @@ def deidentify(
 
     errors: list[str] = []
 
+    default_spec = load_specs(spec_dir / DEFAULT_SPEC_DIR)
+
     for session_listing in tqdm(
         sessions,
         total=num_sessions,
@@ -63,18 +67,20 @@ def deidentify(
             )
             # Get the project-specific deidentification specs for this session
             # for each file type
-            project_spec_dir = spec_dir / session.project_id
-            project_spec = {
-                from_mime(p.name.replace("@", "/")): p
-                for p in project_spec_dir.iterdir()
-                if "@" in p.name
-            }
+            specs = load_specs(spec_dir / session.project_id)
+            if specs is None:
+                if default_spec is None:
+                    raise ValueError(
+                        f"No deidentification specs found for project '{session.project_id}' "
+                        "and no default specs provided."
+                    )
+                specs = default_spec
 
             deidentified_session, reid_mdata = session.deidentify(
                 output_dir,
                 copy_mode=copy_mode,
                 avoid_clashes=avoid_clashes,
-                project_spec=project_spec,
+                specs=specs,
             )
             deidentified_session.save(output_dir / session_listing.name)
             reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
@@ -101,6 +107,34 @@ def deidentify(
                 # remove the original session directory after successful deidentification
                 session_listing.session_dir.rmdir()
     return errors
+
+
+def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] | None:
+    """Loads the deidentification specifications from the given directory,
+    returning a mapping of file-formats to their corresponding spec file paths.
+    The spec files should be named in the format '{mime_type}.json', where
+    the mime type is transformed by replacing '/' with '@' to be filesystem-friendly.
+    If the spec directory does not exist, returns None
+
+    Parameters
+    ----------
+    spec_dir : Path
+        the directory containing the deidentification specification files
+
+    Returns
+    -------
+    dict or None
+        A mapping of file-format types to their corresponding spec file paths,
+        or None if the spec directory does not exist.
+
+    """
+    if not spec_dir.exists():
+        return None
+    return {
+        from_mime(p.name.replace("@", "/")): p
+        for p in spec_dir.iterdir()
+        if "@" in p.name
+    }
 
 
 @extra_implementation(MedicalImagingData.deidentify)
