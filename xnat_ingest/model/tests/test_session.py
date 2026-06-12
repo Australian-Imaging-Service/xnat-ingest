@@ -28,7 +28,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, FieldSpec
+from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes
 
@@ -283,13 +283,13 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             SyngoMi_Vr20b_ListMode,
             SyngoMi_Vr20b_CountRate,
         ],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        project_field=[IDSpec("StudyID")],
+        subject_field=[IDSpec("PatientID")],
+        visit_field=[IDSpec("AccessionNumber")],
+        session_uid_field=[IDSpec("StudyInstanceUID")],
+        scan_id_field=[IDSpec("SeriesNumber")],
+        scan_desc_field=[IDSpec("SeriesDescription")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     staging_dir = tmp_path / "staging"
@@ -534,13 +534,13 @@ def test_id_escape(tmp_path: Path) -> None:
     sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        project_field=[IDSpec("StudyID")],
+        subject_field=[IDSpec("PatientID")],
+        visit_field=[IDSpec("AccessionNumber")],
+        session_uid_field=[IDSpec("StudyInstanceUID")],
+        scan_id_field=[IDSpec("SeriesNumber")],
+        scan_desc_field=[IDSpec("SeriesDescription")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     assert len(sessions) == 1

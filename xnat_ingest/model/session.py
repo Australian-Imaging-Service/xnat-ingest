@@ -26,7 +26,7 @@ from tqdm import tqdm
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, FieldSpec
+from ..helpers.arg_types import AssociatedFiles, IDSpec
 from .resource import ImagingResource
 from .scan import ImagingScan
 
@@ -46,7 +46,9 @@ def _parse_datetime_to_str(date_str: str, time_str: str | None) -> str:
         except ValueError:
             continue
     if parsed_date is None:
-        raise ValueError(f"Cannot parse date '{date_str}' — tried formats: {_DATE_FORMATS}")
+        raise ValueError(
+            f"Cannot parse date '{date_str}' — tried formats: {_DATE_FORMATS}"
+        )
 
     if time_str:
         for fmt in _TIME_FORMATS:
@@ -55,7 +57,9 @@ def _parse_datetime_to_str(date_str: str, time_str: str | None) -> str:
                 return parsed_date.strftime("%Y%m%d") + parsed_time.strftime("%H%M%S")
             except ValueError:
                 continue
-        raise ValueError(f"Cannot parse time '{time_str}' — tried formats: {_TIME_FORMATS}")
+        raise ValueError(
+            f"Cannot parse time '{time_str}' — tried formats: {_TIME_FORMATS}"
+        )
 
     return parsed_date.strftime("%Y%m%d")
 
@@ -313,14 +317,14 @@ class ImagingSession:
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
-        project_field: list[FieldSpec],
-        subject_field: list[FieldSpec],
-        visit_field: list[FieldSpec],
-        scan_id_field: list[FieldSpec],
-        scan_desc_field: list[FieldSpec],
-        resource_field: list[FieldSpec],
-        session_uid_field: list[FieldSpec] | None = None,
-        session_id_field: list[FieldSpec] | None = None,
+        project_field: list[IDSpec],
+        subject_field: list[IDSpec],
+        visit_field: list[IDSpec],
+        scan_id_field: list[IDSpec],
+        scan_desc_field: list[IDSpec],
+        resource_field: list[IDSpec],
+        session_uid_field: list[IDSpec] | None = None,
+        session_id_field: list[IDSpec] | None = None,
         project_id: str | None = None,
         avoid_clashes: bool = False,
         recursive: bool = False,
@@ -460,7 +464,7 @@ class ImagingSession:
             if spec is not None:
                 for field in spec:
                     if issubclass(field.datatype, DicomCollection):
-                        specific_tags.append(field.field_name)
+                        specific_tags.append(field.specifier_name)
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
@@ -481,7 +485,7 @@ class ImagingSession:
             "Sorting resources into XNAT tree structure...",
         ):
             session_uid = (
-                FieldSpec.get_value_from_fields(resource, session_uid_field)
+                IDSpec.get_values(resource, session_uid_field)
                 if session_uid_field
                 else None
             )
@@ -490,41 +494,45 @@ class ImagingSession:
             )
 
             if not explicit_project_id:
-                project_id = FieldSpec.get_value_from_fields(
+                project_id = IDSpec.get_values(
                     resource, project_field, missing_ids_session, escape=True
                 )
-            subject_id = FieldSpec.get_value_from_fields(
+            subject_id = IDSpec.get_values(
                 resource, subject_field, missing_ids_session, escape=True
             )
             if session_id_field:
-                extracted_session_id = FieldSpec.get_value_from_fields(
+                extracted_session_id = IDSpec.get_values(
                     resource, session_id_field, missing_ids_session, escape=True
                 )
                 visit_id = extracted_session_id
             elif session_label_date_field:
                 extracted_session_id = None
                 date_str = resource.metadata.get(session_label_date_field)
-                time_str = resource.metadata.get(session_label_time_field) if session_label_time_field else None
+                time_str = (
+                    resource.metadata.get(session_label_time_field)
+                    if session_label_time_field
+                    else None
+                )
                 if date_str:
-                    visit_id = _parse_datetime_to_str(str(date_str), str(time_str) if time_str else None)
+                    visit_id = _parse_datetime_to_str(
+                        str(date_str), str(time_str) if time_str else None
+                    )
                 else:
                     logger.warning(
                         "Field '%s' not found in metadata for '%s', falling back to visit_field",
                         session_label_date_field,
                         resource,
                     )
-                    visit_id = FieldSpec.get_value_from_fields(
+                    visit_id = IDSpec.get_values(
                         resource, visit_field, missing_ids_session, escape=True
                     )
             else:
                 extracted_session_id = None
-                visit_id = FieldSpec.get_value_from_fields(
+                visit_id = IDSpec.get_values(
                     resource, visit_field, missing_ids_session, escape=True
                 )
-            scan_id = FieldSpec.get_value_from_fields(
-                resource, scan_id_field, missing_ids_session
-            )
-            scan_type = FieldSpec.get_value_from_fields(
+            scan_id = IDSpec.get_values(resource, scan_id_field, missing_ids_session)
+            scan_type = IDSpec.get_values(
                 resource, scan_desc_field, missing_ids_session
             )
 
@@ -542,9 +550,7 @@ class ImagingSession:
                     else:
                         resource_label = "DICOM"  # special case
             else:
-                resource_label = FieldSpec.get_value_from_fields(
-                    resource, resource_field
-                )
+                resource_label = IDSpec.get_values(resource, resource_field)
             if session_uid is None:
                 session_uid = (project_id, subject_id, visit_id)
             try:
@@ -600,11 +606,11 @@ class ImagingSession:
         orthanc_url: str,
         output_dir: Path,
         orthanc_storage_dir: Path,
-        project_field: list[FieldSpec],
-        subject_field: list[FieldSpec],
-        visit_field: list[FieldSpec],
-        scan_id_field: list[FieldSpec],
-        scan_desc_field: list[FieldSpec],
+        project_field: list[IDSpec],
+        subject_field: list[IDSpec],
+        visit_field: list[IDSpec],
+        scan_id_field: list[IDSpec],
+        scan_desc_field: list[IDSpec],
         project_id: str | None = None,
         orthanc_user: str | None = None,
         orthanc_password: str | None = None,
@@ -655,7 +661,7 @@ class ImagingSession:
             def __init__(self, tags: dict) -> None:
                 self.metadata = tags
 
-        def eval_field(specs: list[FieldSpec], tags: dict, escape: bool = False) -> str:
+        def eval_field(specs: list[IDSpec], tags: dict, escape: bool = False) -> str:
             """Return the first FieldSpec value that resolves, or 'UNKNOWN'.
 
             Parameters
@@ -669,7 +675,7 @@ class ImagingSession:
                     val = spec.get_value(adapter)
                     if val:
                         if escape:
-                            val = FieldSpec.xnat_id_escape_re.sub("_", val)
+                            val = IDSpec.xnat_id_escape_re.sub("_", val)
                         return val
                 except Exception:
                     continue

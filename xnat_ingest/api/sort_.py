@@ -10,10 +10,9 @@ from filelock import SoftFileLock
 from frametree.xnat import Xnat
 from tqdm import tqdm
 
-from ..helpers.arg_types import FieldSpec, OrthancLogin, XnatLogin
+from ..helpers.arg_types import IDSpec, OrthancLogin, XnatLogin
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
-
 
 BUILD_NAME_DEFAULT = "__build__"
 INVALID_NAME_DEFAULT = "__invalid__"
@@ -23,14 +22,14 @@ def sort(
     input_paths: list[str],
     output_dir: Path,
     datatypes: list[FileSet],
-    project_field: list[FieldSpec],
-    subject_field: list[FieldSpec],
-    visit_field: list[FieldSpec],
-    session_uid_field: list[FieldSpec] | None,
-    scan_id_field: list[FieldSpec],
-    scan_desc_field: list[FieldSpec],
-    resource_field: list[FieldSpec],
-    session_id_field: list[FieldSpec] | None = None,
+    project_field: list[IDSpec],
+    subject_field: list[IDSpec],
+    visit_field: list[IDSpec],
+    session_uid_field: list[IDSpec] | None,
+    scan_id_field: list[IDSpec],
+    scan_desc_field: list[IDSpec],
+    resource_field: list[IDSpec],
+    session_id_field: list[IDSpec] | None = None,
     project_id: str | None = None,
     delete: bool = False,
     raise_errors: bool = False,
@@ -286,7 +285,5 @@ def list_session_dirs(sorted_dir: Path) -> list[Path]:
     return [
         p
         for p in Path(sorted_dir).iterdir()
-        if p.is_dir()
-        and not p.name.startswith("__")
-        and not p.name.endswith("__")
+        if p.is_dir() and not p.name.startswith("__") and not p.name.endswith("__")
     ]

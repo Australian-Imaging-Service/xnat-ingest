@@ -7,6 +7,7 @@ import string
 import typing as ty
 from collections import Counter
 from pathlib import Path
+from datetime import datetime
 
 import attrs
 import click.types
@@ -113,6 +114,10 @@ def to_upper(value: str) -> str:
     return value.upper()
 
 
+def to_lower(value: str) -> str:
+    return value.lower()
+
+
 @attrs.define
 class LoggerConfig(MultiCliTyped):
 
@@ -179,22 +184,63 @@ class StoreCredentials(CliTyped):
 
 
 @attrs.define
-class FieldSpec(MultiCliTyped):
+class IDSpec(MultiCliTyped):
+    """Extract an ID to sort the data with (e.g. project, subject, session, scan,...) from
+    either a metadata field or the path that the resource is saved with. If the 'type' is
+    'field' then the specifier is the name of the field, if it is 'path', the specifier
+    is a Python-style regular expression with a single matching group to select a portion
+    of the
+    """
 
-    field: str = attrs.field()
     datatype: ty.Type[FileSet] = attrs.field(
-        converter=datatype_converter, default=FileSet
+        converter=datatype_converter,
+        default=FileSet,
+        help=(
+            "The datatype to which this identifier applies, default is "
+            "FileSet, can be overridden for more specific datatypes."
+        ),
+    )
+    type: str = attrs.field(
+        choice=["field", "path"],
+        converter=to_lower,
+        help="The type of identifier to use, either a metadata field or a path component.",
+    )
+    specifier: str = attrs.field(
+        help=(
+            "The metadata field name or regular expression to extract value from a "
+            "component of the file path component to use as an identifier."
+        ),
+    )
+    formatter: str | None = attrs.field(
+        default=None,
+        converter=lambda x: None if x == "." else x,
+        help="Formatter string to use for session labels generated from dates",
     )
 
-    @property
-    def field_name(self) -> str:
-        return self.field.split("[")[0]
+    @specifier.validator
+    def _validate_specifier(self, attribute: attrs.Attribute, value: str) -> None:
+        if self.type in {"field", "datetime-field"}:
+            if not value:
+                raise ValueError(f"Specifier cannot be empty for type {self.type}")
+            if value.endswith("]") and "[" in value:
+                field_name = value.split("[")[0]
+                if not field_name:
+                    raise ValueError(f"Field name cannot be empty in specifier {value}")
+        elif self.type == "path":
+            if not value:
+                raise ValueError("Specifier cannot be empty for path type")
 
-    def get_value(
+    @property
+    def specifier_name(self) -> str:
+        if self.type == "field":
+            return self.specifier.split("[")[0]
+        return self.specifier
+
+    def get_value_from_field(
         self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
     ) -> str:
-        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.field):
-            field_name, index = match.groups()
+        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.specifier):
+            _, index = match.groups()
             if ":" in index:
                 index = slice(*(int(d) if d else None for d in index.split(":")))
             else:
@@ -202,17 +248,17 @@ class FieldSpec(MultiCliTyped):
         else:
             index = None
         try:
-            value = resource.metadata[self.field_name]
+            value = resource.metadata[self.specifier_name]
         except KeyError:
             value = ""
         if not value:
             if missing_ids is not None:
                 try:
-                    value = missing_ids[self.field_name]
+                    value = missing_ids[self.specifier_name]
                 except KeyError:
-                    value = missing_ids[self.field_name] = (
-                        "INVALID_MISSING_"
-                        + re.sub(r"[^A-Z0-9_]", "_", self.field_name.upper())
+                    value = missing_ids[self.specifier_name] = (
+                        "INVALID_NOTFOUND_"
+                        + re.sub(r"[^A-Z0-9_]", "_", self.specifier_name.upper())
                         + "_"
                         + "".join(
                             random.choices(string.ascii_letters + string.digits, k=8)
@@ -220,7 +266,7 @@ class FieldSpec(MultiCliTyped):
                     )
             else:
                 raise ImagingSessionParseError(
-                    f"Did not find '{self.field_name}' field in {resource!r}, "
+                    f"Did not find '{self.specifier_name}' field in {resource!r}, "
                     "cannot uniquely identify the resource, found:\n"
                     + "\n".join(resource.metadata)
                 )
@@ -231,25 +277,50 @@ class FieldSpec(MultiCliTyped):
         elif isinstance(value, list):
             frequency = Counter(value)
             value = frequency.most_common(1)[0][0]
-        value_str = str(value)
-        value_str = invalid_path_chars_re.sub("_", value_str)
-        return value_str
+        return value
+
+    def format_value(self, value: ty.Any):
+        if self.formatter is None:
+            formatted = value
+        elif isinstance(value, ty.Mapping):
+            formatted = self.formatter.format(**value)
+        elif isinstance(value, ty.Iterable):
+            formatted = self.formatter.format(*value)
+        elif isinstance(value, datetime):
+            formatted = value.strftime(self.formatter)
+        else:
+            raise TypeError(
+                f"Unsupported type for value to format, {value}, for "
+                f"formatter '{self.formatter}"
+            )
+        return invalid_path_chars_re.sub("_", str(formatted))
 
     xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
+    def get_value(
+        self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
+    ):
+        if self.type == "field":
+            value = self.get_value_from_field(resource, missing_ids)
+        else:
+            assert self.type == "path"
+            value = self.get_value_from_path(resource, missing_ids)
+        return self.format_value(value)
+
     @classmethod
-    def get_value_from_fields(
+    def get_values(
         cls,
         resource: ImagingResource,
-        id_fields: list["FieldSpec"],
+        id_fields: list["IDSpec"],
         missing_ids: dict[str, str] | None = None,
         escape: bool = False,
-    ) -> ty.List["FieldSpec"]:
+    ) -> ty.List["IDSpec"]:
         for id_field in id_fields:
             if isinstance(resource, id_field.datatype):
                 value = id_field.get_value(resource, missing_ids=missing_ids)
                 if escape:
                     value = cls.xnat_id_escape_re.sub("_", value)
+                logger.debug("Using %s to extract ID from %s", id_field, resource)
                 return value
         raise ValueError(
             f"No resource label field specification matches type of {resource}, "

@@ -40,7 +40,7 @@ from xnat_ingest.cli import (
 )
 from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
-from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
+from xnat_ingest.helpers.arg_types import IDSpec, XnatLogin
 from xnat_ingest.helpers.remotes import upload_file_to_s3
 from xnat_ingest.model.session import ImagingSession
 
@@ -180,7 +180,7 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
     @click.option(
         "--field",
-        type=FieldSpec.cli_type,
+        type=IDSpec.cli_type,
         nargs=2,
         multiple=True,
         default=[["ImageType[2:]", "generic/file-set"]],
@@ -191,10 +191,10 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
             "for different datatypes (use `generic/file-set` as a catch-all if required)."
         ),
     )
-    def test_cli_types(out_file: Path, field: ty.List[FieldSpec]) -> None:
+    def test_cli_types(out_file: Path, field: ty.List[IDSpec]) -> None:
         with open(out_file, "w") as f:
             for field_spec in field:
-                f.write(f"{field_spec.field},{field_spec.datatype.mime_like}\n")
+                f.write(f"{field_spec.specifier},{field_spec.datatype.mime_like}\n")
 
     out_file = tmp_path / "out.txt"
 

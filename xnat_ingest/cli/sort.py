@@ -13,7 +13,7 @@ from ..api.sort_ import sort
 from ..helpers.arg_types import (
     CollationSpec,
     CopyModeParamType,
-    FieldSpec,
+    IDSpec,
     LoggerConfig,
     MimeType,
     OrthancLogin,
@@ -54,103 +54,88 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--project-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--project",
+    type=IDSpec.cli_type,
+    nargs=4,
+    metavar="<datatype> <type> <specifier>",
     multiple=True,
-    default=[["StudyID", "generic/file-set"]],
+    default=[["medimage/dicom-collection", "field", "StudyID", "."]],
     envvar="XINGEST_PROJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT project ID from (XINGEST_PROJECT env. var)"
+        "The keyword of the metadata field to extract the XNAT project ID from "
+        "(XINGEST_PROJECT env. var)"
     ),
 )
 @click.option(
-    "--subject-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--fixed-project-id",
+    type=str,
+    default=None,
+    help=("Fix the project ID as a constant for all data matched by this command"),
+)
+@click.option(
+    "--subject",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["PatientID", "generic/file-set"]],
+    default=[["medimage/dicom-collection", "field", "PatientID", "."]],
     envvar="XINGEST_SUBJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT subject ID from (XINGEST_SUBJECT env. var)"
+        "The keyword of the metadata field to extract the XNAT subject ID from "
+        "(XINGEST_SUBJECT env. var)"
     ),
 )
 @click.option(
-    "--visit-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--visit",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["AccessionNumber", "generic/file-set"]],
+    default=[],
     envvar="XINGEST_VISIT",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging session ID from (XINGEST_VISIT env. var)"
+        "The keyword of the metadata field to extract the XNAT imaging session ID from "
+        "(XINGEST_VISIT env. var)"
     ),
 )
 @click.option(
-    "--session-uid-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--session",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["StudyInstanceUID", "generic/file-set"]],
-    envvar="XINGEST_SESSION_UID",
-    help=(
-        "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
-    ),
-)
-@click.option(
-    "--session-label-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
-    multiple=True,
-    default=None,
-    envvar="XINGEST_SESSION_LABEL",
+    default=[["medimage/dicom-collection", "field", "AccessionNumber", "."]],
+    envvar="XINGEST_SESSION",
     help=(
         "The metadata field to use as the XNAT session label directly, instead of concatenating "
-        "subject and visit IDs. (XINGEST_SESSION_LABEL env. var)"
+        "subject and visit IDs. (XINGEST_SESSION env. var)"
     ),
 )
 @click.option(
-    "--session-label-from-date",
-    type=str,
-    nargs=2,
-    default=None,
-    metavar="<date-field> <time-field>",
-    envvar="XINGEST_SESSION_LABEL_FROM_DATE",
-    help=(
-        "Two metadata field names (date and time) to derive the XNAT session label from a "
-        "recording datetime, formatted as YYYYMMDDHHMMSS. "
-        "Mutually exclusive with --session-label-field. (XINGEST_SESSION_LABEL_FROM_DATE env. var)"
-    ),
-)
-@click.option(
-    "--scan-id-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--scan-id",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["SeriesNumber", "generic/file-set"]],
+    default=[["medimage/dicom-collection", "field", "SeriesNumber", "."]],
     envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
     ),
 )
 @click.option(
-    "--scan-desc-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--scan-desc",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["SeriesDescription", "generic/file-set"]],
+    default=[["medimage/dicom-collection", "field", "SeriesDescription", "."]],
     envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
     ),
 )
 @click.option(
-    "--resource-field",
-    type=FieldSpec.cli_type,
-    nargs=2,
+    "--resource",
+    type=IDSpec.cli_type,
+    nargs=4,
     multiple=True,
-    default=[["ImageType[2:]", "generic/file-set"]],
+    default=[["medimage/dicom-collection", "field", "ImageType[2:]", "."]],
     metavar="<field> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
@@ -159,16 +144,77 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--project-id",
-    type=str,
-    default=None,
-    help=("Override the project ID read from the DICOM headers"),
+    "--session-uid",
+    type=IDSpec.cli_type,
+    nargs=4,
+    multiple=True,
+    default=[["medimage/dicom-collection", "field", "StudyInstanceUID", "."]],
+    envvar="XINGEST_SESSION_UID",
+    help=(
+        "The metadata field used to group files into the same session before IDs are extracted "
+        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
+    ),
+)
+@click.option(
+    "--loop",
+    type=int,
+    default=-1,
+    envvar="XINGEST_LOOP",
+    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+)
+@click.option(
+    "--wait-period",
+    type=int,
+    default=0,
+    envvar="XINGEST_WAIT_PERIOD",
+    help=(
+        "The number of seconds to wait since the last file modification in sessions "
+        "in the S3 bucket or source file-system directory before uploading them to "
+        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
+    ),
+)
+@click.option(
+    "--avoid-clashes/--dont-avoid-clashes",
+    default=False,
+    envvar="XINGEST_AVOID_CLASHES",
+    help=(
+        "If a resource with the same name already exists in the scan, increment the "
+        "resource name by appending _1, _2 etc. to the name until a unique name is "
+        "found (XINGEST_AVOID_CLASHES env. var)"
+    ),
+)
+@click.option(
+    "--recursive/--not-recursive",
+    type=bool,
+    default=False,
+    help=("Whether to recursively search input directories for input files"),
+)
+@click.option(
+    "--copy-mode",
+    type=CopyModeParamType(),
+    default=FileSet.CopyMode.hardlink_or_copy,
+    envvar="XINGEST_COPY_MODE",
+    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+)
+@click.option(
+    "--save-metadata/--dont-save-metadata",
+    type=bool,
+    default=False,
+    help=(
+        "Whether to save the session metadata to a JSON file in the session directory. "
+        'If True, the metadata will be saved to a file named "METADATA.json" in the session '
+        "directory and hardlinked into a sub-directory named `__metadata__` in the output directory."
+    ),
+    envvar="XINGEST_SAVE_METADATA",
 )
 @click.option(
     "--delete/--dont-delete",
     default=False,
     envvar="XINGEST_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not (XINGEST_DELETE env. var)",
+    help=(
+        "Whether to delete the session directories after they have been uploaded or "
+        "not (XINGEST_DELETE env. var)"
+    ),
 )
 @click.option(
     "--logger",
@@ -176,7 +222,7 @@ are uploaded to XNAT
     multiple=True,
     type=LoggerConfig.cli_type,
     envvar="XINGEST_LOGGERS",
-    nargs=3,
+    nargs=4,
     default=(),
     metavar="<logtype> <loglevel> <location>",
     help=(
@@ -210,57 +256,6 @@ are uploaded to XNAT
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use for login (XINGEST_XNAT_LOGIN env. var)",
     envvar="XINGEST_XNAT_LOGIN",
-)
-@click.option(
-    "--loop",
-    type=int,
-    default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
-)
-@click.option(
-    "--wait-period",
-    type=int,
-    default=0,
-    envvar="XINGEST_WAIT_PERIOD",
-    help=(
-        "The number of seconds to wait since the last file modification in sessions "
-        "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
-    ),
-)
-@click.option(
-    "--avoid-clashes/--dont-avoid-clashes",
-    default=False,
-    envvar="XINGEST_AVOID_CLASHES",
-    help=(
-        "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
-    ),
-)
-@click.option(
-    "--recursive/--not-recursive",
-    type=bool,
-    default=False,
-    help=("Whether to recursively search input directories for input files"),
-)
-@click.option(
-    "--copy-mode",
-    type=CopyModeParamType(),
-    default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
-)
-@click.option(
-    "--save-metadata/--dont-save-metadata",
-    type=bool,
-    default=False,
-    help=(
-        "Whether to save the session metadata to a JSON file in the session directory. "
-        'If True, the metadata will be saved to a file named "METADATA.json" in the session '
-        "directory and hardlinked into a sub-directory named `__metadata__` in the output directory."
-    ),
-    envvar="XINGEST_SAVE_METADATA",
 )
 @click.option(
     "--collate-resources",
@@ -305,15 +300,15 @@ def sort_cli(
     input_paths: list[str],
     staging_dir: Path,
     datatype: list[MimeType] | None,
-    project_field: list[FieldSpec],
-    subject_field: list[FieldSpec],
-    visit_field: list[FieldSpec],
-    session_uid_field: list[FieldSpec] | None,
-    session_label_field: list[FieldSpec] | None,
-    scan_id_field: list[FieldSpec],
-    scan_desc_field: list[FieldSpec],
-    resource_field: list[FieldSpec],
-    project_id: str | None,
+    project: list[IDSpec],
+    subject: list[IDSpec],
+    visit: list[IDSpec],
+    session: list[IDSpec],
+    scan_id: list[IDSpec],
+    scan_desc: list[IDSpec],
+    resource: list[IDSpec],
+    session_uid: list[IDSpec],
+    fixed_project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
@@ -354,15 +349,15 @@ def sort_cli(
             input_paths=input_paths,
             output_dir=staging_dir,
             datatypes=datatypes,
-            project_field=project_field,
-            subject_field=subject_field,
-            visit_field=visit_field,
-            session_uid_field=session_uid_field,
-            session_id_field=session_label_field or None,
-            scan_id_field=scan_id_field,
-            scan_desc_field=scan_desc_field,
-            resource_field=resource_field,
-            project_id=project_id,
+            project=project,
+            subject=subject,
+            visit=visit,
+            session=session,
+            scan_id=scan_id,
+            scan_desc=scan_desc,
+            resource=resource,
+            session_uid=session_uid,
+            fixed_project_id=fixed_project_id,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
@@ -374,8 +369,12 @@ def sort_cli(
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
             orthanc=orthanc,
             orthanc_label=orthanc_label,
-            session_label_date_field=session_label_from_date[0] if session_label_from_date else None,
-            session_label_time_field=session_label_from_date[1] if session_label_from_date else None,
+            session_label_date_field=(
+                session_label_from_date[0] if session_label_from_date else None
+            ),
+            session_label_time_field=(
+                session_label_from_date[1] if session_label_from_date else None
+            ),
         )
         if errors:
             logger.error(
