@@ -201,15 +201,24 @@ class ImagingResource:
 
     def check_checksums(self) -> None:
         calc_checksums = self.calculate_checksums()
-        assert set(self.checksums) == set(calc_checksums), "Checksum keys do not match"
         if calc_checksums != self.checksums:
-            differing = [
-                k for k in self.checksums if calc_checksums[k] != self.checksums[k]
-            ]
-            raise DifferingCheckumsException(
-                f"Checksums don't match those saved with '{self.name}' "
-                f"resource: {differing}"
-            )
+            saved_keys = set(self.checksums) 
+            calc_keys = set(calc_checksums)
+            if saved_keys != calc_keys:
+                additional = calc_keys - saved_keys
+                missing = saved_keys - calc_keys
+                raise DifferingCheckumsException(
+                    f"Checksum file paths don't match those saved with '{self.name}':\n"
+                    f"Additional paths: {additional}\nMissing paths: {missing}\n"
+                )
+            else:
+                differing = [
+                    k for k in self.checksums if calc_checksums[k] != self.checksums[k]
+                ]
+                raise DifferingCheckumsException(
+                    f"Checksums don't match those saved with '{self.name}' "
+                    f"resource: {differing}"
+                )
 
     def unlink(self) -> None:
         """Remove all files in the file-set, the object will be unusable after this"""
