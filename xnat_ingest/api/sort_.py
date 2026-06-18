@@ -22,15 +22,15 @@ def sort(
     input_paths: list[str],
     output_dir: Path,
     datatypes: list[FileSet],
-    project_field: list[IDSpec],
-    subject_field: list[IDSpec],
-    visit_field: list[IDSpec],
-    session_uid_field: list[IDSpec] | None,
-    scan_id_field: list[IDSpec],
-    scan_desc_field: list[IDSpec],
-    resource_field: list[IDSpec],
-    session_id_field: list[IDSpec] | None = None,
-    project_id: str | None = None,
+    project_id: list[IDSpec],
+    subject_id: list[IDSpec],
+    visit_id: list[IDSpec],
+    session_uid: list[IDSpec] | None,
+    scan_id: list[IDSpec],
+    scan_desc: list[IDSpec],
+    resource: list[IDSpec],
+    session_id: list[IDSpec] | None = None,
+    fixed_project_id: str | None = None,
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
@@ -38,8 +38,6 @@ def sort(
     wait_period: int = 0,
     avoid_clashes: bool = False,
     recursive: bool = False,
-    session_label_date_field: str | None = None,
-    session_label_time_field: str | None = None,
     xnat_login: XnatLogin | None = None,
     save_metadata: bool | Path = False,
     orthanc: OrthancLogin | None = None,
@@ -55,20 +53,20 @@ def sort(
         Path to the staging directory where the sorted sessions will be saved. This should be a local path.
     datatypes: list[MimeType]
         List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
-    project_field: list[FieldSpec]
+    project_id: list[FieldSpec]
         List of field specifications to use for extracting the project ID from the input files.
-    subject_field: list[FieldSpec]
+    subject_id: list[FieldSpec]
         List of field specifications to use for extracting the subject ID from the input files.
-    visit_field: list[FieldSpec]
+    visit_id: list[FieldSpec]
         List of field specifications to use for extracting the visit ID from the input files.
-    session_field: list[FieldSpec] | None
+    session_id: list[FieldSpec] | None
         List of field specifications to use for extracting the session ID from the input files. If None, the
         session ID will be generated from the subject and visit IDs.
-    scan_id_field: list[FieldSpec]
+    scan_id: list[FieldSpec]
         List of field specifications to use for extracting the scan ID from the input files.
-    scan_desc_field: list[FieldSpec]
+    scan_desc: list[FieldSpec]
         List of field specifications to use for extracting the scan description from the input files.
-    resource_field: list[FieldSpec]
+    resource: list[FieldSpec]
         List of field specifications to use for extracting the resource name from the input files.
     project_id: str | None
         If provided, this project ID will be used for all sessions instead of extracting it from the input files.
@@ -135,12 +133,12 @@ def sort(
             orthanc_url=orthanc.url,
             output_dir=output_dir,
             orthanc_storage_dir=orthanc.storage_dir,
-            project_field=project_field,
-            subject_field=subject_field,
-            visit_field=visit_field,
-            scan_id_field=scan_id_field,
-            scan_desc_field=scan_desc_field,
-            project_id=project_id,
+            project_field=project_id,
+            subject_field=subject_id,
+            visit_field=visit_id,
+            scan_id_field=scan_id,
+            scan_desc_field=scan_desc,
+            fixed_project_id=fixed_project_id,
             orthanc_user=orthanc.user,
             orthanc_password=orthanc.password,
             orthanc_label=orthanc_label,
@@ -151,19 +149,17 @@ def sort(
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
         datatypes=datatypes,
-        project_field=project_field,
-        subject_field=subject_field,
-        visit_field=visit_field,
-        session_uid_field=session_uid_field,
-        session_id_field=session_id_field,
-        scan_id_field=scan_id_field,
-        scan_desc_field=scan_desc_field,
-        resource_field=resource_field,
+        project_field=project_id,
+        subject_field=subject_id,
+        visit_field=visit_id,
+        session_uid_field=session_uid,
+        session_id_field=session_id,
+        scan_id_field=scan_id,
+        scan_desc_field=scan_desc,
+        resource_field=resource,
         project_id=project_id,
         avoid_clashes=avoid_clashes,
         recursive=recursive,
-        session_label_date_field=session_label_date_field,
-        session_label_time_field=session_label_time_field,
     )
 
     logger.info("Staging sessions to '%s'", str(output_dir))

@@ -611,7 +611,7 @@ class ImagingSession:
         visit_field: list[IDSpec],
         scan_id_field: list[IDSpec],
         scan_desc_field: list[IDSpec],
-        project_id: str | None = None,
+        fixed_project_id: str | None = None,
         orthanc_user: str | None = None,
         orthanc_password: str | None = None,
         orthanc_label: str = "xnat-sorted",
@@ -703,8 +703,8 @@ class ImagingSession:
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             proj = (
-                project_id
-                if project_id is not None
+                fixed_project_id
+                if fixed_project_id is not None
                 else eval_field(project_field, study_tags, escape=True)
             )
             if available_projects is not None and proj not in available_projects:

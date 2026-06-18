@@ -59,7 +59,7 @@ are uploaded to XNAT
     nargs=4,
     metavar="<datatype> <type> <specifier>",
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "StudyID", "."]],
+    default=[["medimage/dicom-collection", "field", "StudyID", None]],
     envvar="XINGEST_PROJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT project ID from "
@@ -77,7 +77,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "PatientID", "."]],
+    default=[["medimage/dicom-collection", "field", "PatientID", None]],
     envvar="XINGEST_SUBJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT subject ID from "
@@ -101,7 +101,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "AccessionNumber", "."]],
+    default=[["medimage/dicom-collection", "field", "AccessionNumber", None]],
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field to use as the XNAT session label directly, instead of concatenating "
@@ -113,7 +113,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesNumber", "."]],
+    default=[["medimage/dicom-collection", "field", "SeriesNumber", None]],
     envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
@@ -124,7 +124,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesDescription", "."]],
+    default=[["medimage/dicom-collection", "field", "SeriesDescription", None]],
     envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
@@ -135,7 +135,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "ImageType[2:]", "."]],
+    default=[["medimage/dicom-collection", "field", "ImageType[2:]", None]],
     metavar="<field> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
@@ -148,7 +148,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "StudyInstanceUID", "."]],
+    default=[["medimage/dicom-collection", "field", "StudyInstanceUID", None]],
     envvar="XINGEST_SESSION_UID",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
