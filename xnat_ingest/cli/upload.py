@@ -289,11 +289,44 @@ def upload_cli(
         except Exception:  # noqa: BLE001 — best-effort cleanup of a possibly dead session
             pass
 
+    def _is_auth_failure(error_messages: ty.List[str]) -> bool:
+        """Detect whether any error returned by upload() is an XNAT auth
+        failure (HTTP 401/403).
+
+        These are CONNECTION-level failures, not per-session data problems:
+        XNAT expires the held connection's server-side session (JSESSIONID)
+        after its configured timeout, after which every call on the held
+        connection returns 401 and never recovers on its own. upload()
+        catches these as per-session "skip" errors and returns them as
+        strings, so they never reach the transient-error handler below — the
+        daemon would otherwise 401 every session forever until manually
+        restarted. Detecting the signature here lets us force a reconnect.
+        """
+        signatures = ("status 401", "status 403", "Unauthorized", "Forbidden")
+        return any(
+            any(sig in msg for sig in signatures) for msg in error_messages
+        )
+
     xnat_repo = _open_repo()
     try:
         # Loop the upload process if loop is set to a positive value, otherwise just run it once
         while True:
             start_time = datetime.datetime.now()
+            # A prior reconnect attempt may have failed and left us without a
+            # connection. Re-establish before doing any work this iteration.
+            if xnat_repo is None:
+                try:
+                    xnat_repo = _open_repo()
+                except Exception as e:  # noqa: BLE001
+                    logger.error(
+                        "XNAT connection is down and reconnect failed: %s. "
+                        "Retrying after the loop interval.",
+                        e,
+                    )
+                    if loop < 0:
+                        raise
+                    time.sleep(loop)
+                    continue
             try:
                 errors = upload(
                     input_dir=staged,
@@ -319,6 +352,27 @@ def upload_cli(
                     logger.error(
                         f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
                     )
+                    # If the errors are XNAT auth failures, the held session has
+                    # expired — reconnect so the next iteration uses a fresh
+                    # session. Reactive ONLY: we must not reconnect on every
+                    # iteration, because each xnat.connect() rebuilds the xnatpy
+                    # schema model and reintroduces the ~330-380 MiB/h memory leak
+                    # the single held connection was added to avoid.
+                    if loop >= 0 and _is_auth_failure(errors):
+                        logger.warning(
+                            "Detected XNAT authentication failure (expired session). "
+                            "Re-establishing the XNAT connection before the next iteration."
+                        )
+                        _close_repo(xnat_repo)
+                        try:
+                            xnat_repo = _open_repo()
+                        except Exception as reconnect_err:  # noqa: BLE001
+                            logger.error(
+                                "Failed to re-establish XNAT connection: %s. "
+                                "Will retry on the next loop iteration.",
+                                reconnect_err,
+                            )
+                            xnat_repo = None
                 else:
                     logger.info("Upload completed successfully without errors")
             except (
