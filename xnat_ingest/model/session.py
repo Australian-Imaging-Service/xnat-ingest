@@ -604,17 +604,17 @@ class ImagingSession:
     @classmethod
     def from_orthanc(
         cls,
-        orthanc_url: str,
+        url: str,
         output_dir: Path,
-        orthanc_storage_dir: Path,
+        store_dir: Path,
         project_field: list[IDSpec],
         subject_field: list[IDSpec],
         visit_field: list[IDSpec],
         scan_id_field: list[IDSpec],
         scan_desc_field: list[IDSpec],
         fixed_project_id: str | None = None,
-        orthanc_user: str | None = None,
-        orthanc_password: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
         orthanc_label: str = "xnat-sorted",
         available_projects: list[str] | None = None,
     ) -> ty.List["ImagingSession"]:
@@ -649,10 +649,10 @@ class ImagingSession:
         list[ImagingSession]
             Staged sessions loaded from output_dir.
         """
-        auth = (orthanc_user, orthanc_password) if orthanc_user else None
+        auth = (user, password) if user else None
 
         def get_json(path: str) -> ty.Any:
-            resp = requests.get(f"{orthanc_url}{path}", auth=auth)
+            resp = requests.get(f"{url}{path}", auth=auth)
             resp.raise_for_status()
             return resp.json()
 
@@ -683,7 +683,7 @@ class ImagingSession:
             return "UNKNOWN"
 
         resp = requests.post(
-            f"{orthanc_url}/tools/find",
+            f"{url}/tools/find",
             auth=auth,
             json={
                 "Level": "Study",
@@ -694,9 +694,7 @@ class ImagingSession:
         )
         resp.raise_for_status()
         study_ids = resp.json()
-        logger.info(
-            "Found %d unstaged studies in Orthanc at '%s'", len(study_ids), orthanc_url
-        )
+        logger.info("Found %d unstaged studies in Orthanc at '%s'", len(study_ids), url)
 
         staged: list[ImagingSession] = []
         for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
@@ -749,7 +747,7 @@ class ImagingSession:
                             "Orthanc config to use hardlink sorting."
                         )
                     uuid = attachment["Uuid"]
-                    src_path = Path(orthanc_storage_dir) / uuid[0:2] / uuid[2:4] / uuid
+                    src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
                     os.link(src_path, dest_path)
                     checksums[fname] = attachment["UncompressedMD5"]
 
@@ -769,7 +767,7 @@ class ImagingSession:
                     yaml.dump(study_tags, f, indent=4)
 
             requests.put(
-                f"{orthanc_url}/studies/{study_id}/labels/{orthanc_label}", auth=auth
+                f"{url}/studies/{study_id}/labels/{orthanc_label}", auth=auth
             ).raise_for_status()
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
