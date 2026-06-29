@@ -22,6 +22,8 @@ logger = logging.getLogger("xnat-ingest")
 def datatype_converter(
     datatype_str: ty.Union[str, ty.Type[DataType]],
 ) -> ty.Type[DataType]:
+    if datatype_str == "all":
+        return FileSet
     if isinstance(datatype_str, str):
         return from_mime(datatype_str)
     return datatype_str
@@ -131,6 +133,26 @@ class LoggerConfig(MultiCliTyped):
 
 
 @attrs.define
+class SaveMetadata(MultiCliTyped):
+
+    field: str
+    level: str = attrs.field(default="session", choices=["session", "scan", "resource"])
+
+    HELP_STR = (
+        "Names of metadata fields to save in JSON files within the sorted directory. "
+        "The first arg is the name of the metadata field to save. The second arg "
+        "is the level in the directory tree to store it in "
+    )
+
+
+@attrs.define
+class PathMetadata(MultiCliTyped):
+
+    regex: str
+    datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+
+
+@attrs.define
 class UploadMethod(MultiCliTyped):
 
     method: str = attrs.field(
@@ -192,6 +214,7 @@ class IDSpec(MultiCliTyped):
     of the
     """
 
+    field: str
     datatype: ty.Type[FileSet] = attrs.field(
         converter=datatype_converter,
         default=FileSet,
@@ -200,41 +223,6 @@ class IDSpec(MultiCliTyped):
             "FileSet, can be overridden for more specific datatypes."
         ),
     )
-    type: str = attrs.field(
-        choice=["field", "path"],
-        converter=to_lower,
-        help="The type of identifier to use, either a metadata field or a path component.",
-    )
-    specifier: str = attrs.field(
-        help=(
-            "The metadata field name or regular expression to extract value from a "
-            "component of the file path component to use as an identifier."
-        ),
-    )
-    formatter: str | None = attrs.field(
-        default=None,
-        converter=lambda x: None if x == "." else x,
-        help="Formatter string to use for session labels generated from dates",
-    )
-
-    @specifier.validator
-    def _validate_specifier(self, attribute: attrs.Attribute, value: str) -> None:
-        if self.type in {"field", "datetime-field"}:
-            if not value:
-                raise ValueError(f"Specifier cannot be empty for type {self.type}")
-            if value.endswith("]") and "[" in value:
-                field_name = value.split("[")[0]
-                if not field_name:
-                    raise ValueError(f"Field name cannot be empty in specifier {value}")
-        elif self.type == "path":
-            if not value:
-                raise ValueError("Specifier cannot be empty for path type")
-
-    @property
-    def specifier_name(self) -> str:
-        if self.type == "field":
-            return self.specifier.split("[")[0]
-        return self.specifier
 
     def get_value_from_field(
         self, resource: ImagingResource, missing_ids: dict[str, str] | None = None

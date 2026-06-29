@@ -16,13 +16,14 @@ from pathlib import Path
 
 import attrs
 import yaml
+from filelock import SoftFileLock
+from tqdm import tqdm
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
 from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
 from fileformats.medimage import DicomCollection
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
-from tqdm import tqdm
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
@@ -1271,6 +1272,44 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 yaml.dump(meta, f, indent=4)
         return saved, session_dir
+
+    @classmethod
+    def move_dir(cls, src: Path, dest: Path):
+        with SoftFileLock(dest.with_suffix(".lock")):
+            if dest.exists():
+                logger.info(
+                    "Merging sorted session '%s' into existing directory '%s'",
+                    src.name,
+                    dest,
+                )
+                for scan_dir in src.iterdir():
+                    if scan_dir.is_dir():
+                        scan_dir.rename(dest / scan_dir.name)
+                exist_mdata_path = dest / cls.METADATA_FNAME
+                new_mdata_path = src / cls.METADATA_FNAME
+                if new_mdata_path.exists():
+                    if exist_mdata_path.exists():
+                        # Merge metadata files
+                        mdata = Yaml(exist_mdata_path).load()
+                        new_mdata = Yaml(new_mdata_path).load()
+                        for key in set(mdata) & set(new_mdata):
+                            if mdata[key] != new_mdata[key]:
+                                raise ValueError(
+                                    f"Conflict in metadata for key '{key}' between existing session at "
+                                    f"'{exist_mdata_path}' and new session at '{new_mdata_path}'"
+                                )
+                        mdata.update(new_mdata)
+                        Yaml(exist_mdata_path).save(mdata)
+                    else:
+                        new_mdata_path.rename(exist_mdata_path)
+                if remaining := list(src.iterdir()):
+                    raise ValueError(
+                        f"Unexpected files/directories {remaining} found in saved session directory '{src}' "
+                        f"after merging with existing session directory '{dest}'"
+                    )
+                src.rmdir()
+            else:
+                src.rename(dest)
 
     MANIFEST_FILENAME = "MANIFEST.yaml"
 
