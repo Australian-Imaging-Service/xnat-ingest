@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, SaveMetadata
+from ..helpers.arg_types import IDSpec, CacheMetadata
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -18,15 +18,18 @@ def sort(
     input_paths: list[str],
     output_dir: Path,
     datatypes: list[FileSet],
-    scan_uid: list[IDSpec],
-    session_uid: list[IDSpec] | None = None,
+    session_uid: list[IDSpec],
+    scan_id: list[IDSpec],
+    scan_desc: list[IDSpec],
+    resource: list[IDSpec],
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
     wait_period: int = 0,
-    save_metadata: ty.Sequence[SaveMetadata] = (),
+    avoid_clashes: bool = True,
     recursive: bool = False,
+    cache_metadata: ty.Sequence[CacheMetadata] = (),
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -34,7 +37,7 @@ def sort(
     ----------
     input_paths: list[str]
         List of paths to search for input files. Can be local paths or S3 paths.
-    staging_dir: Path
+    output_dir: Path
         Path to the staging directory where the sorted sessions will be saved. This should be a local path.
     datatypes: list[MimeType]
         List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
@@ -61,7 +64,7 @@ def sort(
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
-    save_metadata: list[SaveMetadata]
+    cache_metadata: list[CacheMetadata]
         Which metadata to save for different file types
     """
 
@@ -79,57 +82,25 @@ def sort(
         files_path=input_paths,
         datatypes=datatypes,
         session_uid_field=session_uid,
-        scan_uid_field=scan_uid,
+        scan_id_field=scan_id,
+        scan_desc_field=scan_desc,
+        resource_field=resource,
         recursive=recursive,
+        avoid_clashes=avoid_clashes,
     )
 
-    logger.info("Staging sessions to '%s'", str(output_dir))
-
-    for session in tqdm(sessions, f"Staging resources found in '{input_paths}'"):
-
-        if wait_period:
-            last_mod = session.last_modified()
-            if (time.time_ns() - last_mod) < wait_period * 1e9:
-                logger.info(
-                    "Skipping staging of session '%s' as it was last modified "
-                    "at %s which is less than %s seconds ago",
-                    session.name,
-                    last_mod,
-                    wait_period,
-                )
-                continue
-
-        try:
-
-            # We save the session into a temporary "pre-stage" directory first before
-            # moving them into the final "staged" directory. This is to prevent the
-            # files being transferred/deleted until the saved session is in a final state.
-            _, saved_dir = session.save(
-                build_dir,
-                copy_mode=copy_mode,
-                collation_map=collation_map,
-                save_metadata=save_metadata,
-            )
-            logger.info(
-                "Successfully sorted session '%s' to '%s'",
-                session.name,
-                str(saved_dir),
-            )
-            session_output_dir = output_dir / session.name
-            ImagingSession.move_dir(saved_dir, session_output_dir)
-            if delete:
-                session.unlink()
-        except Exception as e:
-            if not raise_errors:
-                msg = (
-                    f"Skipping '{session.name}' session due to error in sorting: \"{e}\""
-                    f"\n{traceback.format_exc()}\n\n"
-                )
-                logger.error(msg)
-                errors.append(msg)
-                continue
-            else:
-                raise
+    save_sessions_to_dir(
+        sessions,
+        f"Sorting files found in '{input_paths}' to {str(output_dir)}",
+        wait_period=wait_period,
+        build_dir=build_dir,
+        copy_mode=copy_mode,
+        output_dir=output_dir,
+        delete=delete,
+        raise_errors=raise_errors,
+        collation_map=collation_map,
+        cache_metadata=cache_metadata,
+    )
 
     return errors
 
@@ -143,8 +114,7 @@ def sort_from_orthanc(
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    wait_period: int = 0,
-    save_metadata: bool | Path = False,
+    cache_metadata: bool | Path = False,
     processed_label: str = "xnat-sorted",
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
@@ -177,7 +147,7 @@ def sort_from_orthanc(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    save_metadata: bool or Path
+    cache_metadata: bool or Path
         Whether to save the session metadata to a JSON file in the session directory. If True, the metadata will be saved to a file
         named "METADATA.json" in the session directory. If a Path, the metadata will be saved to this path. If False, the metadata
         will not be saved.
@@ -193,7 +163,7 @@ def sort_from_orthanc(
     build_dir.mkdir(parents=True, exist_ok=True)
     invalid_dir.mkdir(parents=True, exist_ok=True)
 
-    sessions = ImagingSession.from_orthanc(
+    sessions = ImagingSession.from_orthanc(  # noqa
         url=url,
         output_dir=output_dir,
         store_dir=store_dir,
@@ -202,14 +172,15 @@ def sort_from_orthanc(
         orthanc_label=processed_label,
     )
 
-    save_sessions_to_dir(
-        sessions,
-        f"Sorting resources found in Orthanc instance at '{url}' to {output_dir}",
-        wait_period=wait_period,
-        build_dir=build_dir,
-        copy_mode=copy_mode,
-        output_dir=output_dir,
-    )
+    # save_sessions_to_dir(
+    #     sessions,
+    #     f"Sorting resources found in Orthanc instance at '{url}' to {output_dir}",
+    #     build_dir=build_dir,
+    #     copy_mode=copy_mode,
+    #     output_dir=output_dir,
+    #     delete=delete,
+    #     raise_errors=raise_errors,
+    # )
 
     return errors
 
@@ -217,11 +188,11 @@ def sort_from_orthanc(
 def save_sessions_to_dir(
     sessions: list[ImagingSession],
     msg: str,
-    wait_period: int,
     build_dir,
     copy_mode: FileSet.CopyMode,
     output_dir: Path,
-    save_metadata: list[SaveMetadata],
+    wait_period: int = 0,
+    collation_map=None,
     delete: bool = False,
     raise_errors: bool = False,
 ):
@@ -232,8 +203,8 @@ def save_sessions_to_dir(
             last_mod = session.last_modified()
             if (time.time_ns() - last_mod) < wait_period * 1e9:
                 logger.info(
-                    "Skipping staging of session '%s' as it was last modified "
-                    "at %s which is less than %s seconds ago",
+                    "Skipping sorting of session '%s' as it was last modified "
+                    "at %s which is less than %s seconds ago to ensure transfer is complete. ",
                     session.name,
                     last_mod,
                     wait_period,
@@ -248,7 +219,7 @@ def save_sessions_to_dir(
             _, saved_dir = session.save(
                 build_dir,
                 copy_mode=copy_mode,
-                save_metadata=save_metadata,
+                collation_map=collation_map,
             )
             logger.info(
                 "Successfully sorted session '%s' to '%s'",
@@ -270,15 +241,3 @@ def save_sessions_to_dir(
                 continue
             else:
                 raise
-
-
-def list_session_dirs(sorted_dir: Path) -> list[Path]:
-    """List the session directories in the sorted directory, excluding any directories that start with '__'.
-
-    Includes both dotted dirs (PROJ.SUBJ.VISIT) and no-dot dirs (session label only).
-    """
-    return [
-        p
-        for p in Path(sorted_dir).iterdir()
-        if p.is_dir() and not p.name.startswith("__") and not p.name.endswith("__")
-    ]

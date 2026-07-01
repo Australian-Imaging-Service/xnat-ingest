@@ -133,7 +133,7 @@ class LoggerConfig(MultiCliTyped):
 
 
 @attrs.define
-class SaveMetadata(MultiCliTyped):
+class CacheMetadata(MultiCliTyped):
 
     field: str
     level: str = attrs.field(default="session", choices=["session", "scan", "resource"])

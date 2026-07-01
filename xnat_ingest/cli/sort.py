@@ -16,7 +16,7 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
-    SaveMetadata,
+    CacheMetadata,
     PathMetadata,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -51,15 +51,38 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--scan-uid",
+    "--scan-id",
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=(("SeriesNumber", "medimage/dicom-collection"),),
-    envvar="XINGEST_SESSION_UID",
+    default=[["medimage/dicom-collection", "field", "SeriesNumber", None]],
+    envvar="XINGEST_SCAN_ID",
     help=(
-        "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
+    ),
+)
+@click.option(
+    "--scan-desc",
+    type=IDSpec.cli_type,
+    nargs=4,
+    multiple=True,
+    default=[["medimage/dicom-collection", "field", "SeriesDescription", None]],
+    envvar="XINGEST_SCAN_DESC",
+    help=(
+        "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
+    ),
+)
+@click.option(
+    "--resource",
+    type=IDSpec.cli_type,
+    nargs=4,
+    multiple=True,
+    default=[["medimage/dicom-collection", "field", "ImageType[2:]", None]],
+    metavar="<field> <datatype>",
+    envvar="XINGEST_RESOURCE",
+    help=(
+        "The keywords of the metadata field to extract the XNAT imaging resource ID from "
+        "for different datatypes (use `generic/file-set` as a catch-all if required). (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -78,14 +101,14 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--save-metadata",
+    "--cache-metadata",
     "-m",
-    type=SaveMetadata.cli_type,
+    type=CacheMetadata.cli_type,
     metavar="<field> <level>",
     multiple=True,
     default=(),
-    envvar="XINGEST_SAVE_METADATA",
-    help=SaveMetadata.HELP_STR,
+    envvar="XINGEST_CACHE_METADATA",
+    help=CacheMetadata.HELP_STR,
 )
 @click.option(
     "--path-metadata",
@@ -192,8 +215,10 @@ def sort_cli(
     output_dir: Path,
     datatype: list[MimeType] | None,
     session_uid: list[IDSpec],
-    scan_uid: list[IDSpec],
-    save_metadata: list[SaveMetadata],
+    scan_id: list[IDSpec],
+    scan_desc: list[IDSpec],
+    resource: list[IDSpec],
+    cache_metadata: list[CacheMetadata],
     path_metadata: list[PathMetadata],
     delete: bool,
     loggers: ty.List[LoggerConfig],
@@ -230,13 +255,15 @@ def sort_cli(
             output_dir=output_dir,
             datatypes=datatypes,
             session_uid=session_uid,
-            scan_uid=scan_uid,
+            scan_id=scan_id,
+            scan_desc=scan_desc,
+            resource=resource,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             wait_period=wait_period,
             recursive=recursive,
-            save_metadata=save_metadata,
+            cache_metadata=cache_metadata,
             path_metadata=path_metadata,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
         )
@@ -293,12 +320,12 @@ PASSWORD for the Orthanc user
 @click.option(
     "--metadata",
     "-m",
-    type=SaveMetadata.cli_type,
+    type=CacheMetadata.cli_type,
     metavar="<field> <level>",
     multiple=True,
     default=(),
     envvar="XINGEST_SAVE_METADATA",
-    help=SaveMetadata.HELP_STR,
+    help=CacheMetadata.HELP_STR,
 )
 @click.option(
     "--processed-label",

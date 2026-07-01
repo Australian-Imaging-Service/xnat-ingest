@@ -17,8 +17,10 @@ if ty.TYPE_CHECKING:
     from xnat_ingest.model.session import ImagingSession
 
 
-def scan_type_converter(scan_type: str) -> str:
+def scan_type_converter(scan_type: str | None) -> str | None:
     "Ensure there aren't any special characters that aren't valid file/dir paths"
+    if scan_type is None:
+        return None
     return re.sub(r"[\"\*\/\:\<\>\?\\\|\+\,\.\;\=\[\]]+", "", scan_type)
 
 
@@ -39,18 +41,24 @@ class ImagingScan:
 
     Parameters
     ----------
-    id: str
+    id: str | None
         the ID of the scan on XNAT
-    type: str
+    type: str | None
         the scan type/description
+    resources : dict[str, ImagingResource]
+        the list of the resources associated with the scan
+    associated: AssociatedFiles, optional
+        Secondary files that are associated with the given imaging scan
+        (but may not have the necessary metadata to identify the scan itself)
     """
 
-    id: str
-    type: str = attrs.field(converter=scan_type_converter)
+    id: str | None = None
+    type: str = attrs.field(converter=scan_type_converter, default=None)
     resources: ty.Dict[str, ImagingResource] = attrs.field(
         factory=dict, converter=scan_resources_converter
     )
     associated: AssociatedFiles | None = None
+    # Back-ref to parent session
     session: "ImagingSession" = attrs.field(default=None, eq=False, repr=False)
 
     def __contains__(self, resource_name: str) -> bool:
@@ -77,7 +85,9 @@ class ImagingScan:
         scan_dir = dest_dir / f"{self.id}.{self.type}"
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
-            saved_resource = resource.save(scan_dir, copy_mode=copy_mode, collation_map=collation_map)
+            saved_resource = resource.save(
+                scan_dir, copy_mode=copy_mode, collation_map=collation_map
+            )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
         return saved

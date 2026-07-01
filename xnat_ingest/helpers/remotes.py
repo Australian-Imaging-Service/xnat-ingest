@@ -637,3 +637,15 @@ def upload_file_to_s3(file_path: Path, bucket: str, s3_key: str) -> None:
 
     s3_client = boto3.client("s3")
     s3_client.upload_file(str(file_path), bucket, s3_key)
+
+
+def list_session_dirs(sorted_dir: Path) -> list[Path]:
+    """List the session directories in the sorted directory, excluding any directories that start with '__'.
+
+    Includes both dotted dirs (PROJ.SUBJ.VISIT) and no-dot dirs (session label only).
+    """
+    return [
+        p
+        for p in Path(sorted_dir).iterdir()
+        if p.is_dir() and not p.name.startswith("__") and not p.name.endswith("__")
+    ]

@@ -11,11 +11,10 @@ from fileformats.medimage.dicom import DicomImage
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from xnat_ingest.helpers.remotes import LocalSessionListing
+from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
-from . import list_session_dirs
 
 DEFAULT_SPEC_DIR = "__default__"
 

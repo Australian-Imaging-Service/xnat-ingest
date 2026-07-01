@@ -11,13 +11,10 @@ from xnat_ingest.cli.base import base_cli
 
 from ..api.sort_ import sort
 from ..helpers.arg_types import (
-    CollationSpec,
     CopyModeParamType,
     IDSpec,
     LoggerConfig,
     MimeType,
-    OrthancLogin,
-    XnatLogin,
 )
 from ..helpers.logging import logger, set_logger_handling
 
@@ -27,31 +24,14 @@ from ..helpers.logging import logger, set_logger_handling
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
-FILES_PATH is either the path to a directory containing the files to upload, or
-a glob pattern that selects the paths directly
+INPUT_DIR is the path to the sorted scans
 
-OUTPUT_DIR is the directory that the files for each session are collated to before they
-are uploaded to XNAT
+OUTPUT_DIR is the directory that the assigned files will be written to
 """,
 )
-@click.argument("input_paths", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
+@click.argument("input_dir", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
 @click.argument(
-    "staging_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
-)
-@click.option(
-    "--datatype",
-    type=MimeType.cli_type,
-    metavar="<mime-type>",
-    multiple=True,
-    default=None,
-    envvar="XINGEST_DATATYPES",
-    help=(
-        'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
-        "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
-        "Any formats implemented in the FileFormats Python package "
-        "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
-        '"extra" are supported, see FF docs on how to add support for new formats.'
-    ),
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
 )
 @click.option(
     "--project",
@@ -59,7 +39,7 @@ are uploaded to XNAT
     nargs=4,
     metavar="<datatype> <type> <specifier>",
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "StudyID", None]],
+    default=[],
     envvar="XINGEST_PROJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT project ID from "
@@ -67,17 +47,11 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--fixed-project-id",
-    type=str,
-    default=None,
-    help=("Fix the project ID as a constant for all data matched by this command"),
-)
-@click.option(
     "--subject",
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "PatientID", None]],
+    default=[],
     envvar="XINGEST_SUBJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT subject ID from "
@@ -101,7 +75,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=4,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "AccessionNumber", None]],
+    default=[],
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field to use as the XNAT session label directly, instead of concatenating "
@@ -109,51 +83,10 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--scan-id",
-    type=IDSpec.cli_type,
-    nargs=4,
-    multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesNumber", None]],
-    envvar="XINGEST_SCAN_ID",
-    help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
-    ),
-)
-@click.option(
-    "--scan-desc",
-    type=IDSpec.cli_type,
-    nargs=4,
-    multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesDescription", None]],
-    envvar="XINGEST_SCAN_DESC",
-    help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
-    ),
-)
-@click.option(
-    "--resource",
-    type=IDSpec.cli_type,
-    nargs=4,
-    multiple=True,
-    default=[["medimage/dicom-collection", "field", "ImageType[2:]", None]],
-    metavar="<field> <datatype>",
-    envvar="XINGEST_RESOURCE",
-    help=(
-        "The keywords of the metadata field to extract the XNAT imaging resource ID from "
-        "for different datatypes (use `generic/file-set` as a catch-all if required). (XINGEST_RESOURCE env. var)"
-    ),
-)
-@click.option(
-    "--session-uid",
-    type=IDSpec.cli_type,
-    nargs=4,
-    multiple=True,
-    default=[["medimage/dicom-collection", "field", "StudyInstanceUID", None]],
-    envvar="XINGEST_SESSION_UID",
-    help=(
-        "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
-    ),
+    "--constant-project-id",
+    type=str,
+    default=None,
+    help=("Fix the project ID as a constant for all data matched by this command"),
 )
 @click.option(
     "--loop",
@@ -163,49 +96,11 @@ are uploaded to XNAT
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--wait-period",
-    type=int,
-    default=0,
-    envvar="XINGEST_WAIT_PERIOD",
-    help=(
-        "The number of seconds to wait since the last file modification in sessions "
-        "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
-    ),
-)
-@click.option(
-    "--avoid-clashes/--dont-avoid-clashes",
-    default=False,
-    envvar="XINGEST_AVOID_CLASHES",
-    help=(
-        "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is "
-        "found (XINGEST_AVOID_CLASHES env. var)"
-    ),
-)
-@click.option(
-    "--recursive/--not-recursive",
-    type=bool,
-    default=False,
-    help=("Whether to recursively search input directories for input files"),
-)
-@click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
     envvar="XINGEST_COPY_MODE",
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
-)
-@click.option(
-    "--save-metadata/--dont-save-metadata",
-    type=bool,
-    default=False,
-    help=(
-        "Whether to save the session metadata to a JSON file in the session directory. "
-        'If True, the metadata will be saved to a file named "METADATA.json" in the session '
-        "directory and hardlinked into a sub-directory named `__metadata__` in the output directory."
-    ),
-    envvar="XINGEST_SAVE_METADATA",
 )
 @click.option(
     "--delete/--dont-delete",
@@ -248,55 +143,7 @@ are uploaded to XNAT
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-@click.option(
-    "--xnat-login",
-    nargs=3,
-    type=XnatLogin.cli_type,
-    default=None,
-    metavar="<host> <user> <password>",
-    help="The XNAT server to upload to plus the user and password to use for login (XINGEST_XNAT_LOGIN env. var)",
-    envvar="XINGEST_XNAT_LOGIN",
-)
-@click.option(
-    "--collate-resources",
-    type=CollationSpec.cli_type,
-    metavar="<mime-type> <collation>",
-    nargs=2,
-    multiple=True,
-    default=(),
-    envvar="XINGEST_COLLATE_RESOURCES",
-    help=(
-        "Flatten files of the given datatype into the resource directory during sort, "
-        "regardless of source directory structure (e.g. when sorting from Orthanc). "
-        "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
-    ),
-)
-@click.option(
-    "--orthanc",
-    "orthanc",
-    nargs=4,
-    type=OrthancLogin.cli_type,
-    default=None,
-    metavar="<url> <user> <password> <storage-dir>",
-    envvar="XINGEST_ORTHANC",
-    help=(
-        "Orthanc connection details: base URL, username, password, and path to Orthanc's "
-        "StorageDirectory as mounted in pod. DICOM files are hardlinked from the storage "
-        "directory directly to the staging directory. (XINGEST_ORTHANC env. var)"
-    ),
-)
-@click.option(
-    "--orthanc-label",
-    type=str,
-    default="xnat-sorted",
-    envvar="XINGEST_ORTHANC_LABEL",
-    help=(
-        "Label applied to Orthanc studies after staging to prevent re-processing. "
-        "Can be removed via the Orthanc UI "
-        "(XINGEST_ORTHANC_LABEL env. var)"
-    ),
-)
-def sort_cli(
+def assign_cli(
     input_paths: list[str],
     staging_dir: Path,
     datatype: list[MimeType] | None,
@@ -304,26 +151,14 @@ def sort_cli(
     subject: list[IDSpec],
     visit: list[IDSpec],
     session: list[IDSpec],
-    scan_id: list[IDSpec],
-    scan_desc: list[IDSpec],
-    resource: list[IDSpec],
-    session_uid: list[IDSpec],
-    fixed_project_id: str | None,
+    constant_project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
-    xnat_login: XnatLogin,
     loop: int,
     wait_period: int,
-    avoid_clashes: bool,
-    recursive: bool,
     copy_mode: FileSet.CopyMode,
-    save_metadata: bool,
-    collate_resources: tuple[CollationSpec, ...],
-    orthanc: OrthancLogin | None,
-    orthanc_label: str,
-    session_label_from_date: tuple[str, str] | None,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -353,28 +188,11 @@ def sort_cli(
             subject=subject,
             visit=visit,
             session=session,
-            scan_id=scan_id,
-            scan_desc=scan_desc,
-            resource=resource,
-            session_uid=session_uid,
-            fixed_project_id=fixed_project_id,
+            fixed_project_id=constant_project_id,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             wait_period=wait_period,
-            avoid_clashes=avoid_clashes,
-            recursive=recursive,
-            xnat_login=xnat_login,
-            save_metadata=save_metadata,
-            collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
-            orthanc=orthanc,
-            orthanc_label=orthanc_label,
-            session_label_date_field=(
-                session_label_from_date[0] if session_label_from_date else None
-            ),
-            session_label_time_field=(
-                session_label_from_date[1] if session_label_from_date else None
-            ),
         )
         if errors:
             logger.error(
