@@ -503,6 +503,10 @@ class ImagingSession:
                 f"Both 'visit_field' ({visit_field}) and 'session_field' ({session_field}) cannot be "
                 "provided concurrently"
             )
+        if visit_field is None and session_field is None:
+            raise ValueError(
+                "At least one of 'visit_field' or 'session_field' needs to be provided"
+            )
 
         if constant_project_id is None:
             self.project_id = self.metadata[project_field]
