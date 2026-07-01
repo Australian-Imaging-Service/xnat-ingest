@@ -1089,11 +1089,7 @@ class ImagingSession:
                     check_checksums=check_checksums,
                 )
                 session.session_resources[resource.name] = resource
-        metadata_path = session_dir / cls.METADATA_FNAME
-        if metadata_path.exists():
-            raw_meta = Yaml(metadata_path).load() or {}
-            session.explicit_session_id = raw_meta.pop("__session_id__", None)
-            session._metadata = raw_meta if raw_meta else None
+        session.metadata = Metadata.load(session_dir, session)
         return session
 
     def save(
@@ -1152,18 +1148,9 @@ class ImagingSession:
         for resource in self.session_resources.values():
             saved_resource = resource.save(session_dir, copy_mode=copy_mode)
             saved.session_resources[saved_resource.name] = saved_resource
-        if cache_metadata or self.explicit_session_id is not None:
-            metadata_path = (
-                session_dir / self.METADATA_FNAME
-                if isinstance(cache_metadata, bool)
-                else cache_metadata
-            )
-            logger.debug("Saving session metadata to '%s'", metadata_path)
-            meta = dict(self.metadata) if cache_metadata and self.metadata else {}
-            if self.explicit_session_id is not None:
-                meta["__session_id__"] = self.explicit_session_id
-            with open(metadata_path, "w") as f:
-                yaml.dump(meta, f, indent=4)
+        if cache_metadata:
+            logger.debug("Saving session metadata")
+            self.metadata.save()
         return saved, session_dir
 
     @classmethod
