@@ -10,6 +10,7 @@ from fileformats.core import FileSet
 from typing_extensions import Self
 
 from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
+from ..helpers.metadata import Metadata
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -40,6 +41,7 @@ class ImagingResource:
     fileset: FileSet
     checksums: dict[str, str] = attrs.field(eq=False, repr=False)
     scan: "ImagingScan" = attrs.field(default=None, eq=False, repr=False)
+    metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
@@ -50,10 +52,6 @@ class ImagingResource:
     @property
     def datatype(self) -> ty.Type[FileSet]:
         return type(self.fileset)
-
-    @property
-    def metadata(self) -> ty.Mapping[str, ty.Any]:
-        return self.fileset.metadata  # type: ignore[no-any-return]
 
     @property
     def mime_like(self) -> str:
@@ -154,11 +152,18 @@ class ImagingResource:
                 if isinstance(self.fileset, dtype):
                     collation = coll_level
                     break
-        saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True, collation=collation)
-        saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir)
+        saved_fileset = self.fileset.copy(
+            resource_dir, mode=copy_mode, trim=True, collation=collation
+        )
+        saved_checksums = saved_fileset.hash_files(
+            crypto=hashlib.md5, relative_to=resource_dir
+        )
         manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
-        return type(self)(name=self.name, fileset=saved_fileset, checksums=saved_checksums)
+        self.metadata.save(resource_dir)
+        return type(self)(
+            name=self.name, fileset=saved_fileset, checksums=saved_checksums
+        )
 
     @classmethod
     def load(
@@ -173,7 +178,11 @@ class ImagingResource:
         from the files that were found
         """
         manifest_file = resource_dir / cls.MANIFEST_FNAME
-        fspaths = [p for p in resource_dir.rglob("*") if p.is_file() and p.name != cls.MANIFEST_FNAME]
+        fspaths = [
+            p
+            for p in resource_dir.rglob("*")
+            if p.is_file() and p.name != cls.MANIFEST_FNAME
+        ]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
             checksums = manifest["checksums"]
@@ -197,7 +206,11 @@ class ImagingResource:
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
         if checksums is not None and check_checksums:
             resource.check_checksums()
+        resource.metadata = Metadata.load(resource_dir, resource)
         return resource
+
+    def load_metadata(self) -> dict[str, ty.Any]:
+        return self.fileset.metadata
 
     def check_checksums(self) -> None:
         calc_checksums = self.calculate_checksums()

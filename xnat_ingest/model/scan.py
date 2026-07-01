@@ -8,6 +8,7 @@ from fileformats.core import FileSet
 from typing_extensions import Self
 
 from ..helpers.arg_types import AssociatedFiles
+from ..helpers.metadata import Metadata, collate_metadata
 from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")
@@ -57,6 +58,7 @@ class ImagingScan:
     resources: ty.Dict[str, ImagingResource] = attrs.field(
         factory=dict, converter=scan_resources_converter
     )
+    metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
     associated: AssociatedFiles | None = None
     # Back-ref to parent session
     session: "ImagingSession" = attrs.field(default=None, eq=False, repr=False)
@@ -74,6 +76,9 @@ class ImagingScan:
     def new_empty(self) -> Self:
         return type(self)(self.id, self.type)
 
+    def load_metadata(self):
+        return collate_metadata(r.metadata for r in self.resources.values())
+
     def save(
         self,
         dest_dir: Path,
@@ -90,6 +95,7 @@ class ImagingScan:
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
+        self.metadata.save(scan_dir)
         return saved
 
     @classmethod
@@ -107,6 +113,7 @@ class ImagingScan:
                 )
                 resource.scan = scan
                 scan.resources[resource.name] = resource
+        scan.metadata = Metadata.load(scan_dir, scan)
         return scan
 
     @property

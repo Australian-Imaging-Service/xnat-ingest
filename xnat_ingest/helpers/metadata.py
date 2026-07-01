@@ -46,7 +46,7 @@ class Metadata:
     FNAME = "__METADATA__.json"
 
 
-def collate_metadata(metadata_dicts: list[dict[str, ty.Any]]) -> dict[str, ty.Any]:
+def collate_metadata(metadata_dicts: list[Metadata]) -> dict[str, ty.Any]:
     """Collates series metadata dictionaries into a single dictionary where common
     values are stored as singletons and varying values are stored in lists"""
     all_keys = [list(d.metadata.keys()) for d in metadata_dicts if d.metadata]

@@ -27,7 +27,7 @@ from typing_extensions import Self
 
 from ..exceptions import StagingError
 from ..helpers.arg_types import AssociatedFiles, IDSpec
-from ..helpers.metadata import Metadata
+from ..helpers.metadata import Metadata, collate_metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
 
@@ -190,6 +190,9 @@ class ImagingSession:
             for r in s.resources.values()
             if not s.associated
         ]
+
+    def load_metadata(self):
+        return collate_metadata(s.metadata for s in self.scans.values())
 
     def new_empty(self) -> Self:
         """Return a new empty session with the same IDs as the current session"""
