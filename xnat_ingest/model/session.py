@@ -424,13 +424,8 @@ class ImagingSession:
                 except (KeyError, IndexError):
                     resource_label = "DICOM"
                 else:
-                    if image_type[:2] == [
-                        "DERIVED",
-                        "SECONDARY",
-                    ]:
-                        resource_label = "secondary"
-                    else:
-                        resource_label = "DICOM"  # special case
+                    resource_label = dicom_image_type_to_resource_label(image_type)
+
             else:
                 resource_label = IDSpec.get_values(fileset, resource_field)
             try:
@@ -618,7 +613,13 @@ class ImagingSession:
                 scan_id = eval_field("SeriesNumber", all_tags)
                 scan_type = eval_field("SeriesDescription", all_tags)
 
-                resource_dir = session_dir / f"{scan_id}.{scan_type}" / "DICOM"
+                if "ImageType" in all_tags:
+                    resource_label = dicom_image_type_to_resource_label(
+                        eval_field("ImageType", all_tags)
+                    )
+                else:
+                    resource_label = "DICOM"
+                resource_dir = session_dir / f"{scan_id}.{scan_type}" / resource_label
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
@@ -1254,3 +1255,16 @@ def json_serializer(obj: ty.Any) -> ty.Any:
     if isinstance(obj, Path):
         return str(obj)
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+def dicom_image_type_to_resource_label(image_type: list[str]) -> str:
+    """Maps the image type of a DICOM series to the hard-coded resource names
+    required by XNAT"""
+    if image_type[:2] == [
+        "DERIVED",
+        "SECONDARY",
+    ]:
+        resource_label = "secondary"
+    else:
+        resource_label = "DICOM"  # special case
+    return resource_label
