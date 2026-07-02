@@ -23,15 +23,33 @@ class Metadata:
         try:
             return self._dct[key]
         except KeyError:
-            if not self._read:
-                self._dct.update(self._obj.load_metadata())
+            self._ensure_read()
             try:
                 return self._dct[key]
             except KeyError:
                 raise KeyError(f"{self._obj} doesn't have metadata for key '{key}'")
 
-    def __setattr__(self, key: str, val: ty.Any) -> None:
-        self._dict[key] = val
+    def __iter__(self) -> ty.Iterator[str]:
+        return iter(self.keys())
+
+    def __len__(self) -> int:
+        self._ensure_read()
+        return len(self._dct)
+
+    def __bool__(self) -> bool:
+        return len(self) > 0
+
+    def keys(self) -> ty.KeysView[str]:
+        self._ensure_read()
+        return self._dct.keys()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.keys()
+
+    def _ensure_read(self) -> None:
+        if not self._read:
+            self._dct.update(self._obj.load_metadata())
+            self._read = True
 
     def save(self, data_dir: Path) -> None:
         with open(data_dir / self.FNAME, "w") as f:
@@ -46,27 +64,21 @@ class Metadata:
     FNAME = "__METADATA__.json"
 
 
-def collate_metadata(metadata_dicts: list[Metadata]) -> dict[str, ty.Any]:
-    """Collates series metadata dictionaries into a single dictionary where common
-    values are stored as singletons and varying values are stored in lists"""
-    all_keys = [list(d.metadata.keys()) for d in metadata_dicts if d.metadata]
-    common_keys = [
-        k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
-    ]
-    collated = {k: metadata_dicts[0].metadata[k] for k in common_keys}
-    for i, resource in enumerate(metadata_dicts[1:], start=1):
-        for key in common_keys:
-            if not resource.metadata:
-                continue
-            val = resource.metadata[key]
-            if val != collated[key]:
-                # Check whether the value is the same as the values in the previous
-                # images in the series
-                if (
-                    not isinstance(collated[key], list)
-                    or isinstance(val, list)
-                    and not isinstance(collated[key][0], list)
-                ):
-                    collated[key] = [collated[key]] * i + [val]
-                collated[key].append(val)
+def collate_metadata(metadata_dicts: ty.Iterable[Metadata]) -> dict[str, ty.Any]:
+    """Collates series metadata dictionaries into a single dictionary spanning the
+    union of all keys present across the entries. If a key resolves to a single
+    distinct value across the entries that define it, that value is stored as a
+    singleton. If it holds more than one distinct value, the per-entry values are
+    stored as a list, aligned with metadata_dicts, with None standing in for entries
+    where the key isn't present"""
+    metadata_dicts = list(metadata_dicts)
+    all_keys = set(chain(*(d.keys() for d in metadata_dicts)))
+    collated: dict[str, ty.Any] = {}
+    for key in all_keys:
+        values = [dct[key] if key in dct else None for dct in metadata_dicts]
+        distinct: list[ty.Any] = []
+        for val in values:
+            if val is not None and val not in distinct:
+                distinct.append(val)
+        collated[key] = distinct[0] if len(distinct) <= 1 else values
     return collated
