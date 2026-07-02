@@ -14,7 +14,21 @@ import click.types
 from fileformats.core import DataType, FileSet, from_mime
 
 from ..exceptions import ImagingSessionParseError
-from ..model.resource import ImagingResource
+
+if ty.TYPE_CHECKING:
+    from ..model.resource import ImagingResource
+    from ..model.scan import ImagingScan
+    from ..model.session import ImagingSession
+    from .metadata import Metadata
+
+    MetadataLike: ty.TypeAlias = ty.Union[
+        "ImagingSession",
+        "ImagingScan",
+        "ImagingResource",
+        "FileSet",
+        Metadata,
+        ty.Mapping[str, ty.Any],
+    ]
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -136,7 +150,10 @@ class LoggerConfig(MultiCliTyped):
 class CacheMetadata(MultiCliTyped):
 
     field: str
-    level: str = attrs.field(default="session", choices=["session", "scan", "resource"])
+    level: str = attrs.field(
+        default="session",
+        validator=attrs.validators.in_(["session", "scan", "resource"]),
+    )
 
     HELP_STR = (
         "Names of metadata fields to save in JSON files within the sorted directory. "
@@ -211,22 +228,57 @@ class IDSpec(MultiCliTyped):
     either a metadata field or the path that the resource is saved with. If the 'type' is
     'field' then the specifier is the name of the field, if it is 'path', the specifier
     is a Python-style regular expression with a single matching group to select a portion
-    of the
+    of the path. 'datatype' restricts the specification to resources of that type (default
+    is FileSet, i.e. any type), and 'formatter' is an optional format string (or strftime
+    format for datetime values) applied to the extracted value.
     """
 
-    field: str
+    specifier: str = attrs.field()
     datatype: ty.Type[FileSet] = attrs.field(
-        converter=datatype_converter,
-        default=FileSet,
-        help=(
-            "The datatype to which this identifier applies, default is "
-            "FileSet, can be overridden for more specific datatypes."
-        ),
+        converter=datatype_converter, default=FileSet
     )
+    # An empty string (as would be passed for an unused trailing CLI token) is treated
+    # the same as not providing a formatter at all
+    formatter: str | None = attrs.field(default=None, converter=lambda v: v or None)
 
-    def get_value_from_field(
-        self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
+    @property
+    def specifier_name(self) -> str:
+        """The plain metadata field name, with any '[index]' suffix stripped off"""
+        match = re.match(r"(\w+)\[[\-\d:]+\]$", self.specifier)
+        return match.group(1) if match else self.specifier
+
+    def get_value(
+        self,
+        metadata: MetadataLike,
+        escape: bool = True,
+        missing_ids: dict[str, str] | None = None,
     ) -> str:
+        """Get the value of the ID from the resource's metadata, applying any indexing and
+        formatting specified in the IDSpec. If the metadata field is not found, a unique
+        placeholder value will be generated and stored in the missing_ids dict if provided,
+        otherwise an exception will be raised.
+
+        Parameters
+        ----------
+        metadata: MetadataLike
+            The metadata to extract the ID from
+        escape: bool
+            If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+        missing_ids: dict[str, str] | None
+            If provided, a dict to store any generated placeholder values for missing metadata fields, keyed by the field name
+
+        Returns
+        -------
+        str
+            The extracted ID value from the resource's metadata, formatted according to the IDSpec
+
+        Raises
+        ------
+        ImagingSessionParseError
+            If the metadata field is not found and missing_ids is not provided
+        """
+        if not isinstance(metadata, ty.Mapping):
+            metadata = metadata.metadata
         if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.specifier):
             _, index = match.groups()
             if ":" in index:
@@ -236,7 +288,7 @@ class IDSpec(MultiCliTyped):
         else:
             index = None
         try:
-            value = resource.metadata[self.specifier_name]
+            value = metadata[self.specifier_name]
         except KeyError:
             value = ""
         if not value:
@@ -254,9 +306,9 @@ class IDSpec(MultiCliTyped):
                     )
             else:
                 raise ImagingSessionParseError(
-                    f"Did not find '{self.specifier_name}' field in {resource!r}, "
+                    f"Did not find '{self.specifier_name}' field in {metadata!r}, "
                     "cannot uniquely identify the resource, found:\n"
-                    + "\n".join(resource.metadata)
+                    + "\n".join(metadata)
                 )
         if index is not None:
             value = value[index]
@@ -265,6 +317,9 @@ class IDSpec(MultiCliTyped):
         elif isinstance(value, list):
             frequency = Counter(value)
             value = frequency.most_common(1)[0][0]
+        value = str(value)
+        if escape:
+            value = self.xnat_id_escape_re.sub("_", value)
         return value
 
     def format_value(self, value: ty.Any):
@@ -285,33 +340,52 @@ class IDSpec(MultiCliTyped):
 
     xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
-    def get_value(
-        self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
-    ):
-        if self.type == "field":
-            value = self.get_value_from_field(resource, missing_ids)
-        else:
-            assert self.type == "path"
-            value = self.get_value_from_path(resource, missing_ids)
-        return self.format_value(value)
-
     @classmethod
-    def get_values(
+    def get_value_from_matching_spec(
         cls,
-        resource: ImagingResource,
+        metadata: MetadataLike,
         id_fields: list["IDSpec"],
         missing_ids: dict[str, str] | None = None,
-        escape: bool = False,
-    ) -> ty.List["IDSpec"]:
+        escape: bool = True,
+    ) -> str:
+        """
+        Given a list of IDSpec objects, find the first one that matches the type of the
+        resource and use it to extract the ID value from the resource's metadata. If no
+        matching IDSpec is found, raise a TypeError.
+
+        Parameters
+        ----------
+        metadata: MetadataLike
+            The metadata mapping, or object with 'metadata' attribute, to extract the ID from
+        id_fields: list[IDSpec]
+            A list of IDSpec objects to try to match against the resource's type
+        missing_ids: dict[str, str] | None
+            If provided, a dict to store any generated placeholder values for missing metadata fields, keyed by
+            the field name
+        escape: bool
+            If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+
+        Returns
+        -------
+        str
+            The extracted ID value from the resource's metadata, formatted according to the matching IDSpec
+
+        Raises
+        ------
+        TypeError
+            If no matching IDSpec is found for the resource's type
+        ImagingSessionParseError
+            If the metadata field is not found and missing_ids is not provided
+        """
         for id_field in id_fields:
-            if isinstance(resource, id_field.datatype):
-                value = id_field.get_value(resource, missing_ids=missing_ids)
-                if escape:
-                    value = cls.xnat_id_escape_re.sub("_", value)
-                logger.debug("Using %s to extract ID from %s", id_field, resource)
+            if isinstance(metadata, id_field.datatype):
+                value = id_field.get_value(
+                    metadata, escape=escape, missing_ids=missing_ids
+                )
+                logger.debug("Using %s to extract ID from %s", id_field, metadata)
                 return value
-        raise ValueError(
-            f"No resource label field specification matches type of {resource}, "
+        raise TypeError(
+            f"No resource label field specification matches type of {metadata}, "
             f"provided {id_fields}"
         )
 

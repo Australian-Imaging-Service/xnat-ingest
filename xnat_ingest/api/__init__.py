@@ -1,13 +1,16 @@
 from .associate_ import associate
+from .assign_ import assign
 from .check_upload_ import check_upload
-from .sort_ import sort, BUILD_NAME_DEFAULT, INVALID_NAME_DEFAULT
+from .group_ import group, group_from_orthanc, BUILD_NAME_DEFAULT, INVALID_NAME_DEFAULT
 from .upload_ import upload
 from .deidentify_ import deidentify
 
 __all__ = [
     "upload",
     "check_upload",
-    "sort",
+    "group",
+    "group_from_orthanc",
+    "assign",
     "deidentify",
     "associate",
     "BUILD_NAME_DEFAULT",

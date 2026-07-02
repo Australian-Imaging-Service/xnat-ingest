@@ -10,7 +10,8 @@ from unittest.mock import patch
 import click
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
-from fileformats.application import Json, Yaml
+from fileformats.core import extra_implementation, SampleFileGenerator
+from fileformats.application import Json
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
@@ -32,17 +33,47 @@ from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
 from xnat_ingest.cli import (
+    assign_cli,
     associate_cli,
     check_upload_cli,
     deidentify_cli,
-    sort_cli,
+    group_cli,
     upload_cli,
 )
-from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from xnat_ingest.helpers.arg_types import IDSpec, XnatLogin
-from xnat_ingest.helpers.remotes import upload_file_to_s3
-from xnat_ingest.model.session import ImagingSession
+from xnat_ingest.helpers.metadata import Metadata
+from xnat_ingest.helpers.remotes import list_session_dirs, upload_file_to_s3
+
+
+@extra_implementation(MyFormat.generate_sample_data)
+def my_format_generate_sample_data(
+    mf: MyFormat,
+    generator: SampleFileGenerator,
+) -> list[Path]:
+    # Generate sample data by writing some text to the file
+    return [generator.generate(MyFormat, fill=10)]
+
+
+@extra_implementation(MyFormatGz.generate_sample_data)
+def my_format_gz_generate_sample_data(
+    mfgz: MyFormatGz,
+    generator: SampleFileGenerator,
+) -> list[Path]:
+    # Generate sample data by writing some text to the file
+    return [generator.generate(MyFormatGz, fill=10)]
+
+
+# Default field specs used to assign project/subject/visit IDs, matching what the
+# old, pre-split 'sort' command used to default to
+ASSIGN_ID_ARGS = [
+    "--project",
+    "StudyID",
+    "--subject",
+    "PatientID",
+    "--visit",
+    "AccessionNumber",
+]
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 
@@ -181,10 +212,10 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     @click.option(
         "--field",
         type=IDSpec.cli_type,
-        nargs=2,
+        nargs=3,
         multiple=True,
-        default=[["ImageType[2:]", "generic/file-set"]],
-        metavar="<field> <datatype>",
+        default=[["ImageType[2:]", "generic/file-set", None]],
+        metavar="<specifier> <datatype> <formatter>",
         envvar="XINGEST_FIELD",
         help=(
             "The keywords of the metadata field to extract the XNAT imaging resource ID from "
@@ -198,16 +229,19 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     out_file = tmp_path / "out.txt"
 
-    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+    # Patch the environment to set the XINGEST_FIELD variable using unittest.mock.
+    # Each entry provides <specifier> <datatype>, leaving the optional trailing
+    # <formatter> token to fall back to its attrs-level default (None)
 
     for val, expected in [
-        ["ImageType[2:]", ["ImageType[2:],core/file-set"]],
+        ["ImageType[2:] generic/file-set", ["ImageType[2:],core/file-set"]],
         [
             "ImageType[-1] medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             ["ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data"],
         ],
         [
-            "SeriesNumber medimage/dicom-series;UID medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
+            "SeriesNumber medimage/dicom-series;"
+            "UID medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
             [
                 "SeriesNumber,medimage/dicom-series",
                 "UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
@@ -409,13 +443,14 @@ def test_stage_and_upload(
         assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [str(d) for d in dicoms_dirs]
         + [
             str(sorted_dir),
-            "--resource-field",
+            "--resource",
             "ImageType[-1]",
-            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "medimage/dicom-collection",
+            "",
             "--recursive",
             "--additional-logger",
             "xnat",
@@ -423,11 +458,6 @@ def test_stage_and_upload(
             "fileformats",
             "--raise-errors",
             "--delete",
-            "--save-metadata",
-            "--xnat-login",
-            "http://localhost:8080",
-            "admin",
-            "admin",
         ],
         env={
             "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
@@ -441,9 +471,17 @@ def test_stage_and_upload(
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
-    mdata_path = sorted_dir / ImagingSession.METADATA_DIR / f"{session_names[0]}.yaml"
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
+    result = cli_runner(
+        assign_cli,
+        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    mdata_path = assigned_dir / session_names[0] / Metadata.FNAME
     assert mdata_path.exists(), show_cli_trace(result)
-    mdata = Yaml(mdata_path).load()  # Check that the metadata file is valid JSON
+    mdata = json.loads(mdata_path.read_bytes())
     assert mdata.get("PatientID") == "subject0", show_cli_trace(result)
 
     associated_dir = tmp_path / "associated"
@@ -451,7 +489,7 @@ def test_stage_and_upload(
     result = cli_runner(
         associate_cli,
         [
-            str(sorted_dir),
+            str(assigned_dir),
             str(associated_dir),
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             (
@@ -649,7 +687,7 @@ def test_stage_wait_period(
     get_pet_image(dicoms_path)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(dicoms_path),
             str(sorted_dir),
@@ -673,7 +711,7 @@ def test_stage_wait_period(
     time.sleep(10)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(dicoms_path),
             str(sorted_dir),
@@ -689,7 +727,7 @@ def test_stage_wait_period(
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
-    assert "Successfully staged " in logs, show_cli_trace(result)
+    assert "Successfully grouped " in logs, show_cli_trace(result)
     assert list(sorted_dir.iterdir())
 
 
@@ -719,7 +757,7 @@ def test_sort_orthanc_collate_resources(
 
     # Without --collate-resources the nested source structure is preserved in the resource dir
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(orthanc_dir),
             str(sorted_dir),
@@ -744,7 +782,7 @@ def test_sort_orthanc_collate_resources(
     sorted_collated_dir.mkdir()
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(orthanc_dir),
             str(sorted_collated_dir),
@@ -768,48 +806,46 @@ def test_sort_orthanc_collate_resources(
     ), "Expected flat structure with 'siblings' collation"
 
 
-def test_stage_invalid_ids(
+def test_assign_missing_id_field_collects_error(
     cli_runner: ty.Any,
     tmp_path: Path,
-    capsys: ty.Any,
 ) -> None:
-    # Get test image data
+    # A session that fails to group->assign (the subject ID field is missing) is
+    # collected as an error rather than crashing the whole run, and it isn't written
+    # to the output directory
 
-    sorted_dir = tmp_path / "sorted"
+    grouped_dir = tmp_path / "grouped"
+    grouped_dir.mkdir()
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
     dicoms_path = tmp_path / "dicoms"
-    if sorted_dir.exists():
-        shutil.rmtree(sorted_dir)
-    sorted_dir.mkdir()
 
-    invalid_dir = sorted_dir / INVALID_NAME_DEFAULT
-
-    stage_log_file = tmp_path / "stage-logs.log"
-    if stage_log_file.exists():
-        os.unlink(stage_log_file)
+    assign_log_file = tmp_path / "assign-logs.log"
+    if assign_log_file.exists():
+        os.unlink(assign_log_file)
 
     # Generate a test DICOM image without a patient ID
     get_pet_image(dicoms_path, PatientID="")
 
     result = cli_runner(
-        sort_cli,
-        [
-            str(dicoms_path),
-            str(sorted_dir),
-            "--subject-field",
-            "PatientID",
-            "generic/file-set",
-            "--raise-errors",
-        ],
+        group_cli,
+        [str(dicoms_path), str(grouped_dir), "--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        assign_cli,
+        [str(grouped_dir), str(assigned_dir)] + ASSIGN_ID_ARGS,
         env={
-            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+            "XINGEST_LOGGERS": f"file debug {assign_log_file};stream info stdout",
         },
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
-    logs = stage_log_file.read_text()
-    assert ".INVALID_MISSING_PATIENTID_" in logs, show_cli_trace(result)
-    assert not list_session_dirs(sorted_dir)
-    assert len(list(invalid_dir.iterdir())) == 1
+    logs = assign_log_file.read_text()
+    assert "Assign completed with 1 errors" in logs, show_cli_trace(result)
+    # The session couldn't be assigned an ID, so nothing was written to the output dir
+    assert not list(assigned_dir.iterdir())
 
 
 @mock_aws
@@ -855,10 +891,22 @@ def test_check_upload_missing_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(inputs_dir),
             str(sorted_dir),
+            "--session-uid",
+            "StudyInstanceUID",
+            "all",
+            "",
+            "--scan-id",
+            "SeriesNumber",
+            "all",
+            "",
+            "--scan-desc",
+            "SeriesDescription",
+            "all",
+            "",
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -872,8 +920,15 @@ def test_check_upload_missing_scan(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    assigned_dir = tmp_path / "assigned"
+    result = cli_runner(
+        assign_cli,
+        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
     source_dir = transfer_to_source(
-        sorted_dir,
+        assigned_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -972,7 +1027,7 @@ def test_check_upload_empty_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -989,8 +1044,15 @@ def test_check_upload_empty_scan(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    assigned_dir = tmp_path / "assigned"
+    result = cli_runner(
+        assign_cli,
+        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
     source_dir = transfer_to_source(
-        sorted_dir,
+        assigned_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -1097,7 +1159,7 @@ def test_check_upload_missing_resource(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -1114,8 +1176,15 @@ def test_check_upload_missing_resource(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    assigned_dir = tmp_path / "assigned"
+    result = cli_runner(
+        assign_cli,
+        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
     source_dir = transfer_to_source(
-        sorted_dir,
+        assigned_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -1220,7 +1289,7 @@ def test_check_upload_checksum_fail(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -1237,12 +1306,19 @@ def test_check_upload_checksum_fail(
 
     assert result.exit_code == 0, show_cli_trace(result)
 
+    assigned_dir = tmp_path / "assigned"
+    result = cli_runner(
+        assign_cli,
+        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
         upload_cli,
         [
-            str(sorted_dir),
+            str(assigned_dir),
             "--always-include",
             "testing/my-format-x",
             "--raise-errors",
@@ -1262,7 +1338,7 @@ def test_check_upload_checksum_fail(
     assert result.exit_code == 0, show_cli_trace(result)
 
     manifest_file = Json(
-        next(next(next(iter(list_session_dirs(sorted_dir))).iterdir()).iterdir())
+        next(next(next(iter(list_session_dirs(assigned_dir))).iterdir()).iterdir())
         / "MANIFEST.json"
     )
     manifest_data = manifest_file.load()
@@ -1272,7 +1348,7 @@ def test_check_upload_checksum_fail(
     manifest_file.save(manifest_data)
 
     source_dir = transfer_to_source(
-        sorted_dir,
+        assigned_dir,
         upload_source=upload_source,
         s3_bucket=s3_bucket,
         s3_prefix=project_id,
@@ -1343,12 +1419,12 @@ def test_deidentify_cli_dicom(
             StudyInstanceUID=STUDY_UID,
         )
 
-    # 2. Stage with sort_cli
+    # 2. Stage with group_cli
     staged_dir = tmp_path / "staged"
     staged_dir.mkdir()
     sort_log = tmp_path / "sort.log"
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [
             str(dicoms_dir),
             str(staged_dir),
@@ -1361,8 +1437,17 @@ def test_deidentify_cli_dicom(
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
+    # 2b. Assign project/subject/visit IDs, extracted from the DICOM metadata
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
+    result = cli_runner(
+        assign_cli,
+        [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
     session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
-    assert (staged_dir / session_name).exists(), "Session not staged"
+    assert (assigned_dir / session_name).exists(), "Session not assigned"
 
     # 3. Project spec mapping DicomSeries to an empty spec dict
 
@@ -1379,7 +1464,7 @@ def test_deidentify_cli_dicom(
     result = cli_runner(
         deidentify_cli,
         [
-            str(staged_dir),
+            str(assigned_dir),
             str(output_dir),
             str(spec_dir),
             str(reid_dir),
@@ -1439,8 +1524,16 @@ def test_deidentify_cli_dicom_encrypted_reid(
     staged_dir = tmp_path / "staged"
     staged_dir.mkdir()
     result = cli_runner(
-        sort_cli,
+        group_cli,
         [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
+    result = cli_runner(
+        assign_cli,
+        [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
@@ -1462,7 +1555,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
         result = cli_runner(
             deidentify_cli,
             [
-                str(staged_dir),
+                str(assigned_dir),
                 str(output_dir),
                 str(spec_dir),
                 str(reid_dir),

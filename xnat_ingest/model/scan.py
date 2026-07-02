@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 from typing_extensions import Self
 
 from ..helpers.arg_types import AssociatedFiles
-from ..helpers.metadata import Metadata, collate_metadata
+from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 
 logger = logging.getLogger("xnat-ingest")
@@ -76,8 +76,12 @@ class ImagingScan:
     def new_empty(self) -> Self:
         return type(self)(self.id, self.type)
 
+    @metadata.default
+    def _metadata_default(self) -> Metadata:
+        return Metadata({}, self)
+
     def load_metadata(self):
-        return collate_metadata(r.metadata for r in self.resources.values())
+        return Metadata.collate(r.metadata for r in self.resources.values())
 
     def save(
         self,
@@ -113,7 +117,8 @@ class ImagingScan:
                 )
                 resource.scan = scan
                 scan.resources[resource.name] = resource
-        scan.metadata = Metadata.load(scan_dir, scan)
+        if (scan_dir / Metadata.FNAME).exists():
+            scan.metadata = Metadata.load(scan_dir, scan)
         return scan
 
     @property

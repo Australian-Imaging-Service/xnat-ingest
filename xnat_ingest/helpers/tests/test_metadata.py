@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from xnat_ingest.helpers.metadata import Metadata, collate_metadata
+from xnat_ingest.helpers.metadata import Metadata
 
 
 class MockObj:
@@ -65,6 +65,16 @@ def test_getitem_does_not_reread_once_already_read():
     assert obj.load_calls == 0
 
 
+def test_setitem_stores_value_without_reading():
+    obj = MockObj({"a": "should-not-be-used"})
+    metadata = Metadata({}, obj)
+
+    metadata["a"] = "explicit"
+
+    assert metadata["a"] == "explicit"
+    assert obj.load_calls == 0
+
+
 # Metadata dict-like protocol (keys/__iter__/__len__/__bool__)
 
 
@@ -104,6 +114,35 @@ def test_bool_true_when_populated():
     assert metadata
 
 
+def test_get_returns_value_for_present_key():
+    obj = MockObj({})
+    metadata = Metadata({"a": 1}, obj)
+
+    assert metadata.get("a") == 1
+
+
+def test_get_returns_none_by_default_for_missing_key():
+    obj = MockObj({})
+    metadata = Metadata({}, obj)
+
+    assert metadata.get("missing") is None
+
+
+def test_get_returns_given_default_for_missing_key():
+    obj = MockObj({})
+    metadata = Metadata({}, obj)
+
+    assert metadata.get("missing", "fallback") == "fallback"
+
+
+def test_get_lazily_reads_missing_key_from_object():
+    obj = MockObj({"b": 2})
+    metadata = Metadata({}, obj)
+
+    assert metadata.get("b") == 2
+    assert obj.load_calls == 1
+
+
 # Metadata.save / Metadata.load
 
 
@@ -128,7 +167,7 @@ def test_save_writes_to_expected_filename(tmp_path: Path):
     assert (tmp_path / Metadata.FNAME).exists()
 
 
-# collate_metadata
+# Metadata.collate
 
 
 def test_collate_metadata_common_values_are_singletons():
@@ -138,7 +177,7 @@ def test_collate_metadata_common_values_are_singletons():
         Metadata({"Modality": "MR", "SeriesNumber": 2}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["Modality"] == "MR"
 
@@ -151,7 +190,7 @@ def test_collate_metadata_differing_values_become_lists():
         Metadata({"SeriesNumber": 3}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["SeriesNumber"] == [1, 2, 3]
 
@@ -164,7 +203,7 @@ def test_collate_metadata_only_diverges_after_common_prefix():
         Metadata({"SeriesNumber": 2}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["SeriesNumber"] == [1, 1, 2]
 
@@ -176,7 +215,7 @@ def test_collate_metadata_spans_union_of_keys():
         Metadata({"a": 1}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     # "b" is missing from the second entry, but since it only ever takes a single
     # distinct (non-None) value, it collapses to a singleton rather than a series
@@ -191,7 +230,7 @@ def test_collate_metadata_empty_metadata_entry_treated_as_missing():
         Metadata({"a": 1}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated == {"a": 1}
 
@@ -204,7 +243,7 @@ def test_collate_metadata_preserves_none_placeholder_within_a_series():
         Metadata({"x": "B"}, obj, True),
     ]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["x"] == ["A", None, "B"]
 
@@ -213,7 +252,7 @@ def test_collate_metadata_accepts_a_generator():
     obj = MockObj({})
     metadata_dicts = (Metadata({"a": v}, obj, True) for v in (1, 2))
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["a"] == [1, 2]
 
@@ -223,7 +262,7 @@ def test_collate_metadata_lazily_reads_unread_entries():
     obj2 = MockObj({"a": 2})
     metadata_dicts = [Metadata({}, obj1), Metadata({}, obj2)]
 
-    collated = collate_metadata(metadata_dicts)
+    collated = Metadata.collate(metadata_dicts)
 
     assert collated["a"] == [1, 2]
     assert obj1.load_calls == 1
@@ -231,4 +270,16 @@ def test_collate_metadata_lazily_reads_unread_entries():
 
 
 def test_collate_metadata_empty_input_returns_empty_dict():
-    assert collate_metadata([]) == {}
+    assert Metadata.collate([]) == {}
+
+
+def test_collate_metadata_key_with_only_none_values_stays_none():
+    obj = MockObj({})
+    metadata_dicts = [
+        Metadata({"x": None}, obj, True),
+        Metadata({"x": None}, obj, True),
+    ]
+
+    collated = Metadata.collate(metadata_dicts)
+
+    assert collated["x"] is None

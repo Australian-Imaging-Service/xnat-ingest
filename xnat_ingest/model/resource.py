@@ -49,6 +49,10 @@ class ImagingResource:
             crypto=hashlib.md5, relative_to=self.fileset.parent
         )
 
+    @metadata.default
+    def _metadata_default(self) -> Metadata:
+        return Metadata({}, self)
+
     @property
     def datatype(self) -> ty.Type[FileSet]:
         return type(self.fileset)
@@ -181,7 +185,7 @@ class ImagingResource:
         fspaths = [
             p
             for p in resource_dir.rglob("*")
-            if p.is_file() and p.name != cls.MANIFEST_FNAME
+            if p.is_file() and p.name not in (cls.MANIFEST_FNAME, Metadata.FNAME)
         ]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
@@ -206,7 +210,8 @@ class ImagingResource:
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
         if checksums is not None and check_checksums:
             resource.check_checksums()
-        resource.metadata = Metadata.load(resource_dir, resource)
+        if (resource_dir / Metadata.FNAME).exists():
+            resource.metadata = Metadata.load(resource_dir, resource)
         return resource
 
     def load_metadata(self) -> dict[str, ty.Any]:

@@ -9,7 +9,7 @@ from fileformats.medimage import DicomSeries
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.sort_ import sort, sort_from_orthanc
+from ..api.group_ import group, group_from_orthanc
 from ..helpers.arg_types import (
     CollationSpec,
     CopyModeParamType,
@@ -23,8 +23,8 @@ from ..helpers.logging import logger, set_logger_handling
 
 
 @base_cli.command(
-    name="sort",
-    help="""Sorts images found in the input paths into separate resources, sorted into
+    name="group",
+    help="""Groups images found in the input paths into separate resources, grouped into
 scans and acquisition sessions
 
 INPUT_PATHS are either paths to directories containing the files to upload, or
@@ -41,9 +41,9 @@ are uploaded to XNAT
 @click.option(
     "--session-uid",
     type=IDSpec.cli_type,
-    nargs=4,
+    nargs=3,
     multiple=True,
-    default=(("StudyInstanceUID", "medimage/dicom-collection"),),
+    default=(("StudyInstanceUID", "medimage/dicom-collection", None),),
     envvar="XINGEST_SESSION_UID",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
@@ -53,9 +53,9 @@ are uploaded to XNAT
 @click.option(
     "--scan-id",
     type=IDSpec.cli_type,
-    nargs=4,
+    nargs=3,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesNumber", None]],
+    default=[["SeriesNumber", "medimage/dicom-collection", None]],
     envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
@@ -64,9 +64,9 @@ are uploaded to XNAT
 @click.option(
     "--scan-desc",
     type=IDSpec.cli_type,
-    nargs=4,
+    nargs=3,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "SeriesDescription", None]],
+    default=[["SeriesDescription", "medimage/dicom-collection", None]],
     envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
@@ -75,10 +75,10 @@ are uploaded to XNAT
 @click.option(
     "--resource",
     type=IDSpec.cli_type,
-    nargs=4,
+    nargs=3,
     multiple=True,
-    default=[["medimage/dicom-collection", "field", "ImageType[2:]", None]],
-    metavar="<field> <datatype>",
+    default=[["ImageType[2:]", "medimage/dicom-collection", None]],
+    metavar="<specifier> <datatype> <formatter>",
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
@@ -170,7 +170,7 @@ are uploaded to XNAT
     multiple=True,
     type=LoggerConfig.cli_type,
     envvar="XINGEST_LOGGERS",
-    nargs=4,
+    nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
     help=(
@@ -205,12 +205,12 @@ are uploaded to XNAT
     default=(),
     envvar="XINGEST_COLLATE_RESOURCES",
     help=(
-        "Flatten files of the given datatype into the resource directory during sort, "
-        "regardless of source directory structure (e.g. when sorting from Orthanc). "
+        "Flatten files of the given datatype into the resource directory during grouping, "
+        "regardless of source directory structure (e.g. when grouping from Orthanc). "
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
-def sort_cli(
+def group_cli(
     input_paths: list[str],
     output_dir: Path,
     datatype: list[MimeType] | None,
@@ -250,7 +250,7 @@ def sort_cli(
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = sort(
+        errors = group(
             input_paths=input_paths,
             output_dir=output_dir,
             datatypes=datatypes,
@@ -264,7 +264,6 @@ def sort_cli(
             wait_period=wait_period,
             recursive=recursive,
             cache_metadata=cache_metadata,
-            path_metadata=path_metadata,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
         )
         if errors:
@@ -291,8 +290,8 @@ def sort_cli(
 
 
 @base_cli.command(
-    name="sort-from-orthanc",
-    help="""Sorts images stored within an Orthanc instance into directories that can be processed by
+    name="group-from-orthanc",
+    help="""Groups images stored within an Orthanc instance into directories that can be processed by
 subsequent processing steps.
 
 URL of the Orthanc instance to connect to
@@ -311,7 +310,7 @@ PASSWORD for the Orthanc user
 @click.argument("url", type=str, envvar="XINGEST_ORTHANC_URL")
 @click.argument(
     "store_dir",
-    type=click.Path(path_type=Path, exist=True, file_okay=False),
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
     envvar="XINGEST_ORTHANC_STORE_DIR",
 )
 @click.argument("output_dir", type=click.Path(path_type=Path))
@@ -378,7 +377,7 @@ PASSWORD for the Orthanc user
     multiple=True,
     type=LoggerConfig.cli_type,
     envvar="XINGEST_LOGGERS",
-    nargs=4,
+    nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
     help=(
@@ -404,7 +403,7 @@ PASSWORD for the Orthanc user
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def sort_from_orthanc_cli(
+def group_from_orthanc_cli(
     url: str,
     store_dir: Path,
     output_dir: Path,
@@ -434,7 +433,7 @@ def sort_from_orthanc_cli(
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = sort_from_orthanc(
+        errors = group_from_orthanc(
             url=url,
             store_dir=store_dir,
             output_dir=output_dir,

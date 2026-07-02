@@ -1,10 +1,10 @@
+import shutil
 import traceback
 from pathlib import Path
 
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec
 from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
@@ -13,10 +13,10 @@ from ..model.session import ImagingSession
 def assign(
     input_dir: Path,
     output_dir: Path,
-    project_field: list[IDSpec],
-    subject_field: list[IDSpec],
-    visit_field: list[IDSpec],
-    session_field: list[IDSpec] | None = None,
+    project_field: list[str],
+    subject_field: list[str],
+    visit_field: list[str],
+    session_field: list[str] | None = None,
     project_id: str | None = None,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     delete: bool = False,
@@ -30,14 +30,14 @@ def assign(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the sorted sessions will be saved. This should be a local path.
-    project_field: list[FieldSpec]
-        List of field specifications to use for extracting the project ID from the input files.
-    subject_field: list[FieldSpec]
-        List of field specifications to use for extracting the subject ID from the input files.
-    visit_field: list[FieldSpec]
-        List of field specifications to use for extracting the visit ID from the input files.
-    session_field: list[FieldSpec] | None
-        List of field specifications to use for extracting the session ID from the input files. If None, the
+    project_field: list[str]
+        List of field names to use for extracting the project ID from the input files.
+    subject_field: list[str]
+        List of field names to use for extracting the subject ID from the input files.
+    visit_field: list[str]
+        List of field names to use for extracting the visit ID from the input files.
+    session_field: list[str] | None
+        List of field names to use for extracting the session ID from the input files. If None, the
         session ID will be generated from the subject and visit IDs.
     project_id: str | None
         If provided, this project ID will be used for all sessions instead of extracting it from the input files.
@@ -81,7 +81,7 @@ def assign(
                 project_field=project_field,
                 subject_field=subject_field,
                 visit_field=visit_field,
-                session_id_field=session_field,
+                session_field=session_field,
                 constant_project_id=project_id,
             )
 
@@ -94,7 +94,7 @@ def assign(
                 raise
             logger.error(
                 "Error assigning session '%s': %s",
-                session_listing.session_id,
+                session_listing.name,
                 str(e),
             )
             logger.debug(traceback.format_exc())
@@ -102,5 +102,5 @@ def assign(
         else:
             if delete:
                 # remove the original session directory after successful deidentification
-                session_listing.session_dir.rmdir()
+                shutil.rmtree(session_listing.fspath)
     return errors

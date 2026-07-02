@@ -5,39 +5,40 @@ from pathlib import Path
 
 import click
 from fileformats.core import FileSet
-from fileformats.medimage import DicomSeries
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.sort_ import sort
+from ..api.assign_ import assign
 from ..helpers.arg_types import (
     CopyModeParamType,
-    IDSpec,
     LoggerConfig,
-    MimeType,
 )
 from ..helpers.logging import logger, set_logger_handling
 
 
 @base_cli.command(
-    name="sort",
-    help="""Stages images found in the input directories into separate directories for each
-imaging acquisition session
+    name="assign",
+    help="""Assigns project, subject and visit (or session) IDs, extracted from session
+metadata, to sessions that have already been grouped into scans/resources
 
-INPUT_DIR is the path to the sorted scans
+INPUT_DIR is the path to the directory containing the grouped-but-not-yet-assigned
+sessions (the output of the 'group' command)
 
-OUTPUT_DIR is the directory that the assigned files will be written to
+OUTPUT_DIR is the directory that the assigned sessions will be written to
 """,
 )
-@click.argument("input_dir", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
+    "input_dir",
+    type=click.Path(exists=True, path_type=Path),
+    envvar="XINGEST_INPUT_DIR",
+)
+@click.argument(
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
 @click.option(
     "--project",
-    type=IDSpec.cli_type,
-    nargs=4,
-    metavar="<datatype> <type> <specifier>",
+    "project_field",
+    type=str,
     multiple=True,
     default=[],
     envvar="XINGEST_PROJECT",
@@ -48,8 +49,8 @@ OUTPUT_DIR is the directory that the assigned files will be written to
 )
 @click.option(
     "--subject",
-    type=IDSpec.cli_type,
-    nargs=4,
+    "subject_field",
+    type=str,
     multiple=True,
     default=[],
     envvar="XINGEST_SUBJECT",
@@ -60,8 +61,8 @@ OUTPUT_DIR is the directory that the assigned files will be written to
 )
 @click.option(
     "--visit",
-    type=IDSpec.cli_type,
-    nargs=4,
+    "visit_field",
+    type=str,
     multiple=True,
     default=[],
     envvar="XINGEST_VISIT",
@@ -72,8 +73,8 @@ OUTPUT_DIR is the directory that the assigned files will be written to
 )
 @click.option(
     "--session",
-    type=IDSpec.cli_type,
-    nargs=4,
+    "session_field",
+    type=str,
     multiple=True,
     default=[],
     envvar="XINGEST_SESSION",
@@ -93,7 +94,7 @@ OUTPUT_DIR is the directory that the assigned files will be written to
     type=int,
     default=-1,
     envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    help="Run the assign process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
     "--copy-mode",
@@ -107,8 +108,8 @@ OUTPUT_DIR is the directory that the assigned files will be written to
     default=False,
     envvar="XINGEST_DELETE",
     help=(
-        "Whether to delete the session directories after they have been uploaded or "
-        "not (XINGEST_DELETE env. var)"
+        "Whether to delete the grouped session directories after they have been "
+        "assigned or not (XINGEST_DELETE env. var)"
     ),
 )
 @click.option(
@@ -117,7 +118,7 @@ OUTPUT_DIR is the directory that the assigned files will be written to
     multiple=True,
     type=LoggerConfig.cli_type,
     envvar="XINGEST_LOGGERS",
-    nargs=4,
+    nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
     help=(
@@ -144,20 +145,18 @@ OUTPUT_DIR is the directory that the assigned files will be written to
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
 def assign_cli(
-    input_paths: list[str],
-    staging_dir: Path,
-    datatype: list[MimeType] | None,
-    project: list[IDSpec],
-    subject: list[IDSpec],
-    visit: list[IDSpec],
-    session: list[IDSpec],
+    input_dir: Path,
+    output_dir: Path,
+    project_field: list[str],
+    subject_field: list[str],
+    visit_field: list[str],
+    session_field: list[str],
     constant_project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
     loop: int,
-    wait_period: int,
     copy_mode: FileSet.CopyMode,
 ) -> None:
 
@@ -171,44 +170,37 @@ def assign_cli(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
     )
-    datatypes: list[ty.Type[FileSet]]
-    if not datatype:
-        datatypes = [DicomSeries]
-    else:
-        datatypes = [dt.datatype for dt in datatype]  # type: ignore[misc]
 
-    # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
+    # Run the assign process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = sort(
-            input_paths=input_paths,
-            output_dir=staging_dir,
-            datatypes=datatypes,
-            project=project,
-            subject=subject,
-            visit=visit,
-            session=session,
-            fixed_project_id=constant_project_id,
+        errors = assign(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            project_field=project_field,
+            subject_field=subject_field,
+            visit_field=visit_field,
+            session_field=session_field or None,
+            project_id=constant_project_id,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            wait_period=wait_period,
         )
         if errors:
             logger.error(
-                "Staging completed with %s errors:\n\n%s",
+                "Assign completed with %s errors:\n\n%s",
                 len(errors),
                 "\n".join(errors),
             )
         else:
-            logger.info("Staging completed successfully")
+            logger.info("Assign completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Assign took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,

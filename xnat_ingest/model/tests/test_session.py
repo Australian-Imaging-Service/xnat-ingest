@@ -92,6 +92,7 @@ def imaging_session() -> ImagingSession:
         for d in dicoms
     ]
     return ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         visit_id="SESSIONID",
@@ -283,9 +284,6 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             SyngoMi_Vr20b_ListMode,
             SyngoMi_Vr20b_CountRate,
         ],
-        project_field=[IDSpec("StudyID")],
-        subject_field=[IDSpec("PatientID")],
-        visit_field=[IDSpec("AccessionNumber")],
         session_uid_field=[IDSpec("StudyInstanceUID")],
         scan_id_field=[IDSpec("SeriesNumber")],
         scan_desc_field=[IDSpec("SeriesDescription")],
@@ -333,6 +331,7 @@ def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> No
     file1_cpy = file1.copy(tmp_path / "file1")
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         visit_id="SESSIONID",
@@ -363,6 +362,7 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         visit_id="SESSIONID",
@@ -404,6 +404,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         visit_id="SESSIONID",
@@ -432,6 +433,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_GivenName",
         "PatientID": "PID001",
         "StudyDate": "20230101",
@@ -446,11 +448,12 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
     assert session.subject_id == "SUBJ"
     assert session.visit_id == "VIS"
     assert session.scans == {}
-    assert session.metadata == metadata
+    assert dict(session.metadata) == metadata
 
 
 def test_associate_files_metadata_only(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_Given_Name",
         "PatientID": "PID001",
     }
@@ -498,6 +501,7 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     pdf = File.sample(seed=42)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="VIS",
@@ -534,9 +538,6 @@ def test_id_escape(tmp_path: Path) -> None:
     sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
-        project_field=[IDSpec("StudyID")],
-        subject_field=[IDSpec("PatientID")],
-        visit_field=[IDSpec("AccessionNumber")],
         session_uid_field=[IDSpec("StudyInstanceUID")],
         scan_id_field=[IDSpec("SeriesNumber")],
         scan_desc_field=[IDSpec("SeriesDescription")],
@@ -544,6 +545,12 @@ def test_id_escape(tmp_path: Path) -> None:
     )
 
     assert len(sessions) == 1
+
+    sessions[0].assign(
+        project_field="StudyID",
+        subject_field="PatientID",
+        visit_field="AccessionNumber",
+    )
     assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
 
 
@@ -575,7 +582,7 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
 
 def test_deidentify_empty_session(tmp_path: Path) -> None:
     session = ImagingSession(
-        project_id="PROJ", subject_id="SUBJ", visit_id="SESS", scans=[]
+        uid="12345", project_id="PROJ", subject_id="SUBJ", visit_id="SESS", scans=[]
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
     assert deid_session.project_id == "PROJ"
@@ -587,6 +594,7 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
     """Resources without contains_phi are copied as-is; no reid metadata collected."""
     f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="SESS",
@@ -605,6 +613,7 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
     """deidentify() returns reid metadata from resources that implement deidentify."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="SESS",
@@ -619,6 +628,7 @@ def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
     """Empty project_spec with require_matching_spec=True raises KeyError."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="SESS",
@@ -634,6 +644,7 @@ def test_deidentify_missing_spec_warns(
     """Empty project_spec with require_matching_spec=False logs a warning and proceeds."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="SESS",
@@ -653,6 +664,7 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
     f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         visit_id="SESS",

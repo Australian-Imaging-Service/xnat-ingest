@@ -24,13 +24,13 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_resource,
     get_xnat_session,
     iterate_s3_sessions,
+    list_session_dirs,
 )
 
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
-from . import list_session_dirs
 
 
 def upload(
