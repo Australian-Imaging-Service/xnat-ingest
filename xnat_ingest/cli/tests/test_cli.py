@@ -1078,7 +1078,7 @@ def test_check_upload_empty_scan(
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[project_id]
-        xsession = xproject.experiments["subject1_1"]
+        xsession = xproject.experiments["1"]
         xscan = xsession.scans["1"]
         xresource = next(iter(xscan.resources))
         xresource.delete()
@@ -1210,7 +1210,7 @@ def test_check_upload_missing_resource(
 
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[project_id]
-        xsession = xproject.experiments["subject1_1"]
+        xsession = xproject.experiments["1"]
         xscan = xsession.scans["1"]
         xresource = next(iter(xscan.resources))
         xresource.delete()

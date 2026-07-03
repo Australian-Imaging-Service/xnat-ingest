@@ -248,6 +248,8 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
     assert session_dirs[0].name == "PROJECT_ID.Session_Label.987654321"
 
     # The scan description ('SeriesDescription') has now been resolved, so the scan
-    # directory should no longer have a trailing dot
+    # directory should no longer have a trailing dot. Unlike project/subject/session
+    # IDs, scan descriptions are not escaped, so spaces are preserved
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     assert not scan_dir.name.endswith(".")
+    assert scan_dir.name == "4.PET SWB 8MIN"

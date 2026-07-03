@@ -498,7 +498,9 @@ class ImagingSession:
         if scan_field is not None:
             for scan in self.scans.values():
                 try:
-                    scan.type = IDSpec(scan_field).get_value(scan.metadata)
+                    scan.type = IDSpec(scan_field).get_value(
+                        scan.metadata, escape=False
+                    )
                 except ImagingSessionParseError:
                     logger.debug(
                         "Could not resolve a description for scan '%s' from field "
