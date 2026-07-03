@@ -452,10 +452,6 @@ def test_stage_and_upload(
             "ImageType[-1]",
             "medimage/dicom-collection",
             "--recursive",
-            "--additional-logger",
-            "xnat",
-            "--additional-logger",
-            "fileformats",
             "--raise-errors",
             "--delete",
         ],
@@ -467,7 +463,6 @@ def test_stage_and_upload(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert "Staging completed successfully" in logs, show_cli_trace(result)
-    assert " - fileformats - " in logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
 
@@ -519,8 +514,6 @@ def test_stage_and_upload(
         upload_cli,
         [
             source_dir,
-            "--additional-logger",
-            "xnat",
             "--always-include",
             "medimage/dicom-series",
             "--raise-errors",
@@ -548,7 +541,6 @@ def test_stage_and_upload(
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = upload_log_file.read_text()
     assert "Upload completed successfully" in file_logs, show_cli_trace(result)
-    assert " - xnat - " in file_logs, show_cli_trace(result)
     stdout_logs = result.stdout
     assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
     assert "as all the resources already exist on XNAT" not in stdout_logs
@@ -558,8 +550,6 @@ def test_stage_and_upload(
         upload_cli,
         [
             source_dir,
-            "--additional-logger",
-            "xnat",
             "--always-include",
             "medimage/dicom-series",
             "--raise-errors",
@@ -664,6 +654,38 @@ def test_stage_and_upload(
     assert result.exit_code == 0, show_cli_trace(result)
     file_logs = check_upload_log_file.read_text()
     assert "ERROR" not in file_logs, show_cli_trace(result)
+
+
+def test_additional_logger_routes_to_configured_handler(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    dicoms_dir = tmp_path / "dicoms"
+    get_pet_image(dicoms_dir)
+
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    stage_log_file = tmp_path / "stage-logs.log"
+
+    result = cli_runner(
+        group_cli,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--additional-logger",
+            "fileformats",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Staging completed successfully" in logs, show_cli_trace(result)
+    assert " - fileformats - " in logs, show_cli_trace(result)
 
 
 def test_stage_wait_period(
