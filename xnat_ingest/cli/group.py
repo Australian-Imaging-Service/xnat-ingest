@@ -41,9 +41,9 @@ are uploaded to XNAT
 @click.option(
     "--session-uid",
     type=IDSpec.cli_type,
-    nargs=3,
+    nargs=2,
     multiple=True,
-    default=(("StudyInstanceUID", "medimage/dicom-collection", None),),
+    default=(("StudyInstanceUID", "all"),),
     envvar="XINGEST_SESSION_UID",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
@@ -53,9 +53,10 @@ are uploaded to XNAT
 @click.option(
     "--scan-id",
     type=IDSpec.cli_type,
-    nargs=3,
+    nargs=2,
     multiple=True,
-    default=[["SeriesNumber", "medimage/dicom-collection", None]],
+    default=[["SeriesNumber", "all"]],
+    metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN_ID",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
@@ -64,9 +65,10 @@ are uploaded to XNAT
 @click.option(
     "--scan-desc",
     type=IDSpec.cli_type,
-    nargs=3,
+    nargs=2,
     multiple=True,
-    default=[["SeriesDescription", "medimage/dicom-collection", None]],
+    default=[["SeriesDescription", "all"]],
+    metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN_DESC",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
@@ -75,10 +77,10 @@ are uploaded to XNAT
 @click.option(
     "--resource",
     type=IDSpec.cli_type,
-    nargs=3,
+    nargs=2,
     multiple=True,
-    default=[["ImageType[2:]", "medimage/dicom-collection", None]],
-    metavar="<specifier> <datatype> <formatter>",
+    default=[["ImageType[2:]", "all"]],
+    metavar="<specifier> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "

@@ -21,6 +21,7 @@ from tqdm import tqdm
 
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
+from .metadata import Metadata
 from .arg_types import StoreCredentials
 from .logging import logger
 
@@ -112,7 +113,7 @@ class LocalSessionListing(SessionListing):
         for item in self.fspath.iterdir():
             if item.is_dir() and "." not in item.name:
                 paths.add(item.name)
-        paths.discard(ImagingSession.METADATA_FNAME)
+        paths -= {p for p in paths if Path(p).name == Metadata.FNAME}
         return paths
 
     @property
@@ -135,8 +136,10 @@ class LocalSessionListing(SessionListing):
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for relpath in sorted(self.resource_paths):
-            manifest = Json(self.cache_path / relpath / "MANIFEST.json")
-            manifests[relpath] = manifest.contents
+            resource_dir = self.cache_path / relpath
+            if resource_dir.is_dir():
+                manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME)
+                manifests[relpath] = manifest.contents
         return manifests
 
 
@@ -165,6 +168,8 @@ class SessionOnlyListing:
 
     @property
     def resource_paths(self) -> set[str]:
+        # FIXME: This doesn't look right. It looks like it is picking out the
+        # scan level not the session level.
         return {
             item.name
             for item in self.fspath.iterdir()
@@ -230,17 +235,17 @@ class S3SessionListing(SessionListing):
             else:
                 # session resource: <resource_name> (no dot in dir name)
                 paths.add(first)
-        paths.discard(ImagingSession.METADATA_FNAME)
+        paths -= {p for p in paths if Path(p) == Metadata.FNAME}
         return paths
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for path_parts, obj in self.objects:
-            if path_parts[-1] != "MANIFEST.json":
+            if path_parts[-1] != ImagingResource.MANIFEST_FNAME:
                 continue
             relpath = "/".join(path_parts[:-1])
-            manifest_path = self._cache_path / relpath / "MANIFEST.json"
+            manifest_path = self._cache_path / relpath / ImagingResource.MANIFEST_FNAME
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             with open(manifest_path, "wb") as f:
                 self.bucket.download_fileobj(obj.key, f)

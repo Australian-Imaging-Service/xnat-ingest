@@ -39,8 +39,7 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     "--project",
     "project_field",
     type=str,
-    multiple=True,
-    default=[],
+    default="StudyComments",
     envvar="XINGEST_PROJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT project ID from "
@@ -51,8 +50,7 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     "--subject",
     "subject_field",
     type=str,
-    multiple=True,
-    default=[],
+    default="PatientID",
     envvar="XINGEST_SUBJECT",
     help=(
         "The keyword of the metadata field to extract the XNAT subject ID from "
@@ -63,8 +61,7 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     "--visit",
     "visit_field",
     type=str,
-    multiple=True,
-    default=[],
+    default=None,
     envvar="XINGEST_VISIT",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging session ID from "
@@ -75,8 +72,7 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     "--session",
     "session_field",
     type=str,
-    multiple=True,
-    default=[],
+    default=None,
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field to use as the XNAT session label directly, instead of concatenating "
@@ -147,10 +143,10 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
 def assign_cli(
     input_dir: Path,
     output_dir: Path,
-    project_field: list[str],
-    subject_field: list[str],
-    visit_field: list[str],
-    session_field: list[str],
+    project_field: str,
+    subject_field: str,
+    visit_field: str | None,
+    session_field: str | None,
     constant_project_id: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],

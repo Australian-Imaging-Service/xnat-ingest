@@ -44,6 +44,7 @@ from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untype
 from xnat_ingest.helpers.arg_types import IDSpec, XnatLogin
 from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.helpers.remotes import list_session_dirs, upload_file_to_s3
+from xnat_ingest.model.resource import ImagingResource
 
 
 @extra_implementation(MyFormat.generate_sample_data)
@@ -212,10 +213,10 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     @click.option(
         "--field",
         type=IDSpec.cli_type,
-        nargs=3,
+        nargs=2,
         multiple=True,
-        default=[["ImageType[2:]", "generic/file-set", None]],
-        metavar="<specifier> <datatype> <formatter>",
+        default=[["ImageType[2:]", "all"]],
+        metavar="<specifier> <datatype>",
         envvar="XINGEST_FIELD",
         help=(
             "The keywords of the metadata field to extract the XNAT imaging resource ID from "
@@ -450,7 +451,6 @@ def test_stage_and_upload(
             "--resource",
             "ImageType[-1]",
             "medimage/dicom-collection",
-            "",
             "--recursive",
             "--additional-logger",
             "xnat",
@@ -898,15 +898,12 @@ def test_check_upload_missing_scan(
             "--session-uid",
             "StudyInstanceUID",
             "all",
-            "",
             "--scan-id",
             "SeriesNumber",
             "all",
-            "",
             "--scan-desc",
             "SeriesDescription",
             "all",
-            "",
             "--raise-errors",
             "--delete",
             "--wait-period",
@@ -1338,8 +1335,18 @@ def test_check_upload_checksum_fail(
     assert result.exit_code == 0, show_cli_trace(result)
 
     manifest_file = Json(
-        next(next(next(iter(list_session_dirs(assigned_dir))).iterdir()).iterdir())
-        / "MANIFEST.json"
+        next(
+            p
+            for p in next(
+                q
+                for q in next(
+                    r for r in iter(list_session_dirs(assigned_dir)) if r.is_dir()
+                ).iterdir()
+                if q.is_dir()
+            ).iterdir()
+            if p.is_dir()
+        )
+        / ImagingResource.MANIFEST_FNAME
     )
     manifest_data = manifest_file.load()
     checksums = manifest_data["checksums"]

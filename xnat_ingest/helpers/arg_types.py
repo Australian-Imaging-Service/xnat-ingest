@@ -237,9 +237,6 @@ class IDSpec(MultiCliTyped):
     datatype: ty.Type[FileSet] = attrs.field(
         converter=datatype_converter, default=FileSet
     )
-    # An empty string (as would be passed for an unused trailing CLI token) is treated
-    # the same as not providing a formatter at all
-    formatter: str | None = attrs.field(default=None, converter=lambda v: v or None)
 
     @property
     def specifier_name(self) -> str:

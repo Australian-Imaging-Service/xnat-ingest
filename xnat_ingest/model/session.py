@@ -1194,7 +1194,7 @@ class ImagingSession:
             else:
                 src.rename(dest)
 
-    MANIFEST_FILENAME = "MANIFEST.yaml"
+    MANIFEST_FNAME = "MANIFEST.yaml"
 
     def unlink(self) -> None:
         """Unlink all resources in the session"""
