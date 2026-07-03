@@ -535,6 +535,7 @@ class ImagingSession:
         store_dir: Path,
         user: str,
         password: str,
+        to_process_label: str | None = None,
         processed_label: str = "xnat-sorted",
     ) -> ty.List["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
@@ -582,6 +583,32 @@ class ImagingSession:
         resp.raise_for_status()
         study_ids = resp.json()
         logger.info("Found %d unstaged studies in Orthanc at '%s'", len(study_ids), url)
+
+        def _find_studies(labels: list[str], constraint: str) -> set[str]:
+            body: dict[str, ty.Any] = {"Level": "Study", "Query": {}}
+            if labels:
+                body["Labels"] = labels
+                body["LabelsConstraint"] = constraint
+            resp = requests.post(f"{url}/tools/find", auth=auth, json=body)
+            resp.raise_for_status()
+            return set(resp.json())
+
+        if to_process_label:
+            candidates = _find_studies([to_process_label], "All")
+        else:
+            candidates = _find_studies([], "All")
+
+        if processed_label:
+            candidates -= _find_studies([processed_label], "All")
+
+        study_ids = sorted(candidates)
+        logger.info(
+            "Found %d studies in Orthanc at '%s' " "(label=%r, skip label=%r)",
+            len(study_ids),
+            url,
+            to_process_label,
+            processed_label,
+        )
 
         staged: list[ImagingSession] = []
         for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
@@ -651,9 +678,11 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
-            requests.put(
-                f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
-            ).raise_for_status()
+            if processed_label:
+                requests.put(
+                    f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
+                ).raise_for_status()
+
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )

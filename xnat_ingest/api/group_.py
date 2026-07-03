@@ -116,10 +116,11 @@ def group_orthanc(
     output_dir: Path,
     user: str,
     password: str,
+    to_process_label: str | None = None,
+    processed_label: str | None = None,
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    processed_label: str = "xnat-sorted",
 ) -> list[str]:
     """Groups the input files into sessions and stages them into the staging directory.
 
@@ -133,8 +134,11 @@ def group_orthanc(
         Orthanc user to login with
     password: str
         Orthanc password to login with
-    processed_label: str
-        The label applied to the sessions in Orthanc to signify that they have already been grouped.
+    processed_label: str | None
+        The label applied to the sessions in Orthanc by this script to signify that they have already been processed.
+    to_process_label: str | None
+        The label externally applied to  sessions in Orthanc to signify that should be processed. If None,
+        all sessions will be processed.
     session_id: list[FieldSpec] | None
         List of field specifications to use for extracting the session ID from the input files. If None, the
         session ID will be generated from the subject and visit IDs.
@@ -169,8 +173,12 @@ def group_orthanc(
         store_dir=store_dir,
         user=user,
         password=password,
-        orthanc_label=processed_label,
+        to_process_label=to_process_label,
+        processed_label=processed_label,
     )
+
+    # Should from_orthanc() not actually move the data, just reference it in place like from_paths()
+    # does? If so, we can just call save_sessions_to_dir() here.
 
     # save_sessions_to_dir(
     #     sessions,

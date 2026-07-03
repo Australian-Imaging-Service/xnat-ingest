@@ -288,14 +288,25 @@ PASSWORD for the Orthanc user
 @click.argument("user", type=str, envvar="XINGEST_ORTHANC_USER")
 @click.argument("password", type=str, envvar="XINGEST_ORTHANC_PASSWORD")
 @click.option(
-    "--processed-label",
-    type=str,
-    default="xnat-sorted",
-    envvar="XINGEST_ORTHANC_LABEL",
+    "--to-process-label",
+    type=str | None,
+    default=None,
+    envvar="XINGEST_ORTHANC_TO_PROCESS",
     help=(
         "Label applied to Orthanc studies after staging to prevent re-processing. "
         "Can be removed via the Orthanc UI "
-        "(XINGEST_ORTHANC_LABEL env. var)"
+        "(XINGEST_ORTHANC_TO_PROCESS env. var)"
+    ),
+)
+@click.option(
+    "--processed-label",
+    type=str | None,
+    default=None,
+    envvar="XINGEST_ORTHANC_PROCESSED",
+    help=(
+        "Label applied to Orthanc studies after staging to prevent re-processing. "
+        "Can be removed via the Orthanc UI "
+        "(XINGEST_ORTHANC_PROCESSED env. var)"
     ),
 )
 @click.option(
@@ -370,7 +381,8 @@ def group_orthanc_cli(
     output_dir: Path,
     user: str,
     password: str,
-    processed_label: str,
+    processed_label: str | None,
+    to_process_label: str | None,
     delete: bool,
     raise_errors: bool,
     loop: int,
@@ -401,6 +413,7 @@ def group_orthanc_cli(
             user=user,
             password=password,
             processed_label=processed_label,
+            to_process_label=to_process_label,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,

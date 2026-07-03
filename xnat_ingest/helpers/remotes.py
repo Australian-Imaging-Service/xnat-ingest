@@ -511,18 +511,30 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     else:
         checksums = get_xnat_checksums(xresource)
         if checksums != resource.checksums:
-            difference = {
-                k: (v, resource.checksums[k])
-                for k, v in checksums.items()
-                if v != resource.checksums[k]
-            }
-            logger.error(
-                "'%s' resource in '%s' already exists on XNAT with "
-                "different checksums. Please delete on XNAT to overwrite:\n%s",
-                resource_name,
-                resource.scan.path,
-                pprint.pformat(difference),
-            )
+            missing_paths = set(resource.checksums) - set(checksums)
+            extra_paths = set(checksums) - set(resource.checksums)
+            if missing_paths or extra_paths:
+                logger.error(
+                    "'%s' resource in '%s' already exists on XNAT with "
+                    "different checksums.\nMissing paths: %s\nAdditional paths: %s",
+                    resource_name,
+                    resource.scan.path,
+                    missing_paths,
+                    extra_paths,
+                )
+            else:
+                difference = {
+                    k: (v, resource.checksums[k])
+                    for k, v in checksums.items()
+                    if v != resource.checksums[k]
+                }
+                logger.error(
+                    "'%s' resource in '%s' already exists on XNAT with "
+                    "different checksums. Please delete on XNAT to overwrite:\n%s",
+                    resource_name,
+                    resource.scan.path,
+                    pprint.pformat(difference),
+                )
         # Ensure that catalog is rebuilt if the file counts are 0
         if not xscan.files:
             xresource.xnat_session.post(

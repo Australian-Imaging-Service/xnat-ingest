@@ -1,4 +1,6 @@
 import datetime
+import logging
+import subprocess as sp
 import tempfile
 import time
 import typing as ty
@@ -7,6 +9,9 @@ from pathlib import Path
 import botocore.exceptions
 import click
 import requests.exceptions
+import xnat
+from frametree.xnat import Xnat
+
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import base_cli
@@ -240,68 +245,170 @@ def upload_cli(
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
 
-    # Loop the upload process if loop is set to a positive value, otherwise just run it once
-    while True:
-        start_time = datetime.datetime.now()
-        try:
-            errors = upload(
-                input_dir=staged,
-                server=server,
-                user=user,
-                password=password,
-                always_include=always_include,
-                raise_errors=raise_errors,
-                store_credentials=store_credentials,
-                require_manifest=require_manifest,
-                use_curl_jsession=use_curl_jsession,
-                verify_ssl=verify_ssl,
-                methods=methods,
-                wait_period=wait_period,
-                num_files_per_batch=num_files_per_batch,
-                check_checksums=check_checksums,
-                dry_run=dry_run,
-                s3_cache_dir=(
-                    Path(temp_dir) / "s3_cache"
-                    if temp_dir is not None
-                    else tempfile.mkdtemp()
-                ),
-            )
-            if errors:
-                logger.error(
-                    f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
-                )
-            else:
-                logger.info("Upload completed successfully without errors")
-        except (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.ConnectTimeout,
-            requests.exceptions.ReadTimeout,
-            XNATResponseError,
-            botocore.exceptions.EndpointConnectionError,
-            botocore.exceptions.ConnectTimeoutError,
-            botocore.exceptions.ReadTimeoutError,
-        ) as e:
-            # Transient network or XNAT-side error. In loop mode, log and continue
-            # instead of crashing the process (which causes container restarts in
-            # Kubernetes deployments). In one-shot mode, re-raise so callers see
-            # the failure.
-            if loop < 0:
-                raise
-            logger.error(
-                "Transient error connecting to XNAT or S3 store: %s. "
-                "Will retry on next loop iteration.",
-                e,
-            )
-        if loop < 0:
-            break
-        end_time = datetime.datetime.now()
-        elapsed_seconds = (end_time - start_time).total_seconds()
-        sleep_time = loop - elapsed_seconds
-        logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
-            "again (loop every %s seconds)",
-            elapsed_seconds,
-            sleep_time,
-            loop,
+    # Open ONE XNAT connection for the whole `--loop` lifetime.
+    #
+    # Previously upload() created a fresh Xnat() and called xnat.connect()
+    # on every iteration. Each connect rebuilds Python classes from the
+    # server's XSD schema (xnat.build_model / xnat.convert_xsd) and those
+    # generated objects accumulate in xnatpy's module-level state, producing
+    # a perfectly linear RSS growth of ~330-380 MiB/hour in production
+    # deployments. Holding one connection open across iterations eliminates
+    # the regeneration entirely (verified: 0 MiB/iter growth).
+    #
+    # If the held connection drops mid-loop, the except-block below closes
+    # it cleanly and the next iteration re-creates one. So this keeps the
+    # existing loop-resilience properties while removing the leak.
+    def _open_repo() -> "Xnat":
+        repo = Xnat(
+            server=server,
+            user=user,
+            password=password,
+            cache_dir=Path(tempfile.mkdtemp()),
+            verify_ssl=verify_ssl,
         )
-        time.sleep(loop)
+        if use_curl_jsession:
+            jsession = sp.check_output(
+                [
+                    "curl",
+                    "-X",
+                    "PUT",
+                    "-d",
+                    f"username={user}&password={password}",
+                    f"{server}/data/services/auth",
+                ]
+            ).decode("utf-8")
+            repo.connection.depth = 1
+            repo.connection.session = xnat.connect(
+                server, user=user, jsession=jsession, logger=logging.getLogger("xnat")
+            )
+        repo.connection.__enter__()
+        return repo
+
+    def _close_repo(repo: "Xnat") -> None:
+        try:
+            repo.connection.__exit__(None, None, None)
+        except (
+            Exception
+        ):  # noqa: BLE001 — best-effort cleanup of a possibly dead session
+            pass
+
+    def _is_auth_failure(error_messages: ty.List[str]) -> bool:
+        """Detect whether any error returned by upload() is an XNAT auth
+        failure (HTTP 401/403).
+
+        These are CONNECTION-level failures, not per-session data problems:
+        XNAT expires the held connection's server-side session (JSESSIONID)
+        after its configured timeout, after which every call on the held
+        connection returns 401 and never recovers on its own. upload()
+        catches these as per-session "skip" errors and returns them as
+        strings, so they never reach the transient-error handler below — the
+        daemon would otherwise 401 every session forever until manually
+        restarted. Detecting the signature here lets us force a reconnect.
+        """
+        signatures = ("status 401", "status 403", "Unauthorized", "Forbidden")
+        return any(any(sig in msg for sig in signatures) for msg in error_messages)
+
+    xnat_repo = _open_repo()
+    try:
+        # Loop the upload process if loop is set to a positive value, otherwise just run it once
+        while True:
+            start_time = datetime.datetime.now()
+            # A prior reconnect attempt may have failed and left us without a
+            # connection. Re-establish before doing any work this iteration.
+            if xnat_repo is None:
+                try:
+                    xnat_repo = _open_repo()
+                except Exception as e:  # noqa: BLE001
+                    logger.error(
+                        "XNAT connection is down and reconnect failed: %s. "
+                        "Retrying after the loop interval.",
+                        e,
+                    )
+                    if loop < 0:
+                        raise
+                    time.sleep(loop)
+                    continue
+            try:
+                errors = upload(
+                    input_dir=staged,
+                    xnat_repo=xnat_repo,
+                    always_include=always_include,
+                    raise_errors=raise_errors,
+                    store_credentials=store_credentials,
+                    require_manifest=require_manifest,
+                    methods=methods,
+                    wait_period=wait_period,
+                    num_files_per_batch=num_files_per_batch,
+                    check_checksums=check_checksums,
+                    dry_run=dry_run,
+                    s3_cache_dir=(
+                        Path(temp_dir) / "s3_cache"
+                        if temp_dir is not None
+                        else tempfile.mkdtemp()
+                    ),
+                )
+                if errors:
+                    logger.error(
+                        f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
+                    )
+                    # If the errors are XNAT auth failures, the held session has
+                    # expired — reconnect so the next iteration uses a fresh
+                    # session. Reactive ONLY: we must not reconnect on every
+                    # iteration, because each xnat.connect() rebuilds the xnatpy
+                    # schema model and reintroduces the ~330-380 MiB/h memory leak
+                    # the single held connection was added to avoid.
+                    if loop >= 0 and _is_auth_failure(errors):
+                        logger.warning(
+                            "Detected XNAT authentication failure (expired session). "
+                            "Re-establishing the XNAT connection before the next iteration."
+                        )
+                        _close_repo(xnat_repo)
+                        try:
+                            xnat_repo = _open_repo()
+                        except Exception as reconnect_err:  # noqa: BLE001
+                            logger.error(
+                                "Failed to re-establish XNAT connection: %s. "
+                                "Will retry on the next loop iteration.",
+                                reconnect_err,
+                            )
+                            xnat_repo = None
+                else:
+                    logger.info("Upload completed successfully without errors")
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.ReadTimeout,
+                XNATResponseError,
+                botocore.exceptions.EndpointConnectionError,
+                botocore.exceptions.ConnectTimeoutError,
+                botocore.exceptions.ReadTimeoutError,
+            ) as e:
+                # Transient network or XNAT-side error. The held connection
+                # may now be dead; close it and re-open on the next
+                # iteration so a server bounce doesn't poison subsequent
+                # uploads.
+                if loop < 0:
+                    raise
+                logger.error(
+                    "Transient error connecting to XNAT or S3 store: %s. "
+                    "Closing and re-opening XNAT connection before next "
+                    "loop iteration.",
+                    e,
+                )
+                _close_repo(xnat_repo)
+                xnat_repo = _open_repo()
+            if loop < 0:
+                break
+            end_time = datetime.datetime.now()
+            elapsed_seconds = (end_time - start_time).total_seconds()
+            sleep_time = loop - elapsed_seconds
+            logger.info(
+                "Stage took %s seconds, waiting another %s seconds before running "
+                "again (loop every %s seconds)",
+                elapsed_seconds,
+                sleep_time,
+                loop,
+            )
+            time.sleep(loop)
+    finally:
+        _close_repo(xnat_repo)

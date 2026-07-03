@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -38,3 +38,5 @@ RUN pip install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
 ENTRYPOINT ["xnat-ingest"]
+LABEL org.opencontainers.image.source=https://github.com/australian-imaging-service/xnat-ingest
+LABEL org.opencontainers.image.description="xnat-ingest"

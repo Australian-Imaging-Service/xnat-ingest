@@ -1,13 +1,10 @@
-import logging
 import math
 import shutil
-import subprocess as sp
 import tempfile
 import traceback
 import typing as ty
 from pathlib import Path
 
-import xnat
 from fileformats.generic import File, FileSet
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -35,18 +32,14 @@ from ..model.session import ImagingSession
 
 def upload(
     input_dir: str,
-    server: str,
-    user: str,
-    password: str,
-    always_include: ty.Sequence[str | FileSet],
+    xnat_repo: Xnat,
+    always_include: ty.Sequence[str | FileSet] = (),
     store_credentials: StoreCredentials | None = None,
     require_manifest: bool = True,
-    verify_ssl: bool = True,
     methods: ty.Sequence[UploadMethod] = (),
     wait_period: int = 0,
     num_files_per_batch: int = 0,
     check_checksums: bool = True,
-    use_curl_jsession: bool = False,
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
@@ -88,30 +81,8 @@ def upload(
     # Ensure input_path is a string so we can check for s3://
     input_dir = str(input_dir)
 
-    xnat_repo = Xnat(
-        server=server,
-        user=user,
-        password=password,
-        cache_dir=Path(tempfile.mkdtemp()),
-        verify_ssl=verify_ssl,
-    )
-
-    if use_curl_jsession:
-        jsession = sp.check_output(
-            [
-                "curl",
-                "-X",
-                "PUT",
-                "-d",
-                f"username={user}&password={password}",
-                f"{server}/data/services/auth",
-            ]
-        ).decode("utf-8")
-        xnat_repo.connection.depth = 1
-        xnat_repo.connection.session = xnat.connect(
-            server, user=user, jsession=jsession, logger=logging.getLogger("xnat")
-        )
-
+    # Note that this context manager doesn't do anything if the connection is
+    # already open, so it's safe to use even if the connection is already open
     with xnat_repo.connection:
 
         num_sessions: int
@@ -415,6 +386,4 @@ def upload(
                 else:
                     raise
 
-        if use_curl_jsession:
-            xnat_repo.connection.exit()
         return errors
