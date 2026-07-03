@@ -16,7 +16,6 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
-    CacheMetadata,
     PathMetadata,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -89,16 +88,6 @@ are uploaded to XNAT
         "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
         '"extra" are supported, see FF docs on how to add support for new formats.'
     ),
-)
-@click.option(
-    "--cache-metadata",
-    "-m",
-    type=CacheMetadata.cli_type,
-    metavar="<field> <level>",
-    multiple=True,
-    default=(),
-    envvar="XINGEST_CACHE_METADATA",
-    help=CacheMetadata.HELP_STR,
 )
 @click.option(
     "--path-metadata",
@@ -207,7 +196,6 @@ def group_cli(
     session: list[IDSpec],
     scan: list[IDSpec],
     resource: list[IDSpec],
-    cache_metadata: list[CacheMetadata],
     path_metadata: list[PathMetadata],
     delete: bool,
     loggers: ty.List[LoggerConfig],
@@ -251,7 +239,6 @@ def group_cli(
             copy_mode=copy_mode,
             wait_period=wait_period,
             recursive=recursive,
-            cache_metadata=cache_metadata,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
         )
         if errors:
@@ -304,16 +291,6 @@ PASSWORD for the Orthanc user
 @click.argument("output_dir", type=click.Path(path_type=Path))
 @click.argument("user", type=str, envvar="XINGEST_ORTHANC_USER")
 @click.argument("password", type=str, envvar="XINGEST_ORTHANC_PASSWORD")
-@click.option(
-    "--metadata",
-    "-m",
-    type=CacheMetadata.cli_type,
-    metavar="<field> <level>",
-    multiple=True,
-    default=(),
-    envvar="XINGEST_SAVE_METADATA",
-    help=CacheMetadata.HELP_STR,
-)
 @click.option(
     "--processed-label",
     type=str,

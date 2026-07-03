@@ -1078,7 +1078,6 @@ class ImagingSession:
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
-        cache_metadata: bool = True,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -1097,10 +1096,6 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
-        cache_metadata : bool or Path, optional
-            whether to save the session metadata to a YAML file in the session directory,
-            if True, the metadata will be saved to a file named "METADATA.yaml" in the session
-            directory, if a Path, the metadata will be saved to this path, by default False
 
         Returns
         -------

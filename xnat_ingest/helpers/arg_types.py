@@ -149,22 +149,6 @@ class LoggerConfig(MultiCliTyped):
 
 
 @attrs.define
-class CacheMetadata(MultiCliTyped):
-
-    field: str
-    level: str = attrs.field(
-        default="session",
-        validator=attrs.validators.in_(["session", "scan", "resource"]),
-    )
-
-    HELP_STR = (
-        "Names of metadata fields to save in JSON files within the sorted directory. "
-        "The first arg is the name of the metadata field to save. The second arg "
-        "is the level in the directory tree to store it in "
-    )
-
-
-@attrs.define
 class PathMetadata(MultiCliTyped):
 
     regex: str

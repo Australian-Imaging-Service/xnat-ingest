@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, CacheMetadata
+from ..helpers.arg_types import IDSpec
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -28,7 +28,6 @@ def group(
     wait_period: int = 0,
     avoid_clashes: bool = True,
     recursive: bool = False,
-    cache_metadata: ty.Sequence[CacheMetadata] = (),
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
     staging directory. Project/subject/visit IDs and scan descriptions are not
@@ -65,8 +64,6 @@ def group(
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
-    cache_metadata: list[CacheMetadata]
-        Which metadata to save for different file types
     """
 
     errors = []
@@ -99,7 +96,6 @@ def group(
         delete=delete,
         raise_errors=raise_errors,
         collation_map=collation_map,
-        cache_metadata=cache_metadata,
     )
 
     return errors
@@ -114,7 +110,6 @@ def group_orthanc(
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    cache_metadata: bool | Path = False,
     processed_label: str = "xnat-sorted",
 ) -> list[str]:
     """Groups the input files into sessions and stages them into the staging directory.
@@ -147,10 +142,6 @@ def group_orthanc(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    cache_metadata: bool or Path
-        Whether to save the session metadata to a JSON file in the session directory. If True, the metadata will be saved to a file
-        named "METADATA.json" in the session directory. If a Path, the metadata will be saved to this path. If False, the metadata
-        will not be saved.
     """
 
     errors = []
@@ -195,7 +186,6 @@ def save_sessions_to_dir(
     collation_map=None,
     delete: bool = False,
     raise_errors: bool = False,
-    cache_metadata: ty.Sequence[CacheMetadata] = (),
 ):
     errors = []
     for session in tqdm(sessions, msg):
