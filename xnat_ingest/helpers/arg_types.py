@@ -1,5 +1,7 @@
 """Helper functions and classes for defining custom Click parameter types for use in the CLI."""
 
+from __future__ import annotations
+
 import logging
 import random
 import re

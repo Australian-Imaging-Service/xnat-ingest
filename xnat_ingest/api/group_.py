@@ -107,7 +107,7 @@ def group(
     return errors
 
 
-def group_from_orthanc(
+def group_orthanc(
     url: str,
     store_dir: Path,
     output_dir: Path,

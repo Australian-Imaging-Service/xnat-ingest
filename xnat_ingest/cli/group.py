@@ -9,7 +9,7 @@ from fileformats.medimage import DicomSeries
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.group_ import group, group_from_orthanc
+from ..api.group_ import group, group_orthanc
 from ..helpers.arg_types import (
     CollationSpec,
     CopyModeParamType,
@@ -292,7 +292,7 @@ def group_cli(
 
 
 @base_cli.command(
-    name="group-from-orthanc",
+    name="group-orthanc",
     help="""Groups images stored within an Orthanc instance into directories that can be processed by
 subsequent processing steps.
 
@@ -405,7 +405,7 @@ PASSWORD for the Orthanc user
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def group_from_orthanc_cli(
+def group_orthanc_cli(
     url: str,
     store_dir: Path,
     output_dir: Path,
@@ -435,7 +435,7 @@ def group_from_orthanc_cli(
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = group_from_orthanc(
+        errors = group_orthanc(
             url=url,
             store_dir=store_dir,
             output_dir=output_dir,
