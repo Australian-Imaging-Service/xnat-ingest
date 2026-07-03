@@ -80,6 +80,18 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     ),
 )
 @click.option(
+    "--scan",
+    "scan_field",
+    type=str,
+    default="SeriesDescription",
+    envvar="XINGEST_SCAN_DESC",
+    help=(
+        "The keyword of the metadata field to extract a description for each scan from. "
+        "Scans for which the field can't be resolved are left without a description "
+        "(XINGEST_SCAN_DESC env. var)"
+    ),
+)
+@click.option(
     "--constant-project-id",
     type=str,
     default=None,
@@ -148,6 +160,7 @@ def assign_cli(
     visit_field: str | None,
     session_field: str | None,
     constant_project_id: str | None,
+    scan_field: str | None,
     delete: bool,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
@@ -178,6 +191,7 @@ def assign_cli(
             visit_field=visit_field,
             session_field=session_field or None,
             project_id=constant_project_id,
+            scan_field=scan_field,
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,

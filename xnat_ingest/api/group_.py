@@ -18,9 +18,8 @@ def group(
     input_paths: list[str],
     output_dir: Path,
     datatypes: list[FileSet],
-    session_uid: list[IDSpec],
-    scan_id: list[IDSpec],
-    scan_desc: list[IDSpec],
+    session: list[IDSpec],
+    scan: list[IDSpec],
     resource: list[IDSpec],
     delete: bool = False,
     raise_errors: bool = False,
@@ -32,8 +31,8 @@ def group(
     cache_metadata: ty.Sequence[CacheMetadata] = (),
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
-    staging directory. Project/subject/visit IDs are not assigned at this point, see
-    the 'assign' function for that.
+    staging directory. Project/subject/visit IDs and scan descriptions are not
+    assigned at this point, see the 'assign' function for that.
 
     Parameters
     ----------
@@ -43,11 +42,11 @@ def group(
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
     datatypes: list[MimeType]
         List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
-    session_uid: list[FieldSpec] | None
+    session: list[FieldSpec] | None
         List of field specifications to use for extracting the session UIDs from the input files to group them into
         separate sessions
-    scan_uid: list[FieldSpec]
-        List of field specifications to use for extracting the scan UIDs from the input files to group them into
+    scan: list[FieldSpec]
+        List of field specifications to use for extracting the scan IDs from the input files to group them into
         scans
     delete: bool
         If True, the input files will be deleted after staging. If False, the input files will be left in place.
@@ -83,9 +82,8 @@ def group(
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
         datatypes=datatypes,
-        session_uid_field=session_uid,
-        scan_id_field=scan_id,
-        scan_desc_field=scan_desc,
+        session_field=session,
+        scan_field=scan,
         resource_field=resource,
         recursive=recursive,
         avoid_clashes=avoid_clashes,

@@ -13,9 +13,10 @@ from xnat_ingest.api.group_ import group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
 
-PROJECT_FIELD = ["StudyID"]
-SUBJECT_FIELD = ["PatientID"]
-VISIT_FIELD = ["AccessionNumber"]
+PROJECT_FIELD = "StudyID"
+SUBJECT_FIELD = "PatientID"
+VISIT_FIELD = "AccessionNumber"
+SCAN_DESC_FIELD = "SeriesDescription"
 
 
 @pytest.fixture
@@ -51,11 +52,30 @@ def test_assign_calls_load_assign_save_for_each_session(
         visit_field=VISIT_FIELD,
         session_field=None,
         constant_project_id=None,
+        scan_desc_field=None,
     )
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
     )
+
+
+def test_assign_passes_scan_desc_field(grouped_dir: Path, tmp_path: Path) -> None:
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+
+    mock_session = MagicMock()
+    with patch.object(ImagingSession, "load", return_value=mock_session):
+        assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            visit_field=VISIT_FIELD,
+            scan_field=SCAN_DESC_FIELD,
+        )
+
+    assert mock_session.assign.call_args.kwargs["scan_desc_field"] == SCAN_DESC_FIELD
 
 
 def test_assign_passes_constant_project_id(grouped_dir: Path, tmp_path: Path) -> None:
@@ -203,9 +223,8 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
         input_paths=[str(dicom_dir)],
         output_dir=grouped_dir,
         datatypes=[DicomSeries],
-        session_uid=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
-        scan_id=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
-        scan_desc=[IDSpec("SeriesDescription", "medimage/dicom-collection")],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
         resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
     )
     assert group_errors == []
@@ -219,10 +238,17 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
         project_field=PROJECT_FIELD,
         subject_field=SUBJECT_FIELD,
         visit_field=VISIT_FIELD,
+        scan_field=SCAN_DESC_FIELD,
     )
 
     assert errors == []
     session_dirs = list(output_dir.iterdir())
     assert len(session_dirs) == 1
     # PatientID = "Session Label", AccessionNumber = "987654321" in the dummy data
-    assert session_dirs[0].name == "PROJECT_ID.Session Label.987654321"
+    # (spaces are escaped to underscores in resolved IDs)
+    assert session_dirs[0].name == "PROJECT_ID.Session_Label.987654321"
+
+    # The scan description ('SeriesDescription') has now been resolved, so the scan
+    # directory should no longer have a trailing dot
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    assert not scan_dir.name.endswith(".")

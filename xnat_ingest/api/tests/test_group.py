@@ -14,9 +14,8 @@ from xnat_ingest.api.group_ import (
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
 
-SESSION_UID_FIELD = [IDSpec("StudyInstanceUID", "medimage/dicom-collection")]
-SCAN_ID_FIELD = [IDSpec("SeriesNumber", "medimage/dicom-collection")]
-SCAN_DESC_FIELD = [IDSpec("SeriesDescription", "medimage/dicom-collection")]
+SESSION_FIELD = [IDSpec("StudyInstanceUID", "medimage/dicom-collection")]
+SCAN_FIELD = [IDSpec("SeriesNumber", "medimage/dicom-collection")]
 RESOURCE_FIELD = [IDSpec("ImageType[2:]", "medimage/dicom-collection")]
 
 
@@ -35,9 +34,8 @@ def test_group_creates_pre_assign_session_dir(dicom_dir: Path, tmp_path: Path) -
         input_paths=[str(dicom_dir)],
         output_dir=output_dir,
         datatypes=[DicomSeries],
-        session_uid=SESSION_UID_FIELD,
-        scan_id=SCAN_ID_FIELD,
-        scan_desc=SCAN_DESC_FIELD,
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
     )
 
@@ -53,7 +51,9 @@ def test_group_creates_pre_assign_session_dir(dicom_dir: Path, tmp_path: Path) -
     assert session_dir.name.startswith(ImagingSession.PRE_ASSIGN_PREFIX)
     scan_dirs = [d for d in session_dir.iterdir() if d.is_dir()]
     assert len(scan_dirs) == 1
-    assert "." in scan_dirs[0].name  # <scan_id>.<scan_desc>
+    # scan description is now resolved at 'assign' time, not 'group' time, so the
+    # scan directory is saved with a trailing dot and no description
+    assert scan_dirs[0].name.endswith(".")
 
 
 def test_group_output_reloadable_with_no_assigned_ids(
@@ -66,9 +66,8 @@ def test_group_output_reloadable_with_no_assigned_ids(
         input_paths=[str(dicom_dir)],
         output_dir=output_dir,
         datatypes=[DicomSeries],
-        session_uid=SESSION_UID_FIELD,
-        scan_id=SCAN_ID_FIELD,
-        scan_desc=SCAN_DESC_FIELD,
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
     )
     session_dir = next(
@@ -83,6 +82,9 @@ def test_group_output_reloadable_with_no_assigned_ids(
     assert reloaded.subject_id is None
     assert reloaded.visit_id is None
     assert reloaded.uid == session_dir.name[len(ImagingSession.PRE_ASSIGN_PREFIX) :]
+    # scan description hasn't been resolved yet either
+    scan = next(iter(reloaded.scans.values()))
+    assert scan.type is None
 
 
 def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
@@ -95,9 +97,8 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
         input_paths=[str(empty_input)],
         output_dir=output_dir,
         datatypes=[DicomSeries],
-        session_uid=SESSION_UID_FIELD,
-        scan_id=SCAN_ID_FIELD,
-        scan_desc=SCAN_DESC_FIELD,
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
     )
 
@@ -115,9 +116,8 @@ def test_group_creates_build_and_invalid_dirs(tmp_path: Path) -> None:
         input_paths=[str(empty_input)],
         output_dir=output_dir,
         datatypes=[DicomSeries],
-        session_uid=SESSION_UID_FIELD,
-        scan_id=SCAN_ID_FIELD,
-        scan_desc=SCAN_DESC_FIELD,
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
     )
 

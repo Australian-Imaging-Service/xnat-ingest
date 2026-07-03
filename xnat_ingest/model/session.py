@@ -25,7 +25,7 @@ from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from typing_extensions import Self
 
-from ..exceptions import StagingError
+from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import AssociatedFiles, IDSpec
 from ..helpers.metadata import Metadata
 from .resource import ImagingResource
@@ -304,9 +304,8 @@ class ImagingSession:
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
-        session_uid_field: list[IDSpec],
-        scan_id_field: list[IDSpec],
-        scan_desc_field: list[IDSpec],
+        session_field: list[IDSpec],
+        scan_field: list[IDSpec],
         resource_field: list[IDSpec],
         recursive: bool = False,
         avoid_clashes: bool = True,
@@ -321,13 +320,11 @@ class ImagingSession:
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
             [DicomSeries, NiftiGz]
-        session_uid_field: list[IdField]
+        session_field: list[IdField]
             the metadata field that uniquely identifies the session, used to group files
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
-        scan_id_field: list[IdField]
+        scan_field: list[IdField]
             the value of this field is used to group resources under single scans.
-        scan_desc_field: list[IdField]
-            the value of this field is used to label scans
         resource_field: list[IdField]
             the value of this field is to resources
         recursive : bool, optional
@@ -426,13 +423,8 @@ class ImagingSession:
             filesets,
             "Sorting resources into XNAT tree structure...",
         ):
-            session_uid = IDSpec.get_value_from_matching_spec(
-                fileset, session_uid_field
-            )
-            scan_id = IDSpec.get_value_from_matching_spec(fileset, scan_id_field)
-            scan_type = IDSpec.get_value_from_matching_spec(
-                fileset, scan_desc_field, escape=False
-            )
+            session_uid = IDSpec.get_value_from_matching_spec(fileset, session_field)
+            scan_id = IDSpec.get_value_from_matching_spec(fileset, scan_field)
             # XNAT requires DICOM datasets to have in 'DICOM' and 'secondary'
             # resource labels otherwise some features don't work
             if isinstance(fileset, DicomCollection):
@@ -458,12 +450,12 @@ class ImagingSession:
             logger.debug(
                 "Adding resource '%s' to %s scan in %s session",
                 resource_label,
-                scan_type,
+                scan_id,
                 session_uid,
             )
             session.add_resource(
                 scan_id,
-                scan_type,
+                None,
                 resource_label,
                 fileset,
                 avoid_clashes=avoid_clashes,
@@ -472,33 +464,36 @@ class ImagingSession:
 
     def assign(
         self,
-        project_field: list[str],
-        subject_field: list[str],
-        visit_field: list[str] | None = None,
-        session_field: list[str] | None = None,
+        project_field: str,
+        subject_field: str,
+        visit_field: str | None = None,
+        session_field: str | None = None,
+        scan_field: str | None = None,
         constant_project_id: str | None = None,
     ) -> None:
         """Assigns project, subject and session IDs to the session, extracted from its
-        metadata.
+        metadata. Also resolves a description for each scan in the session, if
+        'scan_field' is provided.
 
         Parameters
         ----------
-        project_field : list[str]
-            candidate metadata fields to extract the XNAT project ID from, tried in
-            order until one resolves
-        subject_field : list[str]
-            candidate metadata fields to extract the XNAT subject ID from, tried in
-            order until one resolves
-        visit_field : list[str]
-            candidate metadata fields to extract the XNAT visit ID from, tried in
-            order until one resolves
-        session_field: list[str], optional
+        project_field : str
+            metadata field to extract the XNAT project ID from
+        subject_field : str
+            metadata field to extract the XNAT subject ID from
+        visit_field : str
+            metadata field to extract the XNAT visit ID from
+        session_field: str, optional
             when provided, the value of this field is used directly as the XNAT session
             label instead of concatenating subject and visit IDs. Mutually exclusive
             with visit_field being used as the label source.
         constant_project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
+        scan_field : str, optional
+            metadata field to extract a description for each scan from. Scans for which
+            the field can't be resolved are left without a description (saved with a
+            trailing-dot '<scan_id>.' directory name)
 
         Raises
         ------
@@ -525,6 +520,19 @@ class ImagingSession:
             self.visit_id = IDSpec(visit_field).get_value(self.metadata)
         else:
             self.explicit_session_id = IDSpec(session_field).get_value(self.metadata)
+
+        if scan_field is not None:
+            for scan in self.scans.values():
+                try:
+                    scan.type = IDSpec(scan_field).get_value(scan.metadata)
+                except ImagingSessionParseError:
+                    logger.debug(
+                        "Could not resolve a description for scan '%s' from field "
+                        "'%s', using scan ID instead",
+                        scan.id,
+                        scan_field,
+                    )
+                    scan.type = scan.id
 
     @classmethod
     def from_orthanc(
@@ -844,7 +852,7 @@ class ImagingSession:
     def add_resource(
         self,
         scan_id: str,
-        scan_type: str,
+        scan_type: str | None,
         resource_name: str,
         fileset: FileSet,
         overwrite: bool = False,

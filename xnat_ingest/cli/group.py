@@ -39,39 +39,27 @@ are uploaded to XNAT
     "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
 )
 @click.option(
-    "--session-uid",
+    "--session",
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
     default=(("StudyInstanceUID", "all"),),
-    envvar="XINGEST_SESSION_UID",
+    envvar="XINGEST_SESSION",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION_UID env. var). Defaults to StudyInstanceUID."
+        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID."
     ),
 )
 @click.option(
-    "--scan-id",
+    "--scan",
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
     default=[["SeriesNumber", "all"]],
     metavar="<specifier> <datatype>",
-    envvar="XINGEST_SCAN_ID",
+    envvar="XINGEST_SCAN",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN_ID env. var)"
-    ),
-)
-@click.option(
-    "--scan-desc",
-    type=IDSpec.cli_type,
-    nargs=2,
-    multiple=True,
-    default=[["SeriesDescription", "all"]],
-    metavar="<specifier> <datatype>",
-    envvar="XINGEST_SCAN_DESC",
-    help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan description from (XINGEST_SCAN_DESC env. var)"
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
@@ -216,9 +204,8 @@ def group_cli(
     input_paths: list[str],
     output_dir: Path,
     datatype: list[MimeType] | None,
-    session_uid: list[IDSpec],
-    scan_id: list[IDSpec],
-    scan_desc: list[IDSpec],
+    session: list[IDSpec],
+    scan: list[IDSpec],
     resource: list[IDSpec],
     cache_metadata: list[CacheMetadata],
     path_metadata: list[PathMetadata],
@@ -256,9 +243,8 @@ def group_cli(
             input_paths=input_paths,
             output_dir=output_dir,
             datatypes=datatypes,
-            session_uid=session_uid,
-            scan_id=scan_id,
-            scan_desc=scan_desc,
+            session=session,
+            scan=scan,
             resource=resource,
             delete=delete,
             raise_errors=raise_errors,

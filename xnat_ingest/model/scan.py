@@ -42,7 +42,7 @@ class ImagingScan:
 
     Parameters
     ----------
-    id: str | None
+    id: str
         the ID of the scan on XNAT
     type: str | None
         the scan type/description
@@ -53,7 +53,7 @@ class ImagingScan:
         (but may not have the necessary metadata to identify the scan itself)
     """
 
-    id: str | None = None
+    id: str
     type: str = attrs.field(converter=scan_type_converter, default=None)
     resources: ty.Dict[str, ImagingResource] = attrs.field(
         factory=dict, converter=scan_resources_converter
@@ -89,9 +89,11 @@ class ImagingScan:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
     ) -> Self:
-        # Ensure scan type is a valid directory name
+        # Ensure scan type is a valid directory name. A scan with no description set
+        # (e.g. not yet resolved by 'assign') is saved as '<scan_id>.' (trailing dot,
+        # no description) to still distinguish it from session-level resource dirs
         saved = self.new_empty()
-        scan_dir = dest_dir / f"{self.id}.{self.type}"
+        scan_dir = dest_dir / f"{self.id}.{self.type if self.type is not None else ''}"
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
             saved_resource = resource.save(
@@ -107,7 +109,7 @@ class ImagingScan:
         cls, scan_dir: Path, require_manifest: bool = True, check_checksums: bool = True
     ) -> Self:
         scan_id, scan_type = scan_dir.name.split(".", 1)
-        scan = cls(scan_id, scan_type)
+        scan = cls(scan_id, scan_type or None)
         for resource_dir in scan_dir.iterdir():
             if resource_dir.is_dir():
                 resource = ImagingResource.load(

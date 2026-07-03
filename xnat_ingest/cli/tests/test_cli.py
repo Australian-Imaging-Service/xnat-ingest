@@ -895,14 +895,11 @@ def test_check_upload_missing_scan(
         [
             str(inputs_dir),
             str(sorted_dir),
-            "--session-uid",
+            "--session",
             "StudyInstanceUID",
             "all",
-            "--scan-id",
+            "--scan",
             "SeriesNumber",
-            "all",
-            "--scan-desc",
-            "SeriesDescription",
             "all",
             "--raise-errors",
             "--delete",
@@ -920,7 +917,9 @@ def test_check_upload_missing_scan(
     assigned_dir = tmp_path / "assigned"
     result = cli_runner(
         assign_cli,
-        [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+        [str(sorted_dir), str(assigned_dir)]
+        + ASSIGN_ID_ARGS
+        + ["--scan-desc", "SeriesDescription", "--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
