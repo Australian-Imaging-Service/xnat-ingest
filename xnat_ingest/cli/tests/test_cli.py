@@ -65,14 +65,14 @@ def my_format_gz_generate_sample_data(
     return [generator.generate(MyFormatGz, fill=10)]
 
 
-# Default field specs used to assign project/subject/visit IDs, matching what the
+# Default field specs used to assign project/subject/session IDs, matching what the
 # old, pre-split 'sort' command used to default to
 ASSIGN_ID_ARGS = [
     "--project",
     "StudyID",
     "--subject",
     "PatientID",
-    "--visit",
+    "--session",
     "AccessionNumber",
 ]
 
