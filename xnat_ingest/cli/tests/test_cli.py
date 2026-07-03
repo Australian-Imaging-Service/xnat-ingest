@@ -315,7 +315,7 @@ def test_stage_and_upload(
             last_name = f"Last{c.upper()}"
             PatientID = f"subject{i}"
             AccessionNumber = f"987654321{i}"
-            session_id = f"{PatientID}_{AccessionNumber}"
+            session_id = AccessionNumber
             session_ids.append(session_id)
             session_names.append(f"{project_id}.{PatientID}.{AccessionNumber}")
 
