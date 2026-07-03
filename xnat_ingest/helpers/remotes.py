@@ -223,7 +223,7 @@ class S3SessionListing(SessionListing):
             else:
                 # session resource: <resource_name> (no dot in dir name)
                 paths.add(first)
-        paths -= {p for p in paths if Path(p) == Metadata.FNAME}
+        paths -= {p for p in paths if Path(p).name == Metadata.FNAME}
         return paths
 
     @property
