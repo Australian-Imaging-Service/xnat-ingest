@@ -289,7 +289,7 @@ PASSWORD for the Orthanc user
 @click.argument("password", type=str, envvar="XINGEST_ORTHANC_PASSWORD")
 @click.option(
     "--to-process-label",
-    type=str | None,
+    type=str,
     default=None,
     envvar="XINGEST_ORTHANC_TO_PROCESS",
     help=(
@@ -300,7 +300,7 @@ PASSWORD for the Orthanc user
 )
 @click.option(
     "--processed-label",
-    type=str | None,
+    type=str,
     default=None,
     envvar="XINGEST_ORTHANC_PROCESSED",
     help=(
