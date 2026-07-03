@@ -55,12 +55,8 @@ class SessionListing(metaclass=abc.ABCMeta):
         return self.ids[1]
 
     @property
-    def visit_id(self) -> str:
-        return self.ids[2]
-
-    @property
     def session_id(self) -> str:
-        return "_".join((self.subject_id, self.visit_id))
+        return self.ids[2]
 
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
@@ -122,15 +118,7 @@ class LocalSessionListing(SessionListing):
 
     @property
     def session_id(self) -> str:
-        from fileformats.application import Yaml
-
-        metadata_path = self.fspath / ImagingSession.METADATA_FNAME
-        if metadata_path.exists():
-            meta = Yaml(metadata_path).load() or {}
-            override = meta.get("__session_id__")
-            if override is not None:
-                return str(override)
-        return "_".join((self.subject_id, self.visit_id))
+        return self.ids[2]
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:

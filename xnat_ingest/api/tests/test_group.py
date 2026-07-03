@@ -80,7 +80,7 @@ def test_group_output_reloadable_with_no_assigned_ids(
 
     assert reloaded.project_id is None
     assert reloaded.subject_id is None
-    assert reloaded.visit_id is None
+    assert reloaded.session_id is None
     assert reloaded.uid == session_dir.name[len(ImagingSession.PRE_ASSIGN_PREFIX) :]
     # scan description hasn't been resolved yet either
     scan = next(iter(reloaded.scans.values()))

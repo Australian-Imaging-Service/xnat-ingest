@@ -79,7 +79,7 @@ def scans_converter(
 @attrs.define(slots=False)
 class ImagingSession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
-    belong together under the same project/subject/visit IDs.
+    belong together under the same project/subject/session IDs.
 
     Parameters
     ----------
@@ -87,8 +87,8 @@ class ImagingSession:
         The project ID of the session
     subject_id: str, optional
         The subject ID of the session
-    visit_id: str, optional
-        The visit ID of the session
+    session_id: str, optional
+        The session (visit) ID of the session
     scans: ty.Dict[str, ImagingScan]
         The scans in the session
     run_uid: ty.Optional[str]
@@ -98,7 +98,7 @@ class ImagingSession:
     uid: str
     project_id: str | None = None
     subject_id: str | None = None
-    visit_id: str | None = None
+    session_id: str | None = None
     scans: ty.Dict[str, ImagingScan] = attrs.field(
         factory=dict,
         converter=scans_converter,
@@ -106,18 +106,17 @@ class ImagingSession:
     )
     session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
-    explicit_session_id: ty.Optional[str] = attrs.field(default=None)
     metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
     METADATA_FNAME = "__METADATA__.yaml"
     METADATA_DIR = "__metadata__"
     # Directory-name prefix used to flag sessions that have been grouped into scans but
-    # not yet had project/subject/visit IDs assigned to them. Session UIDs (e.g. DICOM
+    # not yet had project/subject/session IDs assigned to them. Session UIDs (e.g. DICOM
     # StudyInstanceUID) commonly contain '.'s, so a distinct prefix is needed to tell
-    # them apart from assigned "PROJECT.SUBJECT.VISIT" directory names when reloading.
+    # them apart from assigned "PROJECT.SUBJECT.SESSION" directory names when reloading.
     PRE_ASSIGN_PREFIX = "_."
     # Metadata key the originating session UID is stashed under when saving, so it can
-    # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.VISIT
+    # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.SESSION
     UID_METADATA_KEY = "__uid__"
 
     def __attrs_post_init__(self) -> None:
@@ -133,33 +132,27 @@ class ImagingSession:
 
     @property
     def name(self) -> str:
-        if any(i is None for i in (self.project_id, self.subject_id, self.visit_id)):
+        if any(i is None for i in (self.project_id, self.subject_id, self.session_id)):
             return None
-        return f"{self.project_id}.{self.subject_id}.{self.visit_id}"
+        return f"{self.project_id}.{self.subject_id}.{self.session_id}"
 
     @property
     def invalid_ids(self) -> bool:
         return (
             self.project_id.startswith("INVALID")
             or self.subject_id.startswith("INVALID")
-            or self.visit_id.startswith("INVALID")
+            or self.session_id.startswith("INVALID")
         )
 
     @property
     def path(self) -> str:
-        return ":".join([self.project_id, self.subject_id, self.visit_id])
+        return ":".join([self.project_id, self.subject_id, self.session_id])
 
     @property
     def staging_relpath(self) -> list[str]:
         if self.name is None:
             return [f"{self.PRE_ASSIGN_PREFIX}{self.uid}"]
         return [self.name]
-
-    @property
-    def session_id(self) -> str:
-        if self.explicit_session_id is not None:
-            return self.explicit_session_id
-        return f"{self.subject_id}_{self.visit_id}"
 
     @cached_property
     def modalities(self) -> str | tuple[str, ...]:
@@ -208,9 +201,8 @@ class ImagingSession:
             uid=self.uid,
             project_id=self.project_id,
             subject_id=self.subject_id,
-            visit_id=self.visit_id,
+            session_id=self.session_id,
             run_uid=self.run_uid,
-            explicit_session_id=self.explicit_session_id,
         )
 
     def select_resources(
@@ -466,8 +458,7 @@ class ImagingSession:
         self,
         project_field: str,
         subject_field: str,
-        visit_field: str | None = None,
-        session_field: str | None = None,
+        session_field: str,
         scan_field: str | None = None,
         constant_project_id: str | None = None,
     ) -> None:
@@ -481,12 +472,8 @@ class ImagingSession:
             metadata field to extract the XNAT project ID from
         subject_field : str
             metadata field to extract the XNAT subject ID from
-        visit_field : str
-            metadata field to extract the XNAT visit ID from
-        session_field: str, optional
-            when provided, the value of this field is used directly as the XNAT session
-            label instead of concatenating subject and visit IDs. Mutually exclusive
-            with visit_field being used as the label source.
+        session_field: str
+            metadata field to extract the XNAT session ID from
         constant_project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
@@ -501,25 +488,12 @@ class ImagingSession:
             if none of the candidate fields for a given ID resolve to a value in the
             session's metadata
         """
-        if visit_field and session_field:
-            raise ValueError(
-                f"Both 'visit_field' ({visit_field}) and 'session_field' ({session_field}) cannot be "
-                "provided concurrently"
-            )
-        if not visit_field and not session_field:
-            raise ValueError(
-                "At least one of 'visit_field' or 'session_field' needs to be provided"
-            )
-
         if constant_project_id is None:
             self.project_id = IDSpec(project_field).get_value(self.metadata)
         else:
             self.project_id = constant_project_id
         self.subject_id = IDSpec(subject_field).get_value(self.metadata)
-        if visit_field:
-            self.visit_id = IDSpec(visit_field).get_value(self.metadata)
-        else:
-            self.explicit_session_id = IDSpec(session_field).get_value(self.metadata)
+        self.session_id = IDSpec(session_field).get_value(self.metadata)
 
         if scan_field is not None:
             for scan in self.scans.values():
@@ -994,7 +968,7 @@ class ImagingSession:
         Parameters
         ----------
         yaml_path : Path
-            path to a YAML file named PROJECT.SUBJECT.VISIT.yaml
+            path to a YAML file named PROJECT.SUBJECT.SESSION.yaml
 
         Returns
         -------
@@ -1006,16 +980,16 @@ class ImagingSession:
         if len(parts) != 3:
             raise ValueError(
                 f"Expected metadata YAML filename to have format "
-                f"PROJECT.SUBJECT.VISIT.yaml, got '{yaml_path.name}'"
+                f"PROJECT.SUBJECT.SESSION.yaml, got '{yaml_path.name}'"
             )
-        project_id, subject_id, visit_id = parts
+        project_id, subject_id, session_id = parts
         with open(yaml_path) as f:
             metadata = yaml.safe_load(f)
         session = cls(
             uid=metadata[cls.UID_METADATA_KEY],
             project_id=project_id,
             subject_id=subject_id,
-            visit_id=visit_id,
+            session_id=session_id,
         )
         session.metadata = Metadata(metadata, session)
         return session
@@ -1052,7 +1026,7 @@ class ImagingSession:
             the loaded session
         """
         if session_dir.name.startswith(cls.PRE_ASSIGN_PREFIX):
-            # Session has been grouped into scans but not yet had project/subject/visit
+            # Session has been grouped into scans but not yet had project/subject/session
             # IDs assigned to it
             session = cls(uid=session_dir.name[len(cls.PRE_ASSIGN_PREFIX) :])
         else:
@@ -1062,15 +1036,15 @@ class ImagingSession:
                 # Backwards compatibility with old delimiter
                 parts = session_dir.name.split("-")
             if len(parts) == 4:
-                project_id, subject_id, visit_id, run_uid = parts
+                project_id, subject_id, session_id, run_uid = parts
             else:
-                project_id, subject_id, visit_id = parts
+                project_id, subject_id, session_id = parts
                 run_uid = None
             session = cls(
                 uid=session_dir.name,
                 project_id=project_id,
                 subject_id=subject_id,
-                visit_id=visit_id,
+                session_id=session_id,
                 run_uid=run_uid,
             )
         for item in session_dir.iterdir():
@@ -1137,7 +1111,7 @@ class ImagingSession:
         """
         saved = self.new_empty()
         if self.name is None:
-            # Project/subject/visit IDs haven't been assigned yet, so flag the
+            # Project/subject/session IDs haven't been assigned yet, so flag the
             # directory as not-yet-assigned rather than assuming they're set
             session_dirname = self.staging_relpath[0]
         else:
@@ -1145,7 +1119,7 @@ class ImagingSession:
                 project_id = self.project_id
             else:
                 project_id = "INVALID_UNRECOGNISED_" + self.project_id
-            session_dirname = ".".join((project_id, self.subject_id, self.visit_id))
+            session_dirname = ".".join((project_id, self.subject_id, self.session_id))
             if self.run_uid:
                 session_dirname += f".{self.run_uid}"
         session_dir = dest_dir / session_dirname

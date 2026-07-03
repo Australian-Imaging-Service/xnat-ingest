@@ -15,8 +15,8 @@ from xnat_ingest.model.session import ImagingSession
 
 PROJECT_FIELD = "StudyID"
 SUBJECT_FIELD = "PatientID"
-VISIT_FIELD = "AccessionNumber"
-SCAN_DESC_FIELD = "SeriesDescription"
+SESSION_FIELD = "AccessionNumber"
+SCAN_FIELD = "SeriesDescription"
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_assign_calls_load_assign_save_for_each_session(
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
         )
 
     assert errors == []
@@ -49,10 +49,9 @@ def test_assign_calls_load_assign_save_for_each_session(
     mock_session.assign.assert_called_once_with(
         project_field=PROJECT_FIELD,
         subject_field=SUBJECT_FIELD,
-        visit_field=VISIT_FIELD,
-        session_field=None,
+        session_field=SESSION_FIELD,
         constant_project_id=None,
-        scan_desc_field=None,
+        scan_field=None,
     )
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir,
@@ -60,7 +59,7 @@ def test_assign_calls_load_assign_save_for_each_session(
     )
 
 
-def test_assign_passes_scan_desc_field(grouped_dir: Path, tmp_path: Path) -> None:
+def test_assign_passes_scan_field(grouped_dir: Path, tmp_path: Path) -> None:
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
@@ -71,11 +70,11 @@ def test_assign_passes_scan_desc_field(grouped_dir: Path, tmp_path: Path) -> Non
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
-            scan_field=SCAN_DESC_FIELD,
+            session_field=SESSION_FIELD,
+            scan_field=SCAN_FIELD,
         )
 
-    assert mock_session.assign.call_args.kwargs["scan_desc_field"] == SCAN_DESC_FIELD
+    assert mock_session.assign.call_args.kwargs["scan_field"] == SCAN_FIELD
 
 
 def test_assign_passes_constant_project_id(grouped_dir: Path, tmp_path: Path) -> None:
@@ -89,7 +88,7 @@ def test_assign_passes_constant_project_id(grouped_dir: Path, tmp_path: Path) ->
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
             project_id="FIXED_PROJECT",
         )
 
@@ -112,7 +111,7 @@ def test_assign_collects_errors_without_raising(
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
         )
 
     assert len(errors) == 1
@@ -133,7 +132,7 @@ def test_assign_raise_errors_propagates(grouped_dir: Path, tmp_path: Path) -> No
                 output_dir=output_dir,
                 project_field=PROJECT_FIELD,
                 subject_field=SUBJECT_FIELD,
-                visit_field=VISIT_FIELD,
+                session_field=SESSION_FIELD,
                 raise_errors=True,
             )
 
@@ -153,7 +152,7 @@ def test_assign_deletes_source_dir_on_success_when_delete_true(
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
             delete=True,
         )
 
@@ -175,7 +174,7 @@ def test_assign_leaves_source_dir_when_delete_false(
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
             delete=False,
         )
 
@@ -197,7 +196,7 @@ def test_assign_does_not_delete_on_failure_even_if_delete_true(
             output_dir=output_dir,
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
-            visit_field=VISIT_FIELD,
+            session_field=SESSION_FIELD,
             delete=True,
         )
 
@@ -237,8 +236,8 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
         output_dir=output_dir,
         project_field=PROJECT_FIELD,
         subject_field=SUBJECT_FIELD,
-        visit_field=VISIT_FIELD,
-        scan_field=SCAN_DESC_FIELD,
+        session_field=SESSION_FIELD,
+        scan_field=SCAN_FIELD,
     )
 
     assert errors == []

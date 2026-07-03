@@ -15,8 +15,7 @@ def assign(
     output_dir: Path,
     project_field: str,
     subject_field: str,
-    visit_field: str,
-    session_field: str | None = None,
+    session_field: str,
     scan_field: str | None = None,
     project_id: str | None = None,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
@@ -35,16 +34,14 @@ def assign(
         Field name to use for extracting the project ID from the input files.
     subject_field: str
         Field name to use for extracting the subject ID from the input files.
-    visit_field: str
-        Field name to use for extracting the visit ID from the input files.
-    session_field: str | None
-        Field name to use for extracting the session ID from the input files. If None, the
-        session ID will be generated from the subject and visit IDs.
+    session_field: str
+        Field name to use for extracting the session ID from the input files.
     scan_field: str | None
         Field name to use for extracting a description for each scan. Scans for which the field
         can't be resolved are left without a description.
     project_id: str | None
         If provided, this project ID will be used for all sessions instead of extracting it from the input files.
+        Useful for instruments that upload to a single project.
     copy_mode: FileSet.CopyMode
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
@@ -84,7 +81,6 @@ def assign(
             session.assign(
                 project_field=project_field,
                 subject_field=subject_field,
-                visit_field=visit_field,
                 session_field=session_field,
                 constant_project_id=project_id,
                 scan_field=scan_field,

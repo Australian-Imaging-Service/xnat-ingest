@@ -18,7 +18,7 @@ from ..helpers.logging import logger, set_logger_handling
 
 @base_cli.command(
     name="assign",
-    help="""Assigns project, subject and visit (or session) IDs, extracted from session
+    help="""Assigns project, subject and session IDs, extracted from session
 metadata, to sessions that have already been grouped into scans/resources
 
 INPUT_DIR is the path to the directory containing the grouped-but-not-yet-assigned
@@ -58,25 +58,14 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     ),
 )
 @click.option(
-    "--visit",
-    "visit_field",
-    type=str,
-    default=None,
-    envvar="XINGEST_VISIT",
-    help=(
-        "The keyword of the metadata field to extract the XNAT imaging session ID from "
-        "(XINGEST_VISIT env. var)"
-    ),
-)
-@click.option(
     "--session",
     "session_field",
     type=str,
-    default=None,
+    default="AccessionNumber",
     envvar="XINGEST_SESSION",
     help=(
-        "The metadata field to use as the XNAT session label directly, instead of concatenating "
-        "subject and visit IDs. (XINGEST_SESSION env. var)"
+        "The keyword of the metadata field to extract the XNAT session ID from "
+        "(XINGEST_SESSION env. var)"
     ),
 )
 @click.option(
@@ -157,8 +146,7 @@ def assign_cli(
     output_dir: Path,
     project_field: str,
     subject_field: str,
-    visit_field: str | None,
-    session_field: str | None,
+    session_field: str,
     constant_project_id: str | None,
     scan_field: str | None,
     delete: bool,
@@ -188,8 +176,7 @@ def assign_cli(
             output_dir=output_dir,
             project_field=project_field,
             subject_field=subject_field,
-            visit_field=visit_field,
-            session_field=session_field or None,
+            session_field=session_field,
             project_id=constant_project_id,
             scan_field=scan_field,
             delete=delete,
