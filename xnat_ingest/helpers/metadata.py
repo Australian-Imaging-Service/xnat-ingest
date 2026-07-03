@@ -55,6 +55,9 @@ class Metadata(ty.Mapping[str, ty.Any]):
         except KeyError:
             return default
 
+    def update(self, other: ty.Mapping[str, ty.Any]) -> None:
+        self._dct.update(other)
+
     def _ensure_read(self) -> None:
         if not self._read:
             self._dct.update(self._obj.load_metadata())

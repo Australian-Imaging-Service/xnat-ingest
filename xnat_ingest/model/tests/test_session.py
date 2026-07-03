@@ -28,7 +28,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec
+from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes
 
@@ -319,6 +319,46 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
                 SyngoMi_Vr20b_ListMode,
                 SyngoMi_Vr20b_CountRate,
             ]
+        )
+
+
+def test_path_metadata_regex_extracts_named_groups(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    sessions = ImagingSession.from_paths(
+        f"{raw_data_dir}/**/*",
+        datatypes=[DicomSeries],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<cohort>[^/]+)$", DicomSeries),
+        ],
+    )
+
+    assert len(sessions) == 1
+    scan = next(iter(sessions[0].scans.values()))
+    resource = next(iter(scan.resources.values()))
+    assert resource.metadata["cohort"] == "cohort-A"
+
+
+def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    with pytest.raises(ValueError, match="Could not extract metadata"):
+        ImagingSession.from_paths(
+            f"{raw_data_dir}/**/*",
+            datatypes=[DicomSeries],
+            session_field=[IDSpec("StudyInstanceUID")],
+            scan_field=[IDSpec("SeriesNumber")],
+            resource_field=[IDSpec("ImageType[2:]")],
+            path_metadata_regex=[
+                PathMetadataRegex(r"^/nonexistent/(?P<cohort>.+)$", DicomSeries),
+            ],
         )
 
 

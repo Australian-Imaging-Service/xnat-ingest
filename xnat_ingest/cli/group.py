@@ -5,7 +5,6 @@ from pathlib import Path
 
 import click
 from fileformats.core import FileSet
-from fileformats.medimage import DicomSeries
 
 from xnat_ingest.cli.base import base_cli
 
@@ -16,7 +15,7 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
-    PathMetadata,
+    PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
 
@@ -79,7 +78,7 @@ are uploaded to XNAT
     type=MimeType.cli_type,
     metavar="<mime-type>",
     multiple=True,
-    default=None,
+    default=["medimage/dicom-series"],
     envvar="XINGEST_DATATYPES",
     help=(
         'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
@@ -90,17 +89,18 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--path-metadata",
-    type=PathMetadata.cli_type,
-    metavar="<regex> <datatype>",
-    nargs=2,
+    "--path-metadata-regex",
+    type=PathMetadataRegex.cli_type,
     multiple=True,
+    nargs=2,
+    metavar="<regex> <datatype>",
+    envvar="XINGEST_PATH_METADATA_REGEX",
     default=(),
     help=(
-        'Regular expressions to extract "metadata" values from resource paths to be saved '
-        "with named groups for each of the metadata fields to be extracted. If not present, "
-        "the extracted metadata fields will be added to the save-metadata list at the 'resource' "
-        "level"
+        'Regular expressions to extract "metadata" values from resource file paths as named groups. '
+        "using Python regular expression syntax. The named groups are used as metadata fields for "
+        "the resource files, and the extracted values will be used to populate the corresponding "
+        "metadata fields to complement the metadata read from the file headers."
     ),
 )
 @click.option(
@@ -196,7 +196,7 @@ def group_cli(
     session: list[IDSpec],
     scan: list[IDSpec],
     resource: list[IDSpec],
-    path_metadata: list[PathMetadata],
+    path_metadata_regex: list[PathMetadataRegex],
     delete: bool,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
@@ -218,11 +218,6 @@ def group_cli(
         logger_configs=loggers,
         additional_loggers=additional_loggers,
     )
-    datatypes: list[ty.Type[FileSet]]
-    if not datatype:
-        datatypes = [DicomSeries]
-    else:
-        datatypes = [dt.datatype for dt in datatype]  # type: ignore[misc]
 
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
@@ -230,7 +225,7 @@ def group_cli(
         errors = group(
             input_paths=input_paths,
             output_dir=output_dir,
-            datatypes=datatypes,
+            datatypes=[dt.datatype for dt in datatype],
             session=session,
             scan=scan,
             resource=resource,
@@ -238,6 +233,7 @@ def group_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             wait_period=wait_period,
+            path_metadata_regex=path_metadata_regex,
             recursive=recursive,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
         )

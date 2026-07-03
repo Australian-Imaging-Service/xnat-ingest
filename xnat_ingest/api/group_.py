@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec
+from ..helpers.arg_types import IDSpec, PathMetadataRegex
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -21,6 +21,7 @@ def group(
     session: list[IDSpec],
     scan: list[IDSpec],
     resource: list[IDSpec],
+    path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     delete: bool = False,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
@@ -41,12 +42,19 @@ def group(
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
     datatypes: list[MimeType]
         List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
-    session: list[FieldSpec] | None
+    session: list[IDSpec] | None
         List of field specifications to use for extracting the session UIDs from the input files to group them into
         separate sessions
-    scan: list[FieldSpec]
+    scan: list[IDSpec]
         List of field specifications to use for extracting the scan IDs from the input files to group them into
         scans
+    resource: list[IDSpec]
+        List of field specifications to use for extracting the resource IDs from the input files to group them into
+        resources
+    path_metadata_regex: ty.Sequence[PathMetadataRegex]
+        Regular expressions to extract "metadata" values from resource file paths as named groups. The named
+        groups are used as metadata fields for the resource files, and the extracted values will be used to populate
+        the corresponding metadata fields to complement the metadata read from the file headers.
     delete: bool
         If True, the input files will be deleted after staging. If False, the input files will be left in place.
     raise_errors: bool
@@ -84,6 +92,7 @@ def group(
         resource_field=resource,
         recursive=recursive,
         avoid_clashes=avoid_clashes,
+        path_metadata_regex=path_metadata_regex,
     )
 
     save_sessions_to_dir(

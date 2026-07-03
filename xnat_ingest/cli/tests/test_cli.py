@@ -731,6 +731,40 @@ def test_stage_wait_period(
     assert list(sorted_dir.iterdir())
 
 
+def test_group_path_metadata_regex(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms" / "cohort-A"
+    dicoms_dir.mkdir(parents=True)
+    get_pet_image(dicoms_dir)
+
+    result = cli_runner(
+        group_cli,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--path-metadata-regex",
+            r".*/(?P<cohort>[^/]+)$",
+            "medimage/dicom-series",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    mdata = json.loads((resource_dir / Metadata.FNAME).read_bytes())
+    assert mdata["cohort"] == "cohort-A"
+
+
 def test_sort_orthanc_collate_resources(
     cli_runner: ty.Any,
     tmp_path: Path,

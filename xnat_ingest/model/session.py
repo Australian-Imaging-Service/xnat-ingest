@@ -26,7 +26,7 @@ from frametree.core.frameset import FrameSet
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, IDSpec
+from ..helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
@@ -301,6 +301,7 @@ class ImagingSession:
         resource_field: list[IDSpec],
         recursive: bool = False,
         avoid_clashes: bool = True,
+        path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -326,6 +327,10 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
+        path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
+            Regular expressions to extract "metadata" values from resource file paths as named groups. The named
+            groups are used as metadata fields for the resource files, and the extracted values will be used to populate
+            the corresponding metadata fields to complement the metadata read from the file headers.
 
 
         Returns
@@ -445,12 +450,24 @@ class ImagingSession:
                 scan_id,
                 session_uid,
             )
+            metadata = None
+            for path_mdata in path_metadata_regex:
+                if isinstance(fileset, path_mdata.datatype):
+                    fileset_path = str(getattr(fileset, "fspath", fileset.parent))
+                    match = re.match(path_mdata.regex, fileset_path)
+                    if match is None:
+                        raise ValueError(
+                            f"Could not extract metadata from path '{fileset_path}' "
+                            f"using pattern '{path_mdata.regex}'"
+                        )
+                    metadata = match.groupdict()
             session.add_resource(
                 scan_id,
                 None,
                 resource_label,
                 fileset,
                 avoid_clashes=avoid_clashes,
+                metadata=metadata,
             )
         return list(sessions.values())
 
@@ -834,6 +851,7 @@ class ImagingSession:
         overwrite: bool = False,
         associated: AssociatedFiles | None = None,
         avoid_clashes: bool = False,
+        metadata: ty.Mapping[str, ty.Any] = None,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -855,6 +873,8 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
+        metadata : dict[str, Any], optional
+            Dictionary containing metadata values to update the resource with.
 
         Raises
         ------
@@ -885,6 +905,8 @@ class ImagingSession:
                     f"for scan ID {scan_id}"
                 )
         resource = ImagingResource(name=resource_name, fileset=fileset, scan=scan)
+        if metadata:
+            resource.metadata.update(metadata)
         try:
             existing = scan.resources[resource_name]
         except KeyError:
