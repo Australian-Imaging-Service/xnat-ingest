@@ -16,9 +16,10 @@ from pathlib import Path
 
 import attrs
 import yaml
-from fileformats.core import FileSet, from_mime, from_paths
+from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
-from fileformats.medimage import DicomCollection, MedicalImage
+from fileformats.medimage import DicomCollection
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
@@ -72,6 +73,7 @@ class ImagingSession:
     )
     session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
+    session_id_override: ty.Optional[str] = attrs.field(default=None)
     _metadata: dict[str, ty.Any] | None = attrs.field(
         default=None, eq=False, repr=False, init=False
     )
@@ -82,7 +84,6 @@ class ImagingSession:
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
             scan.session = self
-
 
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
@@ -109,6 +110,8 @@ class ImagingSession:
 
     @property
     def session_id(self) -> str:
+        if self.session_id_override is not None:
+            return self.session_id_override
         return self.make_session_id(self.project_id, self.subject_id, self.visit_id)
 
     @classmethod
@@ -159,6 +162,7 @@ class ImagingSession:
             project_id=self.project_id,
             subject_id=self.subject_id,
             visit_id=self.visit_id,
+            session_id_override=self.session_id_override,
         )
 
     def select_resources(
@@ -288,7 +292,8 @@ class ImagingSession:
         scan_id_field: list[FieldSpec],
         scan_desc_field: list[FieldSpec],
         resource_field: list[FieldSpec],
-        session_field: list[FieldSpec] | None = None,
+        session_uid_field: list[FieldSpec] | None = None,
+        session_id_field: list[FieldSpec] | None = None,
         project_id: str | None = None,
         avoid_clashes: bool = False,
         recursive: bool = False,
@@ -321,10 +326,13 @@ class ImagingSession:
         resource_field: list[IdField]
             the metadata field that contains the XNAT resource ID for the imaging session,
             by default {FileSet: "ImageType[-1]"}
-        session_field: list[IdField], optional
-            the name of the metadata field that uniquely identifies the session, used
-            to check that the values extracted from the IDs across the DICOM scans are
-            consistent across DICOM files within the session, by default "StudyInstanceUID"
+        session_uid_field: list[IdField], optional
+            the metadata field that uniquely identifies the session, used to group files
+            together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
+        session_id_field: list[IdField], optional
+            when provided, the value of this field is used directly as the XNAT session label
+            instead of concatenating subject and visit IDs. Mutually exclusive with visit_field
+            being used as the label source.
         project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
@@ -417,7 +425,8 @@ class ImagingSession:
             scan_id_field,
             scan_desc_field,
             resource_field,
-            session_field,
+            session_uid_field,
+            session_id_field,
         ):
             if spec is not None:
                 for field in spec:
@@ -443,8 +452,8 @@ class ImagingSession:
             "Sorting resources into XNAT tree structure...",
         ):
             session_uid = (
-                FieldSpec.get_value_from_fields(resource, session_field)
-                if session_field
+                FieldSpec.get_value_from_fields(resource, session_uid_field)
+                if session_uid_field
                 else None
             )
             missing_ids_session = (
@@ -458,9 +467,16 @@ class ImagingSession:
             subject_id = FieldSpec.get_value_from_fields(
                 resource, subject_field, missing_ids_session, escape=True
             )
-            visit_id = FieldSpec.get_value_from_fields(
-                resource, visit_field, missing_ids_session, escape=True
-            )
+            if session_id_field:
+                extracted_session_id = FieldSpec.get_value_from_fields(
+                    resource, session_id_field, missing_ids_session, escape=True
+                )
+                visit_id = extracted_session_id
+            else:
+                extracted_session_id = None
+                visit_id = FieldSpec.get_value_from_fields(
+                    resource, visit_field, missing_ids_session, escape=True
+                )
             scan_id = FieldSpec.get_value_from_fields(
                 resource, scan_id_field, missing_ids_session
             )
@@ -495,6 +511,7 @@ class ImagingSession:
                     subject_id=subject_id,
                     visit_id=visit_id,
                     run_uid=run_uid,
+                    session_id_override=extracted_session_id,
                 )
                 sessions[session_uid] = session
             else:
@@ -592,6 +609,7 @@ class ImagingSession:
 
         class _TagsAdapter:
             """Adapter so FieldSpec.get_value() can read an Orthanc tag dict."""
+
             def __init__(self, tags: dict) -> None:
                 self.metadata = tags
 
@@ -647,7 +665,11 @@ class ImagingSession:
             study = get_json(f"/studies/{study_id}")
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
-            proj = project_id if project_id is not None else eval_field(project_field, study_tags, escape=True)
+            proj = (
+                project_id
+                if project_id is not None
+                else eval_field(project_field, study_tags, escape=True)
+            )
             if available_projects is not None and proj not in available_projects:
                 proj = "INVALID_UNRECOGNISED_" + proj
             subj = eval_field(subject_field, study_tags, escape=True)
@@ -672,7 +694,9 @@ class ImagingSession:
                 checksums: dict[str, str] = {}
                 for instance in instances:
                     instance_id = instance["ID"]
-                    sop_uid = instance["MainDicomTags"].get("SOPInstanceUID", instance_id)
+                    sop_uid = instance["MainDicomTags"].get(
+                        "SOPInstanceUID", instance_id
+                    )
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
                     if dest_path.exists():
@@ -699,7 +723,9 @@ class ImagingSession:
             if not metadata_path.exists():
                 if modalities:
                     study_tags["Modality"] = (
-                        next(iter(modalities)) if len(modalities) == 1 else list(modalities)
+                        next(iter(modalities))
+                        if len(modalities) == 1
+                        else list(modalities)
                     )
                 with open(metadata_path, "w") as f:
                     yaml.dump(study_tags, f, indent=4)
@@ -720,37 +746,100 @@ class ImagingSession:
     def deidentify(
         self,
         dest_dir: Path,
-        copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+        specs: dict[type[FileSet], ty.Any] = None,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
-    ) -> Self:
+        require_matching_spec: bool = True,
+    ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
         Parameters
         ----------
         dest_dir : Path
             the directory to save the deidentified files into
+        specs : dict[type[FileSet], Any], optional
+            a project-specific specification that defines how to deidentify the different
+            file types within the imaging session. The keys of the project spec are
+            the mime-like of the file types (see https://arcanaframework.github.io/fileformats/)
+            and the values are arbitrary file-format-specific specifications.
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
-            by default FileSet.CopyMode.copy
+            by default FileSet.CopyMode.hardlink_or_copy
+        avoid_clashes : bool, optional
+            when copying a file that doesn't need to be deidentified, if a resource
+            with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found,
+            by default False
+        require_matching_spec : bool, optional
+            whether to require a matching specification for each fileset, by default True
 
         Returns
         -------
         ImagingSession
             a new session with deidentified images
+        dict[str, Any]
+            a mapping containing the original values of metadata fields that
+            have been removed or modified
         """
+        if specs is None:
+            specs = {}
+
+        def select_spec(fileset: FileSet) -> ty.Any:
+            """Select the appropriate deidentification specification for the
+            resource based on its file type
+            """
+            matching_specs = {k: v for k, v in specs.items() if isinstance(fileset, k)}
+            if not matching_specs:
+                return None
+            elif len(matching_specs) > 1:
+                for k in matching_specs:
+                    if all(issubclass(k, other_k) for other_k in matching_specs):
+                        return matching_specs[k]
+                raise KeyError(
+                    f"Multiple deidentification specifications found for '{to_mime(type(fileset))}'"
+                    f"file types. Please provide a more specific formats to map the specification"
+                    f"specifications: {list(matching_specs)}"
+                )
+            return next(iter(matching_specs.values()))
+
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
+        reid_series = []
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
-                if not isinstance(resource.fileset, MedicalImage):
+                if not getattr(resource.fileset, "contains_phi", False):
                     deid_resource = resource.fileset.copy(
-                        resource_dest_dir, mode=copy_mode, new_stem=resource_name
+                        resource_dest_dir,
+                        mode=copy_mode,
+                        new_stem=resource_name,
+                        avoid_clashes=True,
                     )
                 else:
-                    deid_resource = resource.fileset.deidentify(
-                        resource_dest_dir, copy_mode=copy_mode, new_stem=resource_name
+                    resource_spec = select_spec(resource.fileset)
+                    if resource_spec is None:
+                        msg = (
+                            "No deidentification specification found for %s fileset in %s/%s resource. "
+                            "Please provide a project specification for %s in the file format hierarchy to "
+                            "deidentify this resource. Returning None and copying the files without "
+                            "deidentification, which may lead to PHI being uploaded to XNAT if the fileset "
+                            "contains PHI. Matching specifications found in project spec: %s"
+                        )
+                        msg_vars = (
+                            type(resource.fileset).__name__,
+                            scan.id,
+                            resource_name,
+                            type(resource.fileset).__name__,
+                            list(specs),
+                        )
+                        if require_matching_spec:
+                            raise KeyError(msg % msg_vars)
+                        else:
+                            logger.warning(msg, *msg_vars)
+                    deid_resource, reid_mdata = resource.fileset.deidentify(
+                        out_dir=resource_dest_dir, spec=resource_spec
                     )
+                    reid_series.append(reid_mdata)
                 deidentified.add_resource(
                     scan.id,
                     scan.type,
@@ -758,7 +847,7 @@ class ImagingSession:
                     deid_resource,
                     avoid_clashes=avoid_clashes,
                 )
-        return deidentified
+        return deidentified, collate_metadata_series(reid_series)
 
     def associate_files(
         self,
@@ -1073,7 +1162,9 @@ class ImagingSession:
                 session.session_resources[resource.name] = resource
         metadata_path = session_dir / cls.METADATA_FNAME
         if metadata_path.exists():
-            session._metadata = Yaml(metadata_path).load()
+            raw_meta = Yaml(metadata_path).load() or {}
+            session.session_id_override = raw_meta.pop("__session_id__", None)
+            session._metadata = raw_meta if raw_meta else None
         return session
 
     def save(
@@ -1124,21 +1215,26 @@ class ImagingSession:
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
-            saved_scan = scan.save(session_dir, copy_mode=copy_mode, collation_map=collation_map)
+            saved_scan = scan.save(
+                session_dir, copy_mode=copy_mode, collation_map=collation_map
+            )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         for resource in self.session_resources.values():
             saved_resource = resource.save(session_dir, copy_mode=copy_mode)
             saved.session_resources[saved_resource.name] = saved_resource
-        if save_metadata:
+        if save_metadata or self.session_id_override is not None:
             metadata_path = (
                 session_dir / self.METADATA_FNAME
-                if save_metadata is True
+                if isinstance(save_metadata, bool)
                 else save_metadata
             )
             logger.debug("Saving session metadata to '%s'", metadata_path)
+            meta = dict(self.metadata) if save_metadata and self.metadata else {}
+            if self.session_id_override is not None:
+                meta["__session_id__"] = self.session_id_override
             with open(metadata_path, "w") as f:
-                yaml.dump(self.metadata, f, indent=4)
+                yaml.dump(meta, f, indent=4)
         return saved, session_dir
 
     MANIFEST_FILENAME = "MANIFEST.yaml"

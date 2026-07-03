@@ -20,9 +20,10 @@ dependencies = [
     "tqdm >=4.64.1",
     "boto3",
     "requests",
+    "cryptography",
     "natsort",
     "paramiko",
-    "xnat",
+    "xnat==0.7.2",
     "frametree",
     "frametree-xnat",
 ]

@@ -6,6 +6,7 @@ import re
 import string
 import typing as ty
 from collections import Counter
+from pathlib import Path
 
 import attrs
 import click.types
@@ -159,6 +160,15 @@ class XnatLogin(CliTyped):
     host: str
     user: str
     password: str
+
+
+@attrs.define
+class OrthancLogin(CliTyped):
+
+    url: str
+    user: str
+    password: str
+    storage_dir: Path = attrs.field(converter=Path)
 
 
 @attrs.define

@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import time
@@ -7,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
+import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json, Yaml
 from fileformats.medimage import DicomSeries
@@ -29,7 +31,13 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
-from xnat_ingest.cli import associate_cli, check_upload_cli, sort_cli, upload_cli
+from xnat_ingest.cli import (
+    associate_cli,
+    check_upload_cli,
+    deidentify_cli,
+    sort_cli,
+    upload_cli,
+)
 from xnat_ingest.api import INVALID_NAME_DEFAULT, list_session_dirs
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from xnat_ingest.helpers.arg_types import FieldSpec, XnatLogin
@@ -445,7 +453,6 @@ def test_stage_and_upload(
         [
             str(sorted_dir),
             str(associated_dir),
-            "--associated-files",
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
             (
                 str(associated_files_dir)
@@ -544,6 +551,25 @@ def test_stage_and_upload(
         "as all the resources already exist on XNAT" in result.stdout
     ), show_cli_trace(result)
 
+    dicom_scan_headers = {
+        "1": {
+            "frames": 1,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421141748900003651",
+        },
+        "2": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421255920000017965",
+        },
+        "4": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422262922600127929",
+        },
+        "6": {
+            "frames": 0,  # PET Statistics, not a image
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422251027100000102",
+        },
+    }
+
     with xnat4tests.connect() as xnat_login:
         xproject = xnat_login.projects[project_id]
         for session_id in session_ids:
@@ -558,6 +584,26 @@ def test_stage_and_upload(
                 "602",
                 # "603",
             ]
+
+            for xscan in xsession.scans.values():
+                assert (
+                    xscan.resources
+                ), f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                for xresource in xscan.resources.values():
+                    assert xresource.files, (
+                        f"Resource {xresource.label!r} on scan {xscan.id!r} "
+                        f"in {session_id!r} has no files"
+                    )
+                if xscan.id in dicom_scan_headers:
+                    expected = dicom_scan_headers[xscan.id]
+                    assert xscan.frames == expected["frames"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has frames={xscan.frames!r}, "
+                        f"expected {expected['frames']!r} — DICOM headers may not have been extracted"
+                    )
+                    assert xscan.uid == expected["UID"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.uid!r}, "
+                        f"expected {expected['UID']!r} — DICOM headers may not have been extracted"
+                    )
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
@@ -645,6 +691,81 @@ def test_stage_wait_period(
     logs = stage_log_file.read_text()
     assert "Successfully staged " in logs, show_cli_trace(result)
     assert list(sorted_dir.iterdir())
+
+
+def test_sort_orthanc_collate_resources(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    # Create DICOM files and arrange them in an Orthanc-like content-addressed nested
+    # structure, where each instance is in its own hash-addressed subdirectory
+    pet_dir = tmp_path / "pet_source"
+    get_pet_image(
+        pet_dir,
+        StudyID="TESTPROJECT",
+        PatientID="subject1",
+        AccessionNumber="acc1",
+    )
+
+    orthanc_dir = tmp_path / "orthanc"
+    dcm_files = list(pet_dir.iterdir())[:4]
+    for i, dcm in enumerate(dcm_files):
+        nested = orthanc_dir / f"hash{i // 2}" / f"subhash{i % 2}"
+        nested.mkdir(parents=True, exist_ok=True)
+        os.link(dcm, nested / dcm.name)
+
+    # Without --collate-resources the nested source structure is preserved in the resource dir
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert any(
+        item.is_dir() for item in resource_dir.iterdir()
+    ), "Expected nested sub-directory structure without collation"
+
+    # With --collate-resources siblings, all files are placed flat in the resource dir
+    sorted_collated_dir = tmp_path / "sorted_collated"
+    sorted_collated_dir.mkdir()
+
+    result = cli_runner(
+        sort_cli,
+        [
+            str(orthanc_dir),
+            str(sorted_collated_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+            "--collate-resources",
+            "medimage/dicom-series",
+            "siblings",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_collated_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert all(
+        item.is_file() for item in resource_dir.iterdir()
+    ), "Expected flat structure with 'siblings' collation"
 
 
 def test_stage_invalid_ids(
@@ -1180,6 +1301,185 @@ def test_check_upload_checksum_fail(
     assert "MISSING RESOURCE" not in logs
     assert "EMPTY SCAN" not in logs
     assert "CHECKSUM FAIL" in logs
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
+        "test the full deidentification pipeline once that is done"
+    ),
+)
+def test_deidentify_cli_dicom(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Sort DICOM sessions then run deidentify_cli end-to-end.
+
+    Verifies the full pipeline: staging → session loading → spec parsing →
+    deidentification → reid persistence.
+    """
+    PROJECT_ID = "TESTDEIDPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
+
+    DICOM_DEID_SPEC = """
+# Specification for de-identifying DICOM files for project PROJ goes here
+"""
+
+    # 1. Generate DICOM test data for multiple scan types in subdirectories
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    for get_image, subdir in [
+        (get_pet_image, "pet"),
+        (get_ac_image, "ac"),
+        (get_topogram_image, "topogram"),
+    ]:
+        get_image(
+            dicoms_dir / subdir,
+            StudyID=PROJECT_ID,
+            PatientID=PATIENT_ID,
+            AccessionNumber=ACCESSION,
+            StudyInstanceUID=STUDY_UID,
+        )
+
+    # 2. Stage with sort_cli
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    sort_log = tmp_path / "sort.log"
+    result = cli_runner(
+        sort_cli,
+        [
+            str(dicoms_dir),
+            str(staged_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+        ],
+        env={"XINGEST_LOGGERS": f"file debug {sort_log};stream info stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    assert (staged_dir / session_name).exists(), "Session not staged"
+
+    # 3. Project spec mapping DicomSeries to an empty spec dict
+
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
+
+    # 4. Run deidentify_cli with the mock deidentify implementation
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    deid_log = tmp_path / "deid.log"
+
+    result = cli_runner(
+        deidentify_cli,
+        [
+            str(staged_dir),
+            str(output_dir),
+            str(spec_dir),
+            str(reid_dir),
+            "--raise-errors",
+        ],
+        env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 5. Log reports success
+    logs = deid_log.read_text()
+    assert "Deidentification completed successfully" in logs, show_cli_trace(result)
+
+    # 6. Reid metadata captures original PHI values
+    reid_file = reid_dir / f"{session_name}.json"
+    assert reid_file.exists(), f"Reid file missing: {reid_file}"
+    reid = json.loads(reid_file.read_bytes())
+    assert reid.get("PatientID") == PATIENT_ID
+    assert reid.get("PatientName") != ""
+
+    # 7. Deidentified session directory contains files
+    deid_session_root = output_dir / session_name
+    assert deid_session_root.exists()
+    assert any(
+        p.is_file() for p in deid_session_root.rglob("*")
+    ), f"No files found under {deid_session_root}"
+
+
+def test_deidentify_cli_dicom_encrypted_reid(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file.
+
+    ImagingSession.deidentify is mocked so the test focuses on the encryption
+    logic rather than the deidentification implementation.
+    """
+    from cryptography.fernet import Fernet
+    from unittest.mock import MagicMock
+    from xnat_ingest.model.session import ImagingSession
+
+    PROJECT_ID = "TESTDEIDENCPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.1"
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        sort_cli,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    (project_spec_dir / "medimage@dicom-series").write_text("Dummy spec")
+
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    key = Fernet.generate_key()
+
+    def mock_deidentify(self, dest_dir, **kwargs):
+        mock_session = MagicMock()
+        mock_session.save = MagicMock()
+        return mock_session, {"PatientID": PATIENT_ID}
+
+    with patch.object(ImagingSession, "deidentify", mock_deidentify):
+        result = cli_runner(
+            deidentify_cli,
+            [
+                str(staged_dir),
+                str(output_dir),
+                str(spec_dir),
+                str(reid_dir),
+                "--raise-errors",
+                "--reid-encrypt-key",
+                key.decode(),
+            ],
+        )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    enc_file = reid_dir / f"{session_name}.json.enc"
+    assert enc_file.exists(), f"Encrypted reid file missing: {enc_file}"
+    assert not (reid_dir / f"{session_name}.json").exists()
+
+    decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
+    assert decrypted.get("PatientID") == PATIENT_ID
 
 
 def transfer_to_source(

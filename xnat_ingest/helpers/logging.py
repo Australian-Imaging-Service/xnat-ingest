@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+
 import logging
 import os
 import sys
@@ -101,7 +102,7 @@ class DiscordHandler(logging.Handler):
     def __init__(self, webhook_url: str):
         super().__init__()
         self.webhook_url = webhook_url
-        self.client = discord.Webhook.from_url(webhook_url)
+        self.client = discord.SyncWebhook.from_url(webhook_url)
 
     def emit(self, record: logging.LogRecord) -> None:
-        asyncio.run(self.client.send(record.msg))
+        self.client.send(self.format(record))

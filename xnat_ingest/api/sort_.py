@@ -10,7 +10,7 @@ from filelock import SoftFileLock
 from frametree.xnat import Xnat
 from tqdm import tqdm
 
-from ..helpers.arg_types import FieldSpec, XnatLogin
+from ..helpers.arg_types import FieldSpec, OrthancLogin, XnatLogin
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -26,10 +26,11 @@ def sort(
     project_field: list[FieldSpec],
     subject_field: list[FieldSpec],
     visit_field: list[FieldSpec],
-    session_field: list[FieldSpec] | None,
+    session_uid_field: list[FieldSpec] | None,
     scan_id_field: list[FieldSpec],
     scan_desc_field: list[FieldSpec],
     resource_field: list[FieldSpec],
+    session_id_field: list[FieldSpec] | None = None,
     project_id: str | None = None,
     delete: bool = False,
     raise_errors: bool = False,
@@ -40,10 +41,7 @@ def sort(
     recursive: bool = False,
     xnat_login: XnatLogin | None = None,
     save_metadata: bool | Path = False,
-    orthanc_url: str | None = None,
-    orthanc_user: str | None = None,
-    orthanc_password: str | None = None,
-    orthanc_storage_dir: Path | None = None,
+    orthanc: OrthancLogin | None = None,
     orthanc_label: str | None = None,
     orthanc_skip_label: str = "xnat-sorted",
 ) -> list[str]:
@@ -132,23 +130,19 @@ def sort(
         metadata_dir = output_dir / ImagingSession.METADATA_DIR
         metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    if orthanc_url:
-        if orthanc_storage_dir is None:
-            raise ValueError(
-                "--orthanc-storage-dir must be provided when using --orthanc-url"
-            )
+    if orthanc:
         ImagingSession.from_orthanc(
-            orthanc_url=orthanc_url,
+            orthanc_url=orthanc.url,
             output_dir=output_dir,
-            orthanc_storage_dir=orthanc_storage_dir,
+            orthanc_storage_dir=orthanc.storage_dir,
             project_field=project_field,
             subject_field=subject_field,
             visit_field=visit_field,
             scan_id_field=scan_id_field,
             scan_desc_field=scan_desc_field,
             project_id=project_id,
-            orthanc_user=orthanc_user,
-            orthanc_password=orthanc_password,
+            orthanc_user=orthanc.user,
+            orthanc_password=orthanc.password,
             orthanc_label=orthanc_label,
             orthanc_skip_label=orthanc_skip_label,
             available_projects=project_list,
@@ -161,7 +155,8 @@ def sort(
         project_field=project_field,
         subject_field=subject_field,
         visit_field=visit_field,
-        session_field=session_field,
+        session_uid_field=session_uid_field,
+        session_id_field=session_id_field,
         scan_id_field=scan_id_field,
         scan_desc_field=scan_desc_field,
         resource_field=resource_field,
@@ -282,13 +277,14 @@ def sort(
 
 
 def list_session_dirs(sorted_dir: Path) -> list[Path]:
-    """List the session directories in the sorted directory, excluding any directories that start with '__'"""
+    """List the session directories in the sorted directory, excluding any directories that start with '__'.
 
+    Includes both dotted dirs (PROJ.SUBJ.VISIT) and no-dot dirs (session label only).
+    """
     return [
         p
         for p in Path(sorted_dir).iterdir()
         if p.is_dir()
         and not p.name.startswith("__")
         and not p.name.endswith("__")
-        and "." in p.name
     ]

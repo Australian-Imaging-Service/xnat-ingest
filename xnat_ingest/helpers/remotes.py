@@ -120,12 +120,78 @@ class LocalSessionListing(SessionListing):
         return self.fspath.name
 
     @property
+    def session_id(self) -> str:
+        from fileformats.application import Yaml
+
+        metadata_path = self.fspath / ImagingSession.METADATA_FNAME
+        if metadata_path.exists():
+            meta = Yaml(metadata_path).load() or {}
+            override = meta.get("__session_id__")
+            if override is not None:
+                return str(override)
+        return "_".join((self.subject_id, self.visit_id))
+
+    @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for relpath in sorted(self.resource_paths):
             manifest = Json(self.cache_path / relpath / "MANIFEST.json")
             manifests[relpath] = manifest.contents
         return manifests
+
+
+@attrs.define
+class SessionOnlyListing:
+    """A staging directory named by session label only (no project.subject.visit structure).
+
+    Used when uploading resources directly to an existing XNAT session identified only by
+    its label. The label must be globally unique across all projects accessible to the upload
+    account — an error is raised if multiple sessions match.
+    """
+
+    fspath: Path
+
+    @property
+    def cache_path(self) -> Path:
+        return self.fspath
+
+    @property
+    def name(self) -> str:
+        return self.fspath.name
+
+    @property
+    def session_id(self) -> str:
+        return self.fspath.name
+
+    @property
+    def resource_paths(self) -> set[str]:
+        return {
+            item.name
+            for item in self.fspath.iterdir()
+            if item.is_dir() and "." not in item.name
+        }
+
+    def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
+        """Look up an existing XNAT session by label across all accessible projects.
+
+        Returns None if not found, raises RuntimeError if multiple sessions match.
+        """
+        matches = [
+            e for e in connection.experiments.values() if e.label == self.session_id
+        ]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Multiple XNAT sessions found with label '{self.session_id}'. "
+                "Session labels must be globally unique for session-only uploads."
+            )
+        return matches[0] if matches else None
+
+    def all_uploaded(self, connection: xnat.XNATSession) -> bool:
+        xsession = self.find_xnat_session(connection)
+        if xsession is None:
+            return False
+        uploaded = {r.label for r in xsession.resources.values()}
+        return uploaded.issuperset(self.resource_paths)
 
 
 @attrs.define
@@ -383,7 +449,9 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                     pprint.pformat(difference),
                 )
             return None
-        logger.debug("Creating session resource %s in %s", resource_name, xsession.label)
+        logger.debug(
+            "Creating session resource %s in %s", resource_name, xsession.label
+        )
         uri = f"{xsession.uri}/resources/{resource_name}"
         xsession.xnat_session.put(uri)
         xsession.clearcache()
@@ -440,6 +508,7 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         xscan = ScanClass(
             id=resource.scan.id,
             type=resource.scan.type,
+            series_description=resource.scan.type,
             parent=xsession,
         )
     try:
