@@ -564,7 +564,8 @@ class ImagingSession:
         project_id: str | None = None,
         orthanc_user: str | None = None,
         orthanc_password: str | None = None,
-        orthanc_label: str = "xnat-sorted",
+        orthanc_label: str | None = None,
+        orthanc_skip_label: str = "xnat-sorted",
         available_projects: list[str] | None = None,
     ) -> ty.List["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
@@ -588,8 +589,9 @@ class ImagingSession:
         orthanc_user, orthanc_password : str, optional
             Orthanc basic auth credentials.
         orthanc_label : str, optional
-            Label applied after staging to prevent re-processing, by default 'xnat-sorted'.
-            Remove via the Orthanc UI to re-sort a study.
+            Only studies with this Orthanc label are staged.
+        orthanc_skip_label : str, optional
+            Studies with this Orthanc label are skipped. Applied to studies after staging.
         available_projects : list[str], optional
             Valid XNAT project IDs; unrecognised projects get an INVALID_ prefix.
 
@@ -631,20 +633,31 @@ class ImagingSession:
                     continue
             return "UNKNOWN"
 
-        resp = requests.post(
-            f"{orthanc_url}/tools/find",
-            auth=auth,
-            json={
-                "Level": "Study",
-                "Query": {},
-                "Labels": [orthanc_label],
-                "LabelsConstraint": "None",
-            },
-        )
-        resp.raise_for_status()
-        study_ids = resp.json()
+        def _find_studies(labels: list[str], constraint: str) -> set[str]:
+            body: dict[str, ty.Any] = {"Level": "Study", "Query": {}}
+            if labels:
+                body["Labels"] = labels
+                body["LabelsConstraint"] = constraint
+            resp = requests.post(f"{orthanc_url}/tools/find", auth=auth, json=body)
+            resp.raise_for_status()
+            return set(resp.json())
+
+        if orthanc_label:
+            candidates = _find_studies([orthanc_label], "All")
+        else:
+            candidates = _find_studies([], "All")
+
+        if orthanc_skip_label:
+            candidates -= _find_studies([orthanc_skip_label], "All")
+
+        study_ids = sorted(candidates)
         logger.info(
-            "Found %d unstaged studies in Orthanc at '%s'", len(study_ids), orthanc_url
+            "Found %d studies in Orthanc at '%s' "
+            "(label=%r, skip label=%r)",
+            len(study_ids),
+            orthanc_url,
+            orthanc_label,
+            orthanc_skip_label,
         )
 
         staged: list[ImagingSession] = []
@@ -717,9 +730,11 @@ class ImagingSession:
                 with open(metadata_path, "w") as f:
                     yaml.dump(study_tags, f, indent=4)
 
-            requests.put(
-                f"{orthanc_url}/studies/{study_id}/labels/{orthanc_label}", auth=auth
-            ).raise_for_status()
+            if orthanc_skip_label:
+                requests.put(
+                    f"{orthanc_url}/studies/{study_id}/labels/{orthanc_skip_label}",
+                    auth=auth,
+                ).raise_for_status()
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
