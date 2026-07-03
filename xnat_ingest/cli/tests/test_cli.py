@@ -919,7 +919,7 @@ def test_check_upload_missing_scan(
         assign_cli,
         [str(sorted_dir), str(assigned_dir)]
         + ASSIGN_ID_ARGS
-        + ["--scan-desc", "SeriesDescription", "--raise-errors"],
+        + ["--scan", "SeriesDescription", "--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
