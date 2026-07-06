@@ -417,7 +417,6 @@ def group_orthanc_cli(
             delete=delete,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            wait_period=wait_period,
         )
         if errors:
             logger.error(

@@ -157,6 +157,15 @@ def group_orthanc(
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
     """
 
+    if (
+        delete is True
+        or copy_mode is not FileSet.CopyMode.hardlink_or_copy
+        or raise_errors is True
+    ):
+        raise NotImplementedError(
+            "'delete', copy_mode' and 'raise_errors' are not yet implemented for Orthanc grouping."
+        )
+
     errors = []
 
     # Create sub-directories of the output directory for the different phases of the
