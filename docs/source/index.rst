@@ -6,9 +6,6 @@ XNAT Ingest
    :target: https://github.com/australian-imaging-service/xnat-ingest/actions/workflows/ci-cd.yml
 .. image:: https://codecov.io/gh/australian-imaging-service/xnat-ingest/branch/main/graph/badge.svg?token=UIS0OGPST7
    :target: https://codecov.io/gh/australian-imaging-service/xnat-ingest
-.. image:: https://img.shields.io/pypi/pyversions/xnat-ingest.svg
-   :target: https://pypi.python.org/pypi/xnat-ingest/
-   :alt: Supported Python versions
 .. image:: https://img.shields.io/pypi/v/xnat-ingest.svg
    :target: https://pypi.python.org/pypi/xnat-ingest/
    :alt: Latest Version
@@ -18,12 +15,40 @@ XNAT Ingest
 
 
 *XNAT Ingest* is a toolkit for capturing data from instruments and uploading it to XNAT.
+Files coming straight off a scanner or other instrument aren't organised the way XNAT
+expects, and — particularly on clinical scanners — often still carry patient-identifying
+information that needs stripping before they leave clinical control. *XNAT Ingest*
+handles all of this: it sorts raw files into scans/sessions, works out which XNAT
+project/subject/session each belongs to, links in any files that don't carry enough
+metadata to be sorted on their own, optionally de-identifies everything, and uploads
+the result. Each of these is a separate step that can be chained together and left
+running continuously as a service, watching for new files as they arrive.
+
+* :ref:`Run the basic ingest pipeline` — group, assign and upload files to XNAT
+* :ref:`Associate files that don't carry their own sorting metadata` — link in files by filename pattern instead
+* :ref:`Deidentify images before upload` — strip patient-identifying data first
+* :ref:`Deploying as a long-running service` — run the pipeline continuously via Docker/Kubernetes
+* :doc:`cli` — full command-line reference
+
+See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data.
 
 
 Installation
 ------------
 
-*XNAT Ingest* can be installed for Python >=3.11 using *pip*
+The recommended way to run *XNAT Ingest*, particularly for a long-running node, is the
+published Docker image, which bundles the CLI as its entrypoint along with all of its
+external dependencies (e.g. dcm2niix, MRtrix3):
+
+.. code-block:: console
+
+    $ docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
+    $ docker run ghcr.io/australian-imaging-service/xnat-ingest --help
+
+See :ref:`Deploying as a long-running service` for how this fits into Docker Compose
+or Kubernetes.
+
+Alternatively, *XNAT Ingest* can be installed for Python >=3.11 using *pip*:
 
 .. code-block:: console
 
@@ -44,5 +69,11 @@ This work is licensed under the
     quick_start
     how_to
     cli
-    api
+
+.. toctree::
+    :maxdepth: 2
+    :caption: Developer Guide
+    :hidden:
+
     developer
+    api
