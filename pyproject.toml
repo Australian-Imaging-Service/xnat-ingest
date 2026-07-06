@@ -17,6 +17,7 @@ dependencies = [
     "fileformats-vendor-mrtrix3",
     "fileformats-vendor-mrtrix3-extras",
     "pydicom >=2.3.1",
+    "python-dateutil",
     "tqdm >=4.64.1",
     "boto3",
     "requests",
@@ -80,7 +81,7 @@ packages = ["xnat_ingest"]
 exclude = ["/tests"]
 
 [tool.black]
-target-version = ['py37', 'py38']
+target-version = ['py310']
 exclude = "xnat_ingest/_version.py"
 
 [tool.isort]
@@ -97,7 +98,7 @@ doctests = true
 per-file-ignores = ["__init__.py:F401"]
 max-line-length = 88
 select = "C,E,F,W,B,B950"
-extend-ignore = ['E203', 'E501', 'E129', "W503", 'E701']
+extend-ignore = ['E203', 'E501', 'E129', "W503", 'E701', 'E303']
 
 
 [tool.mypy]

@@ -1,14 +1,10 @@
-import contextlib
-import logging
 import math
 import shutil
-import subprocess as sp
 import tempfile
 import traceback
 import typing as ty
 from pathlib import Path
 
-import xnat
 from fileformats.generic import File, FileSet
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
@@ -25,33 +21,28 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_resource,
     get_xnat_session,
     iterate_s3_sessions,
+    list_session_dirs,
 )
 
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
-from . import list_session_dirs
 
 
 def upload(
     input_dir: str,
-    server: ty.Optional[str] = None,
-    user: ty.Optional[str] = None,
-    password: ty.Optional[str] = None,
+    xnat_repo: Xnat,
     always_include: ty.Sequence[str | FileSet] = (),
     store_credentials: StoreCredentials | None = None,
     require_manifest: bool = True,
-    verify_ssl: bool = True,
     methods: ty.Sequence[UploadMethod] = (),
     wait_period: int = 0,
     num_files_per_batch: int = 0,
     check_checksums: bool = True,
-    use_curl_jsession: bool = False,
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
-    xnat_repo: ty.Optional[Xnat] = None,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -90,55 +81,9 @@ def upload(
     # Ensure input_path is a string so we can check for s3://
     input_dir = str(input_dir)
 
-    # Per-call vs persistent connection.
-    #
-    # When `xnat_repo` is not supplied, this function creates one and opens
-    # its connection just for this call (legacy behaviour, useful for one-shot
-    # `xnat-ingest upload` invocations and for tests).
-    #
-    # When the caller IS providing `xnat_repo`, the caller is responsible for
-    # both constructing it and entering its connection context BEFORE calling
-    # upload() — typically by wrapping the whole `--loop` while-true around
-    # `with xnat_repo.connection:`. This is critical: every fresh
-    # `xnat.connect()` rebuilds Python classes from the server's XSD schema
-    # (see `xnat.build_model` / `xnat.convert_xsd`), and those generated
-    # objects accumulate in xnatpy's module-level state. Connecting once
-    # per loop iteration is the dominant source of memory growth observed in
-    # `xnat-ingest upload --loop` deployments — reusing one already-open
-    # connection eliminates it.
-    own_repo = xnat_repo is None
-    if own_repo:
-        xnat_repo = Xnat(
-            server=server,
-            user=user,
-            password=password,
-            cache_dir=Path(tempfile.mkdtemp()),
-            verify_ssl=verify_ssl,
-        )
-
-        if use_curl_jsession:
-            jsession = sp.check_output(
-                [
-                    "curl",
-                    "-X",
-                    "PUT",
-                    "-d",
-                    f"username={user}&password={password}",
-                    f"{server}/data/services/auth",
-                ]
-            ).decode("utf-8")
-            xnat_repo.connection.depth = 1
-            xnat_repo.connection.session = xnat.connect(
-                server, user=user, jsession=jsession, logger=logging.getLogger("xnat")
-            )
-
-        connection_cm: ty.ContextManager = xnat_repo.connection
-    else:
-        # Caller has already opened xnat_repo.connection — don't reopen
-        # or close it here.
-        connection_cm = contextlib.nullcontext()
-
-    with connection_cm:
+    # Note that this context manager doesn't do anything if the connection is
+    # already open, so it's safe to use even if the connection is already open
+    with xnat_repo.connection:
 
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
@@ -441,6 +386,4 @@ def upload(
                 else:
                     raise
 
-        if own_repo and use_curl_jsession:
-            xnat_repo.connection.exit()
         return errors

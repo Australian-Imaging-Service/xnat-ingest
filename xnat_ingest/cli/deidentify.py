@@ -21,7 +21,7 @@ DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 imaging acquisition session
 
 INPUT_DIR is the path to the directory containing the session directories to de-identify.
-Each session directory should be named in the format <project_id>.<subject_id>.<visit_id>
+Each session directory should be named in the format <project_id>.<subject_id>.<session_id>
 and contain subdirectories for each scan, which in turn contain the resource files for
 each scan.
 

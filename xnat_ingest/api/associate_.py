@@ -5,12 +5,11 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from xnat_ingest.helpers.remotes import LocalSessionListing
+from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.arg_types import AssociatedFiles
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
-from .sort_ import list_session_dirs
 
 
 def associate(

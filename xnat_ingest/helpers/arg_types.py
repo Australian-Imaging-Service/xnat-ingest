@@ -1,5 +1,7 @@
 """Helper functions and classes for defining custom Click parameter types for use in the CLI."""
 
+from __future__ import annotations
+
 import logging
 import random
 import re
@@ -7,13 +9,28 @@ import string
 import typing as ty
 from collections import Counter
 from pathlib import Path
+from datetime import datetime
 
 import attrs
 import click.types
 from fileformats.core import DataType, FileSet, from_mime
 
 from ..exceptions import ImagingSessionParseError
-from ..model.resource import ImagingResource
+
+if ty.TYPE_CHECKING:
+    from ..model.resource import ImagingResource
+    from ..model.scan import ImagingScan
+    from ..model.session import ImagingSession
+    from .metadata import Metadata
+
+    MetadataLike: ty.TypeAlias = ty.Union[
+        "ImagingSession",
+        "ImagingScan",
+        "ImagingResource",
+        "FileSet",
+        Metadata,
+        ty.Mapping[str, ty.Any],
+    ]
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -21,6 +38,8 @@ logger = logging.getLogger("xnat-ingest")
 def datatype_converter(
     datatype_str: ty.Union[str, ty.Type[DataType]],
 ) -> ty.Type[DataType]:
+    if datatype_str == "all":
+        return FileSet
     if isinstance(datatype_str, str):
         return from_mime(datatype_str)
     return datatype_str
@@ -113,6 +132,10 @@ def to_upper(value: str) -> str:
     return value.upper()
 
 
+def to_lower(value: str) -> str:
+    return value.lower()
+
+
 @attrs.define
 class LoggerConfig(MultiCliTyped):
 
@@ -123,6 +146,13 @@ class LoggerConfig(MultiCliTyped):
     @property
     def loglevel_int(self) -> int:
         return getattr(logging, self.loglevel.upper())  # type: ignore[no-any-return]
+
+
+@attrs.define
+class PathMetadataRegex(MultiCliTyped):
+
+    regex: str
+    datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
 
 @attrs.define
@@ -179,22 +209,61 @@ class StoreCredentials(CliTyped):
 
 
 @attrs.define
-class FieldSpec(MultiCliTyped):
+class IDSpec(MultiCliTyped):
+    """Extract an ID to sort the data with (e.g. project, subject, session, scan,...) from
+    either a metadata field or the path that the resource is saved with. If the 'type' is
+    'field' then the specifier is the name of the field, if it is 'path', the specifier
+    is a Python-style regular expression with a single matching group to select a portion
+    of the path. 'datatype' restricts the specification to resources of that type (default
+    is FileSet, i.e. any type), and 'formatter' is an optional format string (or strftime
+    format for datetime values) applied to the extracted value.
+    """
 
-    field: str = attrs.field()
+    specifier: str = attrs.field()
     datatype: ty.Type[FileSet] = attrs.field(
         converter=datatype_converter, default=FileSet
     )
 
     @property
-    def field_name(self) -> str:
-        return self.field.split("[")[0]
+    def specifier_name(self) -> str:
+        """The plain metadata field name, with any '[index]' suffix stripped off"""
+        match = re.match(r"(\w+)\[[\-\d:]+\]$", self.specifier)
+        return match.group(1) if match else self.specifier
 
     def get_value(
-        self, resource: ImagingResource, missing_ids: dict[str, str] | None = None
+        self,
+        metadata: MetadataLike,
+        escape: bool = True,
+        missing_ids: dict[str, str] | None = None,
     ) -> str:
-        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.field):
-            field_name, index = match.groups()
+        """Get the value of the ID from the resource's metadata, applying any indexing and
+        formatting specified in the IDSpec. If the metadata field is not found, a unique
+        placeholder value will be generated and stored in the missing_ids dict if provided,
+        otherwise an exception will be raised.
+
+        Parameters
+        ----------
+        metadata: MetadataLike
+            The metadata to extract the ID from
+        escape: bool
+            If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+        missing_ids: dict[str, str] | None
+            If provided, a dict to store any generated placeholder values for missing metadata fields, keyed by the field name
+
+        Returns
+        -------
+        str
+            The extracted ID value from the resource's metadata, formatted according to the IDSpec
+
+        Raises
+        ------
+        ImagingSessionParseError
+            If the metadata field is not found and missing_ids is not provided
+        """
+        if not isinstance(metadata, ty.Mapping):
+            metadata = metadata.metadata
+        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.specifier):
+            _, index = match.groups()
             if ":" in index:
                 index = slice(*(int(d) if d else None for d in index.split(":")))
             else:
@@ -202,17 +271,17 @@ class FieldSpec(MultiCliTyped):
         else:
             index = None
         try:
-            value = resource.metadata[self.field_name]
+            value = metadata[self.specifier_name]
         except KeyError:
             value = ""
         if not value:
             if missing_ids is not None:
                 try:
-                    value = missing_ids[self.field_name]
+                    value = missing_ids[self.specifier_name]
                 except KeyError:
-                    value = missing_ids[self.field_name] = (
-                        "INVALID_MISSING_"
-                        + re.sub(r"[^A-Z0-9_]", "_", self.field_name.upper())
+                    value = missing_ids[self.specifier_name] = (
+                        "INVALID_NOTFOUND_"
+                        + re.sub(r"[^A-Z0-9_]", "_", self.specifier_name.upper())
                         + "_"
                         + "".join(
                             random.choices(string.ascii_letters + string.digits, k=8)
@@ -220,9 +289,9 @@ class FieldSpec(MultiCliTyped):
                     )
             else:
                 raise ImagingSessionParseError(
-                    f"Did not find '{self.field_name}' field in {resource!r}, "
+                    f"Did not find '{self.specifier_name}' field in {metadata!r}, "
                     "cannot uniquely identify the resource, found:\n"
-                    + "\n".join(resource.metadata)
+                    + "\n".join(metadata)
                 )
         if index is not None:
             value = value[index]
@@ -231,28 +300,75 @@ class FieldSpec(MultiCliTyped):
         elif isinstance(value, list):
             frequency = Counter(value)
             value = frequency.most_common(1)[0][0]
-        value_str = str(value)
-        value_str = invalid_path_chars_re.sub("_", value_str)
-        return value_str
+        value = str(value)
+        if escape:
+            value = self.xnat_id_escape_re.sub("_", value)
+        return value
+
+    def format_value(self, value: ty.Any):
+        if self.formatter is None:
+            formatted = value
+        elif isinstance(value, ty.Mapping):
+            formatted = self.formatter.format(**value)
+        elif isinstance(value, ty.Iterable):
+            formatted = self.formatter.format(*value)
+        elif isinstance(value, datetime):
+            formatted = value.strftime(self.formatter)
+        else:
+            raise TypeError(
+                f"Unsupported type for value to format, {value}, for "
+                f"formatter '{self.formatter}"
+            )
+        return invalid_path_chars_re.sub("_", str(formatted))
 
     xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
     @classmethod
-    def get_value_from_fields(
+    def get_value_from_matching_spec(
         cls,
-        resource: ImagingResource,
-        id_fields: list["FieldSpec"],
+        metadata: MetadataLike,
+        id_fields: list["IDSpec"],
         missing_ids: dict[str, str] | None = None,
-        escape: bool = False,
-    ) -> ty.List["FieldSpec"]:
+        escape: bool = True,
+    ) -> str:
+        """
+        Given a list of IDSpec objects, find the first one that matches the type of the
+        resource and use it to extract the ID value from the resource's metadata. If no
+        matching IDSpec is found, raise a TypeError.
+
+        Parameters
+        ----------
+        metadata: MetadataLike
+            The metadata mapping, or object with 'metadata' attribute, to extract the ID from
+        id_fields: list[IDSpec]
+            A list of IDSpec objects to try to match against the resource's type
+        missing_ids: dict[str, str] | None
+            If provided, a dict to store any generated placeholder values for missing metadata fields, keyed by
+            the field name
+        escape: bool
+            If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+
+        Returns
+        -------
+        str
+            The extracted ID value from the resource's metadata, formatted according to the matching IDSpec
+
+        Raises
+        ------
+        TypeError
+            If no matching IDSpec is found for the resource's type
+        ImagingSessionParseError
+            If the metadata field is not found and missing_ids is not provided
+        """
         for id_field in id_fields:
-            if isinstance(resource, id_field.datatype):
-                value = id_field.get_value(resource, missing_ids=missing_ids)
-                if escape:
-                    value = cls.xnat_id_escape_re.sub("_", value)
+            if isinstance(metadata, id_field.datatype):
+                value = id_field.get_value(
+                    metadata, escape=escape, missing_ids=missing_ids
+                )
+                logger.debug("Using %s to extract ID from %s", id_field, metadata)
                 return value
-        raise ValueError(
-            f"No resource label field specification matches type of {resource}, "
+        raise TypeError(
+            f"No resource label field specification matches type of {metadata}, "
             f"provided {id_fields}"
         )
 

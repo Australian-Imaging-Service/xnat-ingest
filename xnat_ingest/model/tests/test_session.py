@@ -28,7 +28,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, FieldSpec
+from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes
 
@@ -92,9 +92,10 @@ def imaging_session() -> ImagingSession:
         for d in dicoms
     ]
     return ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=scans,
     )
 
@@ -283,13 +284,9 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             SyngoMi_Vr20b_ListMode,
             SyngoMi_Vr20b_CountRate,
         ],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     staging_dir = tmp_path / "staging"
@@ -298,6 +295,12 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
     staged_sessions = []
 
     for imaging_session in imaging_sessions:
+        imaging_session.assign(
+            project_field="StudyID",
+            subject_field="PatientID",
+            session_field="StudyInstanceUID",
+            scan_field="SeriesDescription",
+        )
         staged_sessions.append(
             imaging_session.save(
                 staging_dir,
@@ -319,6 +322,46 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
         )
 
 
+def test_path_metadata_regex_extracts_named_groups(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    sessions = ImagingSession.from_paths(
+        f"{raw_data_dir}/**/*",
+        datatypes=[DicomSeries],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<cohort>[^/]+)$", DicomSeries),
+        ],
+    )
+
+    assert len(sessions) == 1
+    scan = next(iter(sessions[0].scans.values()))
+    resource = next(iter(scan.resources.values()))
+    assert resource.metadata["cohort"] == "cohort-A"
+
+
+def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    with pytest.raises(ValueError, match="Could not extract metadata"):
+        ImagingSession.from_paths(
+            f"{raw_data_dir}/**/*",
+            datatypes=[DicomSeries],
+            session_field=[IDSpec("StudyInstanceUID")],
+            scan_field=[IDSpec("SeriesNumber")],
+            resource_field=[IDSpec("ImageType[2:]")],
+            path_metadata_regex=[
+                PathMetadataRegex(r"^/nonexistent/(?P<cohort>.+)$", DicomSeries),
+            ],
+        )
+
+
 CLASH_SCAN_ID = "1"
 CLASH_SCAN_TYPE = "a-type"
 CLASH_RESOURCE_NAME = "FILE"
@@ -333,9 +376,10 @@ def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> No
     file1_cpy = file1.copy(tmp_path / "file1")
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -363,9 +407,10 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -404,9 +449,10 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -432,6 +478,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_GivenName",
         "PatientID": "PID001",
         "StudyDate": "20230101",
@@ -444,13 +491,14 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
 
     assert session.project_id == "PROJ"
     assert session.subject_id == "SUBJ"
-    assert session.visit_id == "VIS"
+    assert session.session_id == "VIS"
     assert session.scans == {}
-    assert session.metadata == metadata
+    assert dict(session.metadata) == metadata
 
 
 def test_associate_files_metadata_only(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_Given_Name",
         "PatientID": "PID001",
     }
@@ -498,9 +546,10 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     pdf = File.sample(seed=42)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="VIS",
+        session_id="VIS",
         scans=[],
     )
     session.add_session_resource("radiology-doc-report", pdf)
@@ -534,16 +583,18 @@ def test_id_escape(tmp_path: Path) -> None:
     sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     assert len(sessions) == 1
+
+    sessions[0].assign(
+        project_field="StudyID",
+        subject_field="PatientID",
+        session_field="AccessionNumber",
+    )
     assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
 
 
@@ -575,7 +626,7 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
 
 def test_deidentify_empty_session(tmp_path: Path) -> None:
     session = ImagingSession(
-        project_id="PROJ", subject_id="SUBJ", visit_id="SESS", scans=[]
+        uid="12345", project_id="PROJ", subject_id="SUBJ", session_id="SESS", scans=[]
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
     assert deid_session.project_id == "PROJ"
@@ -587,9 +638,10 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
     """Resources without contains_phi are copied as-is; no reid metadata collected."""
     f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
@@ -605,9 +657,10 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
     """deidentify() returns reid metadata from resources that implement deidentify."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
@@ -619,9 +672,10 @@ def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
     """Empty project_spec with require_matching_spec=True raises KeyError."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
@@ -634,9 +688,10 @@ def test_deidentify_missing_spec_warns(
     """Empty project_spec with require_matching_spec=False logs a warning and proceeds."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
@@ -653,9 +708,10 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
     f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[
             ImagingScan(id="1", type="scan-a", resources={"FILE": f1}),
             ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),

@@ -7,30 +7,62 @@ import platform
 import re
 import requests
 import typing as ty
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from functools import cached_property
 from glob import glob
-from itertools import chain
 from pathlib import Path
 
 import attrs
 import yaml
+from filelock import SoftFileLock
+from tqdm import tqdm
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
 from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
 from fileformats.medimage import DicomCollection
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
-from tqdm import tqdm
 from typing_extensions import Self
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, FieldSpec
+from ..helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
 
 logger = logging.getLogger("xnat-ingest")
+
+_DATE_FORMATS = ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d", "%Y%m%d", "%m/%d/%y", "%m/%d/%Y"]
+_TIME_FORMATS = ["%H.%M.%S", "%H:%M:%S", "%H%M%S"]
+
+
+def _parse_datetime_to_str(date_str: str, time_str: str | None) -> str:
+    """Parse date (and optional time) strings using common formats, return YYYYMMDDHHMMSS or YYYYMMDD."""
+    parsed_date = None
+    for fmt in _DATE_FORMATS:
+        try:
+            parsed_date = datetime.strptime(date_str, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed_date is None:
+        raise ValueError(
+            f"Cannot parse date '{date_str}' — tried formats: {_DATE_FORMATS}"
+        )
+
+    if time_str:
+        for fmt in _TIME_FORMATS:
+            try:
+                parsed_time = datetime.strptime(time_str, fmt)
+                return parsed_date.strftime("%Y%m%d") + parsed_time.strftime("%H%M%S")
+            except ValueError:
+                continue
+        raise ValueError(
+            f"Cannot parse time '{time_str}' — tried formats: {_TIME_FORMATS}"
+        )
+
+    return parsed_date.strftime("%Y%m%d")
 
 
 def scans_converter(
@@ -47,25 +79,26 @@ def scans_converter(
 @attrs.define(slots=False)
 class ImagingSession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
-    belong together under the same project/subject/visit IDs.
+    belong together under the same project/subject/session IDs.
 
     Parameters
     ----------
-    project_id: str
+    project_id: str, optional
         The project ID of the session
-    subject_id: str
+    subject_id: str, optional
         The subject ID of the session
-    visit_id: str
-        The visit ID of the session
+    session_id: str, optional
+        The session (visit) ID of the session
     scans: ty.Dict[str, ImagingScan]
         The scans in the session
     run_uid: ty.Optional[str]
         The run UID of the session, if it exists
     """
 
-    project_id: str
-    subject_id: str
-    visit_id: str
+    uid: str
+    project_id: str | None = None
+    subject_id: str | None = None
+    session_id: str | None = None
     scans: ty.Dict[str, ImagingScan] = attrs.field(
         factory=dict,
         converter=scans_converter,
@@ -73,13 +106,18 @@ class ImagingSession:
     )
     session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
-    session_id_override: ty.Optional[str] = attrs.field(default=None)
-    _metadata: dict[str, ty.Any] | None = attrs.field(
-        default=None, eq=False, repr=False, init=False
-    )
+    metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
-    METADATA_FNAME = "METADATA.yaml"
+    METADATA_FNAME = "__METADATA__.yaml"
     METADATA_DIR = "__metadata__"
+    # Directory-name prefix used to flag sessions that have been grouped into scans but
+    # not yet had project/subject/session IDs assigned to them. Session UIDs (e.g. DICOM
+    # StudyInstanceUID) commonly contain '.'s, so a distinct prefix is needed to tell
+    # them apart from assigned "PROJECT.SUBJECT.SESSION" directory names when reloading.
+    PRE_ASSIGN_PREFIX = "_."
+    # Metadata key the originating session UID is stashed under when saving, so it can
+    # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.SESSION
+    UID_METADATA_KEY = "__uid__"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -88,35 +126,33 @@ class ImagingSession:
     def __getitem__(self, fieldname: str) -> ty.Any:
         return self.metadata[fieldname]
 
+    @metadata.default
+    def _metadata_default(self):
+        return Metadata({}, self)
+
     @property
     def name(self) -> str:
-        return f"{self.project_id}.{self.subject_id}.{self.visit_id}"
+        if any(i is None for i in (self.project_id, self.subject_id, self.session_id)):
+            return None
+        return f"{self.project_id}.{self.subject_id}.{self.session_id}"
 
     @property
     def invalid_ids(self) -> bool:
         return (
             self.project_id.startswith("INVALID")
             or self.subject_id.startswith("INVALID")
-            or self.visit_id.startswith("INVALID")
+            or self.session_id.startswith("INVALID")
         )
 
     @property
     def path(self) -> str:
-        return ":".join([self.project_id, self.subject_id, self.visit_id])
+        return ":".join([self.project_id, self.subject_id, self.session_id])
 
     @property
     def staging_relpath(self) -> list[str]:
-        return [".".join([self.project_id, self.subject_id, self.visit_id])]
-
-    @property
-    def session_id(self) -> str:
-        if self.session_id_override is not None:
-            return self.session_id_override
-        return self.make_session_id(self.project_id, self.subject_id, self.visit_id)
-
-    @classmethod
-    def make_session_id(cls, project_id: str, subject_id: str, visit_id: str) -> str:
-        return f"{subject_id}_{visit_id}"
+        if self.name is None:
+            return [f"{self.PRE_ASSIGN_PREFIX}{self.uid}"]
+        return [self.name]
 
     @cached_property
     def modalities(self) -> str | tuple[str, ...]:
@@ -156,13 +192,17 @@ class ImagingSession:
             if not s.associated
         ]
 
+    def load_metadata(self):
+        return Metadata.collate(s.metadata for s in self.scans.values())
+
     def new_empty(self) -> Self:
         """Return a new empty session with the same IDs as the current session"""
         return type(self)(
+            uid=self.uid,
             project_id=self.project_id,
             subject_id=self.subject_id,
-            visit_id=self.visit_id,
-            session_id_override=self.session_id_override,
+            session_id=self.session_id,
+            run_uid=self.run_uid,
         )
 
     def select_resources(
@@ -251,52 +291,17 @@ class ImagingSession:
                     uploaded.add((scan.id, resource_name))
                 yield resource
 
-    @property
-    def metadata(self) -> dict[str, ty.Any]:
-        """Collated metadata across all file-sets within the session"""
-        if self._metadata is None:
-            primary_resources = self.primary_resources
-            all_keys = [
-                list(d.metadata.keys()) for d in primary_resources if d.metadata
-            ]
-            common_keys = [
-                k for k in set(chain(*all_keys)) if all(k in keys for keys in all_keys)
-            ]
-            collated = {k: primary_resources[0].metadata[k] for k in common_keys}
-            for i, resource in enumerate(primary_resources[1:], start=1):
-                for key in common_keys:
-                    if not resource.metadata:
-                        continue
-                    val = resource.metadata[key]
-                    if val != collated[key]:
-                        # Check whether the value is the same as the values in the previous
-                        # images in the series
-                        if (
-                            not isinstance(collated[key], list)
-                            or isinstance(val, list)
-                            and not isinstance(collated[key][0], list)
-                        ):
-                            collated[key] = [collated[key]] * i + [val]
-                        collated[key].append(val)
-            self._metadata = collated
-        return self._metadata
-
     @classmethod
     def from_paths(
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
-        project_field: list[FieldSpec],
-        subject_field: list[FieldSpec],
-        visit_field: list[FieldSpec],
-        scan_id_field: list[FieldSpec],
-        scan_desc_field: list[FieldSpec],
-        resource_field: list[FieldSpec],
-        session_uid_field: list[FieldSpec] | None = None,
-        session_id_field: list[FieldSpec] | None = None,
-        project_id: str | None = None,
-        avoid_clashes: bool = False,
+        session_field: list[IDSpec],
+        scan_field: list[IDSpec],
+        resource_field: list[IDSpec],
         recursive: bool = False,
+        avoid_clashes: bool = True,
+        path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -308,41 +313,25 @@ class ImagingSession:
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
             [DicomSeries, NiftiGz]
-        project_field : list[IdField]
-            the metadata field that contains the XNAT project ID for the imaging session,
-            by default "StudyID"
-        subject_field : list[IdField]
-            the metadata field that contains the XNAT subject ID for the imaging session,
-            by default "PatientID"
-        visit_field : list[IdField]
-            the metadata field that contains the XNAT visit ID for the imaging session,
-            by default "AccessionNumber"
-        scan_id_field: list[IdField]
-            the metadata field that contains the XNAT scan ID for the imaging session,
-            by default "SeriesNumber"
-        scan_desc_field: list[IdField]
-            the metadata field that contains the XNAT scan description for the imaging session,
-            by default "SeriesDescription"
-        resource_field: list[IdField]
-            the metadata field that contains the XNAT resource ID for the imaging session,
-            by default {FileSet: "ImageType[-1]"}
-        session_uid_field: list[IdField], optional
+        session_field: list[IdField]
             the metadata field that uniquely identifies the session, used to group files
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
-        session_id_field: list[IdField], optional
-            when provided, the value of this field is used directly as the XNAT session label
-            instead of concatenating subject and visit IDs. Mutually exclusive with visit_field
-            being used as the label source.
-        project_id : str
-            Override the project ID loaded from the metadata (useful when invoking
-            manually)
+        scan_field: list[IdField]
+            the value of this field is used to group resources under single scans.
+        resource_field: list[IdField]
+            the value of this field is to resources
+        recursive : bool, optional
+            recurse into directories passed as file paths (i.e. by appending '**/*' and running a glob),
+            by default False
         avoid_clashes : bool, optional
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
-        recursive : bool, optional
-            recurse into directories passed as file paths (i.e. by appending '**/*' and running a glob),
-            by default False
+        path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
+            Regular expressions to extract "metadata" values from resource file paths as named groups. The named
+            groups are used as metadata fields for the resource files, and the extracted values will be used to populate
+            the corresponding metadata fields to complement the metadata read from the file headers.
+
 
         Returns
         -------
@@ -416,248 +405,209 @@ class ImagingSession:
             datatypes = [datatypes]
 
         from_paths_kwargs = {}
-        # Optimise the reading of DICOM metadata by only selecting the specific tags that are required
-        specific_tags = from_paths_kwargs["specific_tags"] = []
-        for spec in (
-            project_field,
-            subject_field,
-            visit_field,
-            scan_id_field,
-            scan_desc_field,
-            resource_field,
-            session_uid_field,
-            session_id_field,
-        ):
-            if spec is not None:
-                for field in spec:
-                    if issubclass(field.datatype, DicomCollection):
-                        specific_tags.append(field.field_name)
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
-        resources = from_paths(
+        filesets = from_paths(
             fspaths,
             *datatypes,
             ignore=".*",
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
         sessions: ty.Dict[ty.Tuple[str, str, str] | str, Self] = {}
-        multiple_sessions: ty.DefaultDict[
-            str, ty.Set[ty.Tuple[str, str, str]]
-        ] = defaultdict(set)
-        missing_ids: dict[str, dict[str, str]] = defaultdict(dict)
-        explicit_project_id = project_id is not None
-        for resource in tqdm(
-            resources,
+
+        for fileset in tqdm(
+            filesets,
             "Sorting resources into XNAT tree structure...",
         ):
-            session_uid = (
-                FieldSpec.get_value_from_fields(resource, session_uid_field)
-                if session_uid_field
-                else None
-            )
-            missing_ids_session = (
-                missing_ids[session_uid] if session_uid is not None else None
-            )
-
-            if not explicit_project_id:
-                project_id = FieldSpec.get_value_from_fields(
-                    resource, project_field, missing_ids_session, escape=True
-                )
-            subject_id = FieldSpec.get_value_from_fields(
-                resource, subject_field, missing_ids_session, escape=True
-            )
-            if session_id_field:
-                extracted_session_id = FieldSpec.get_value_from_fields(
-                    resource, session_id_field, missing_ids_session, escape=True
-                )
-                visit_id = extracted_session_id
-            else:
-                extracted_session_id = None
-                visit_id = FieldSpec.get_value_from_fields(
-                    resource, visit_field, missing_ids_session, escape=True
-                )
-            scan_id = FieldSpec.get_value_from_fields(
-                resource, scan_id_field, missing_ids_session
-            )
-            scan_type = FieldSpec.get_value_from_fields(
-                resource, scan_desc_field, missing_ids_session
-            )
-
-            if isinstance(resource, DicomCollection):
+            session_uid = IDSpec.get_value_from_matching_spec(fileset, session_field)
+            scan_id = IDSpec.get_value_from_matching_spec(fileset, scan_field)
+            # XNAT requires DICOM datasets to have in 'DICOM' and 'secondary'
+            # resource labels otherwise some features don't work
+            if isinstance(fileset, DicomCollection):
                 try:
-                    image_type = resource.contents[0].metadata["ImageType"]
+                    image_type = fileset.contents[0].metadata["ImageType"]
                 except (KeyError, IndexError):
                     resource_label = "DICOM"
                 else:
-                    if image_type[:2] == [
-                        "DERIVED",
-                        "SECONDARY",
-                    ]:
-                        resource_label = "secondary"
-                    else:
-                        resource_label = "DICOM"  # special case
+                    resource_label = dicom_image_type_to_resource_label(image_type)
+
             else:
-                resource_label = FieldSpec.get_value_from_fields(
-                    resource, resource_field
+                resource_label = IDSpec.get_value_from_matching_spec(
+                    fileset, resource_field
                 )
-            if session_uid is None:
-                session_uid = (project_id, subject_id, visit_id)
             try:
                 session = sessions[session_uid]
             except KeyError:
                 session = cls(
-                    project_id=project_id,
-                    subject_id=subject_id,
-                    visit_id=visit_id,
+                    uid=session_uid,
                     run_uid=run_uid,
-                    session_id_override=extracted_session_id,
                 )
                 sessions[session_uid] = session
-            else:
-                if (session.project_id, session.subject_id, session.visit_id) != (
-                    project_id,
-                    subject_id,
-                    visit_id,
-                ):
-                    # Record all issues with the session IDs for raising exception at the end
-                    multiple_sessions[session_uid].add(
-                        (project_id, subject_id, visit_id)
-                    )
-                    multiple_sessions[session_uid].add(
-                        (session.project_id, session.subject_id, session.visit_id)
-                    )
             logger.debug(
                 "Adding resource '%s' to %s scan in %s session",
                 resource_label,
-                scan_type,
+                scan_id,
                 session_uid,
             )
+            metadata = None
+            for path_mdata in path_metadata_regex:
+                if isinstance(fileset, path_mdata.datatype):
+                    fileset_path = str(getattr(fileset, "fspath", fileset.parent))
+                    match = re.match(path_mdata.regex, fileset_path)
+                    if match is None:
+                        raise ValueError(
+                            f"Could not extract metadata from path '{fileset_path}' "
+                            f"using pattern '{path_mdata.regex}'"
+                        )
+                    metadata = match.groupdict()
             session.add_resource(
                 scan_id,
-                scan_type,
+                None,
                 resource_label,
-                resource,
+                fileset,
                 avoid_clashes=avoid_clashes,
-            )
-        if multiple_sessions:
-            raise ImagingSessionParseError(
-                "Multiple session UIDs found with the same project/subject/visit ID triplets: "
-                + "\n".join(
-                    f"{i} -> " + str(["{p}:{s}:{v}" for p, s, v in sess])
-                    for i, sess in multiple_sessions.items()
-                )
+                metadata=metadata,
             )
         return list(sessions.values())
+
+    def assign(
+        self,
+        project_field: str,
+        subject_field: str,
+        session_field: str,
+        scan_field: str | None = None,
+        constant_project_id: str | None = None,
+    ) -> None:
+        """Assigns project, subject and session IDs to the session, extracted from its
+        metadata. Also resolves a description for each scan in the session, if
+        'scan_field' is provided.
+
+        Parameters
+        ----------
+        project_field : str
+            metadata field to extract the XNAT project ID from
+        subject_field : str
+            metadata field to extract the XNAT subject ID from
+        session_field: str
+            metadata field to extract the XNAT session ID from
+        constant_project_id : str
+            Override the project ID loaded from the metadata (useful when invoking
+            manually)
+        scan_field : str, optional
+            metadata field to extract a description for each scan from. Scans for which
+            the field can't be resolved are left without a description (saved with a
+            trailing-dot '<scan_id>.' directory name)
+
+        Raises
+        ------
+        ImagingSessionParseError
+            if none of the candidate fields for a given ID resolve to a value in the
+            session's metadata
+        """
+        if constant_project_id is None:
+            self.project_id = IDSpec(project_field).get_value(self.metadata)
+        else:
+            self.project_id = constant_project_id
+        self.subject_id = IDSpec(subject_field).get_value(self.metadata)
+        self.session_id = IDSpec(session_field).get_value(self.metadata)
+
+        if scan_field is not None:
+            for scan in self.scans.values():
+                try:
+                    scan.type = IDSpec(scan_field).get_value(
+                        scan.metadata, escape=False
+                    )
+                except ImagingSessionParseError:
+                    logger.debug(
+                        "Could not resolve a description for scan '%s' from field "
+                        "'%s', using scan ID instead",
+                        scan.id,
+                        scan_field,
+                    )
+                    scan.type = scan.id
 
     @classmethod
     def from_orthanc(
         cls,
-        orthanc_url: str,
+        url: str,
         output_dir: Path,
-        orthanc_storage_dir: Path,
-        project_field: list[FieldSpec],
-        subject_field: list[FieldSpec],
-        visit_field: list[FieldSpec],
-        scan_id_field: list[FieldSpec],
-        scan_desc_field: list[FieldSpec],
-        project_id: str | None = None,
-        orthanc_user: str | None = None,
-        orthanc_password: str | None = None,
-        orthanc_label: str | None = None,
-        orthanc_skip_label: str = "xnat-sorted",
-        available_projects: list[str] | None = None,
+        store_dir: Path,
+        user: str,
+        password: str,
+        to_process_label: str | None = None,
+        processed_label: str = "xnat-sorted",
     ) -> ty.List["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
 
         Parameters
         ----------
-        orthanc_url : str
+        url : str
             Base URL of the Orthanc REST API, e.g. 'http://orthanc:8042'
         output_dir : Path
             Staging directory. Hardlinks land here directly, must be on the same
             filesystem as orthanc_storage_dir.
-        orthanc_storage_dir : Path
+        store_dir : Path
             Orthanc's StorageDirectory as mounted.
-        project_field, subject_field, visit_field : list[FieldSpec]
-            Field specs to extract XNAT IDs from Orthanc's indexed tags.
-        scan_id_field, scan_desc_field : list[FieldSpec]
-            Field specs to extract scan naming from series-level tags.
-        project_id : str, optional
-            Override project ID for all studies.
-        orthanc_user, orthanc_password : str, optional
-            Orthanc basic auth credentials.
-        orthanc_label : str, optional
-            Only studies with this Orthanc label are staged.
-        orthanc_skip_label : str, optional
-            Studies with this Orthanc label are skipped. Applied to studies after staging.
-        available_projects : list[str], optional
-            Valid XNAT project IDs; unrecognised projects get an INVALID_ prefix.
+        user : str, optional
+            Orthanc basic auth credentials username
+        password : str, optional
+            Orthanc basic auth credentials password
+        processed_label : str, optional
+            Label applied after staging to prevent re-processing, by default 'xnat-sorted'.
+            Remove via the Orthanc UI to re-sort a study.
 
         Returns
         -------
         list[ImagingSession]
             Staged sessions loaded from output_dir.
         """
-        auth = (orthanc_user, orthanc_password) if orthanc_user else None
+        auth = (user, password) if user else None
 
         def get_json(path: str) -> ty.Any:
-            resp = requests.get(f"{orthanc_url}{path}", auth=auth)
+            resp = requests.get(f"{url}{path}", auth=auth)
             resp.raise_for_status()
             return resp.json()
 
-        class _TagsAdapter:
-            """Adapter so FieldSpec.get_value() can read an Orthanc tag dict."""
-
-            def __init__(self, tags: dict) -> None:
-                self.metadata = tags
-
-        def eval_field(specs: list[FieldSpec], tags: dict, escape: bool = False) -> str:
-            """Return the first FieldSpec value that resolves, or 'UNKNOWN'.
-
-            Parameters
-            ----------
-            escape : bool
-                If True, replace non-alphanumeric/underscore characters with '_'
-            """
-            adapter = _TagsAdapter(tags)
-            for spec in specs:
-                try:
-                    val = spec.get_value(adapter)
-                    if val:
-                        if escape:
-                            val = FieldSpec.xnat_id_escape_re.sub("_", val)
-                        return val
-                except Exception:
-                    continue
-            return "UNKNOWN"
+        resp = requests.post(
+            f"{url}/tools/find",
+            auth=auth,
+            json={
+                "Level": "Study",
+                "Query": {},
+                "Labels": [processed_label],
+                "LabelsConstraint": "None",
+            },
+        )
+        resp.raise_for_status()
+        study_ids = resp.json()
+        logger.info("Found %d unstaged studies in Orthanc at '%s'", len(study_ids), url)
 
         def _find_studies(labels: list[str], constraint: str) -> set[str]:
             body: dict[str, ty.Any] = {"Level": "Study", "Query": {}}
             if labels:
                 body["Labels"] = labels
                 body["LabelsConstraint"] = constraint
-            resp = requests.post(f"{orthanc_url}/tools/find", auth=auth, json=body)
+            resp = requests.post(f"{url}/tools/find", auth=auth, json=body)
             resp.raise_for_status()
             return set(resp.json())
 
-        if orthanc_label:
-            candidates = _find_studies([orthanc_label], "All")
+        if to_process_label:
+            candidates = _find_studies([to_process_label], "All")
         else:
             candidates = _find_studies([], "All")
 
-        if orthanc_skip_label:
-            candidates -= _find_studies([orthanc_skip_label], "All")
+        if processed_label:
+            candidates -= _find_studies([processed_label], "All")
 
         study_ids = sorted(candidates)
         logger.info(
-            "Found %d studies in Orthanc at '%s' "
-            "(label=%r, skip label=%r)",
+            "Found %d studies in Orthanc at '%s' " "(label=%r, skip label=%r)",
             len(study_ids),
-            orthanc_url,
-            orthanc_label,
-            orthanc_skip_label,
+            url,
+            to_process_label,
+            processed_label,
         )
 
         staged: list[ImagingSession] = []
@@ -665,17 +615,8 @@ class ImagingSession:
             study = get_json(f"/studies/{study_id}")
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
-            proj = (
-                project_id
-                if project_id is not None
-                else eval_field(project_field, study_tags, escape=True)
-            )
-            if available_projects is not None and proj not in available_projects:
-                proj = "INVALID_UNRECOGNISED_" + proj
-            subj = eval_field(subject_field, study_tags, escape=True)
-            visit = eval_field(visit_field, study_tags, escape=True)
-
-            session_dir = output_dir / f"{proj}.{subj}.{visit}"
+            session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
+            session_dir = output_dir / f"_.{session_uid}"
             session_dir.mkdir(parents=True, exist_ok=True)
 
             modalities: set[str] = set()
@@ -684,10 +625,16 @@ class ImagingSession:
                 if modality := series["MainDicomTags"].get("Modality"):
                     modalities.add(modality)
                 all_tags = {**study_tags, **series["MainDicomTags"]}
-                scan_id = eval_field(scan_id_field, all_tags)
-                scan_type = eval_field(scan_desc_field, all_tags)
+                scan_id = IDSpec("SeriesNumber").get_value(all_tags)
+                scan_type = IDSpec("SeriesDescription").get_value(all_tags)
 
-                resource_dir = session_dir / f"{scan_id}.{scan_type}" / "DICOM"
+                if "ImageType" in all_tags:
+                    resource_label = dicom_image_type_to_resource_label(
+                        IDSpec("ImageType").get_value(all_tags)
+                    )
+                else:
+                    resource_label = "DICOM"
+                resource_dir = session_dir / f"{scan_id}.{scan_type}" / resource_label
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
@@ -711,34 +658,34 @@ class ImagingSession:
                             "Orthanc config to use hardlink sorting."
                         )
                     uuid = attachment["Uuid"]
-                    src_path = Path(orthanc_storage_dir) / uuid[0:2] / uuid[2:4] / uuid
+                    src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
                     os.link(src_path, dest_path)
                     checksums[fname] = attachment["UncompressedMD5"]
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
                 with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
-                    json.dump(manifest, f, indent=2)
+                    json.dump(manifest, f, indent=4)
 
-            metadata_path = session_dir / cls.METADATA_FNAME
-            if not metadata_path.exists():
-                if modalities:
-                    study_tags["Modality"] = (
-                        next(iter(modalities))
-                        if len(modalities) == 1
-                        else list(modalities)
-                    )
-                with open(metadata_path, "w") as f:
-                    yaml.dump(study_tags, f, indent=4)
+            metadata_path = session_dir / Metadata.FNAME
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    existing_tags = json.load(f)
+                study_tags.update(existing_tags)
+            if modalities:
+                study_tags["Modality"] = (
+                    next(iter(modalities)) if len(modalities) == 1 else list(modalities)
+                )
+            with open(metadata_path, "w") as f:
+                json.dump(study_tags, f, indent=4, default=str)
 
-            if orthanc_skip_label:
+            if processed_label:
                 requests.put(
-                    f"{orthanc_url}/studies/{study_id}/labels/{orthanc_skip_label}",
-                    auth=auth,
+                    f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
+
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
-
             staged.append(cls.load(session_dir))
 
         return staged
@@ -883,7 +830,7 @@ class ImagingSession:
                     associated_fspaths.update(
                         Path(p) for p in glob(assoc_glob, recursive=True)
                     )
-            elif self._metadata:
+            elif self.metadata:
                 assoc_glob = associated_files.glob.format(**self.metadata)
                 if spaces_to_underscores:
                     assoc_glob = assoc_glob.replace(" ", "_")
@@ -927,12 +874,13 @@ class ImagingSession:
     def add_resource(
         self,
         scan_id: str,
-        scan_type: str,
+        scan_type: str | None,
         resource_name: str,
         fileset: FileSet,
         overwrite: bool = False,
         associated: AssociatedFiles | None = None,
         avoid_clashes: bool = False,
+        metadata: ty.Mapping[str, ty.Any] = None,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -954,6 +902,8 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
+        metadata : dict[str, Any], optional
+            Dictionary containing metadata values to update the resource with.
 
         Raises
         ------
@@ -984,6 +934,8 @@ class ImagingSession:
                     f"for scan ID {scan_id}"
                 )
         resource = ImagingResource(name=resource_name, fileset=fileset, scan=scan)
+        if metadata:
+            resource.metadata.update(metadata)
         try:
             existing = scan.resources[resource_name]
         except KeyError:
@@ -1069,7 +1021,7 @@ class ImagingSession:
         Parameters
         ----------
         yaml_path : Path
-            path to a YAML file named PROJECT.SUBJECT.VISIT.yaml
+            path to a YAML file named PROJECT.SUBJECT.SESSION.yaml
 
         Returns
         -------
@@ -1081,16 +1033,18 @@ class ImagingSession:
         if len(parts) != 3:
             raise ValueError(
                 f"Expected metadata YAML filename to have format "
-                f"PROJECT.SUBJECT.VISIT.yaml, got '{yaml_path.name}'"
+                f"PROJECT.SUBJECT.SESSION.yaml, got '{yaml_path.name}'"
             )
-        project_id, subject_id, visit_id = parts
+        project_id, subject_id, session_id = parts
+        with open(yaml_path) as f:
+            metadata = yaml.safe_load(f)
         session = cls(
+            uid=metadata[cls.UID_METADATA_KEY],
             project_id=project_id,
             subject_id=subject_id,
-            visit_id=visit_id,
+            session_id=session_id,
         )
-        with open(yaml_path) as f:
-            session._metadata = yaml.safe_load(f)
+        session.metadata = Metadata(metadata, session)
         return session
 
     @classmethod
@@ -1124,22 +1078,28 @@ class ImagingSession:
         ImagingSession
             the loaded session
         """
-        if "." in session_dir.name:
-            parts = session_dir.name.split(".")
+        if session_dir.name.startswith(cls.PRE_ASSIGN_PREFIX):
+            # Session has been grouped into scans but not yet had project/subject/session
+            # IDs assigned to it
+            session = cls(uid=session_dir.name[len(cls.PRE_ASSIGN_PREFIX) :])
         else:
-            # Backwards compatibility with old delimiter
-            parts = session_dir.name.split("-")
-        if len(parts) == 4:
-            project_id, subject_id, visit_id, run_uid = parts
-        else:
-            project_id, subject_id, visit_id = parts
-            run_uid = None
-        session = cls(
-            project_id=project_id,
-            subject_id=subject_id,
-            visit_id=visit_id,
-            run_uid=run_uid,
-        )
+            if "." in session_dir.name:
+                parts = session_dir.name.split(".")
+            else:
+                # Backwards compatibility with old delimiter
+                parts = session_dir.name.split("-")
+            if len(parts) == 4:
+                project_id, subject_id, session_id, run_uid = parts
+            else:
+                project_id, subject_id, session_id = parts
+                run_uid = None
+            session = cls(
+                uid=session_dir.name,
+                project_id=project_id,
+                subject_id=subject_id,
+                session_id=session_id,
+                run_uid=run_uid,
+            )
         for item in session_dir.iterdir():
             if not item.is_dir():
                 continue
@@ -1160,11 +1120,9 @@ class ImagingSession:
                     check_checksums=check_checksums,
                 )
                 session.session_resources[resource.name] = resource
-        metadata_path = session_dir / cls.METADATA_FNAME
-        if metadata_path.exists():
-            raw_meta = Yaml(metadata_path).load() or {}
-            session.session_id_override = raw_meta.pop("__session_id__", None)
-            session._metadata = raw_meta if raw_meta else None
+        if (session_dir / Metadata.FNAME).exists():
+            session.metadata = Metadata.load(session_dir, session)
+            session.uid = session.metadata.get(cls.UID_METADATA_KEY, None)
         return session
 
     def save(
@@ -1173,7 +1131,6 @@ class ImagingSession:
         available_projects: ty.Optional[ty.List[str]] = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
-        save_metadata: bool = True,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -1192,10 +1149,6 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
-        save_metadata : bool or Path, optional
-            whether to save the session metadata to a YAML file in the session directory,
-            if True, the metadata will be saved to a file named "METADATA.yaml" in the session
-            directory, if a Path, the metadata will be saved to this path, by default False
 
         Returns
         -------
@@ -1205,13 +1158,18 @@ class ImagingSession:
             the path to the directory where the session is saved
         """
         saved = self.new_empty()
-        if available_projects is None or self.project_id in available_projects:
-            project_id = self.project_id
+        if self.name is None:
+            # Project/subject/session IDs haven't been assigned yet, so flag the
+            # directory as not-yet-assigned rather than assuming they're set
+            session_dirname = self.staging_relpath[0]
         else:
-            project_id = "INVALID_UNRECOGNISED_" + self.project_id
-        session_dirname = ".".join((project_id, self.subject_id, self.visit_id))
-        if self.run_uid:
-            session_dirname += f".{self.run_uid}"
+            if available_projects is None or self.project_id in available_projects:
+                project_id = self.project_id
+            else:
+                project_id = "INVALID_UNRECOGNISED_" + self.project_id
+            session_dirname = ".".join((project_id, self.subject_id, self.session_id))
+            if self.run_uid:
+                session_dirname += f".{self.run_uid}"
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
@@ -1223,21 +1181,50 @@ class ImagingSession:
         for resource in self.session_resources.values():
             saved_resource = resource.save(session_dir, copy_mode=copy_mode)
             saved.session_resources[saved_resource.name] = saved_resource
-        if save_metadata or self.session_id_override is not None:
-            metadata_path = (
-                session_dir / self.METADATA_FNAME
-                if isinstance(save_metadata, bool)
-                else save_metadata
-            )
-            logger.debug("Saving session metadata to '%s'", metadata_path)
-            meta = dict(self.metadata) if save_metadata and self.metadata else {}
-            if self.session_id_override is not None:
-                meta["__session_id__"] = self.session_id_override
-            with open(metadata_path, "w") as f:
-                yaml.dump(meta, f, indent=4)
+        logger.debug("Saving session metadata")
+        self.metadata[self.UID_METADATA_KEY] = self.uid
+        self.metadata.save(session_dir)
         return saved, session_dir
 
-    MANIFEST_FILENAME = "MANIFEST.yaml"
+    @classmethod
+    def move_dir(cls, src: Path, dest: Path):
+        with SoftFileLock(dest.with_suffix(".lock")):
+            if dest.exists():
+                logger.info(
+                    "Merging sorted session '%s' into existing directory '%s'",
+                    src.name,
+                    dest,
+                )
+                for scan_dir in src.iterdir():
+                    if scan_dir.is_dir():
+                        scan_dir.rename(dest / scan_dir.name)
+                exist_mdata_path = dest / cls.METADATA_FNAME
+                new_mdata_path = src / cls.METADATA_FNAME
+                if new_mdata_path.exists():
+                    if exist_mdata_path.exists():
+                        # Merge metadata files
+                        mdata = Yaml(exist_mdata_path).load()
+                        new_mdata = Yaml(new_mdata_path).load()
+                        for key in set(mdata) & set(new_mdata):
+                            if mdata[key] != new_mdata[key]:
+                                raise ValueError(
+                                    f"Conflict in metadata for key '{key}' between existing session at "
+                                    f"'{exist_mdata_path}' and new session at '{new_mdata_path}'"
+                                )
+                        mdata.update(new_mdata)
+                        Yaml(exist_mdata_path).save(mdata)
+                    else:
+                        new_mdata_path.rename(exist_mdata_path)
+                if remaining := list(src.iterdir()):
+                    raise ValueError(
+                        f"Unexpected files/directories {remaining} found in saved session directory '{src}' "
+                        f"after merging with existing session directory '{dest}'"
+                    )
+                src.rmdir()
+            else:
+                src.rename(dest)
+
+    MANIFEST_FNAME = "MANIFEST.yaml"
 
     def unlink(self) -> None:
         """Unlink all resources in the session"""
@@ -1288,3 +1275,16 @@ def json_serializer(obj: ty.Any) -> ty.Any:
     if isinstance(obj, Path):
         return str(obj)
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+def dicom_image_type_to_resource_label(image_type: list[str]) -> str:
+    """Maps the image type of a DICOM series to the hard-coded resource names
+    required by XNAT"""
+    if image_type[:2] == [
+        "DERIVED",
+        "SECONDARY",
+    ]:
+        resource_label = "secondary"
+    else:
+        resource_label = "DICOM"  # special case
+    return resource_label
