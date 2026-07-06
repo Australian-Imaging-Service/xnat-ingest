@@ -126,7 +126,7 @@ class LocalSessionListing(SessionListing):
         for relpath in sorted(self.resource_paths):
             resource_dir = self.cache_path / relpath
             if resource_dir.is_dir():
-                manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME)
+                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
                 manifests[relpath] = manifest.contents
         return manifests
 
@@ -229,11 +229,24 @@ class S3SessionListing(SessionListing):
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
+        manifest_fnames_by_relpath: dict[str, str] = {}
         for path_parts, obj in self.objects:
-            if path_parts[-1] != ImagingResource.MANIFEST_FNAME:
+            fname = path_parts[-1]
+            if fname not in (
+                ImagingResource.MANIFEST_FNAME,
+                ImagingResource.OLD_MANIFEST_FNAME,
+            ):
                 continue
             relpath = "/".join(path_parts[:-1])
-            manifest_path = self._cache_path / relpath / ImagingResource.MANIFEST_FNAME
+            # Prefer the current manifest filename over the legacy one if both are
+            # present in the same resource directory
+            if (
+                relpath in manifest_fnames_by_relpath
+                and fname == ImagingResource.OLD_MANIFEST_FNAME
+            ):
+                continue
+            manifest_fnames_by_relpath[relpath] = fname
+            manifest_path = self._cache_path / relpath / fname
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             with open(manifest_path, "wb") as f:
                 self.bucket.download_fileobj(obj.key, f)

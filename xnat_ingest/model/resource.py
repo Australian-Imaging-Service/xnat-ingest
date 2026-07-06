@@ -181,11 +181,13 @@ class ImagingResource:
         exception is raised, if it is False, then a generic FileSet object is loaded
         from the files that were found
         """
-        manifest_file = resource_dir / cls.MANIFEST_FNAME
+        manifest_file = cls.manifest_fpath(resource_dir)
         fspaths = [
             p
             for p in resource_dir.rglob("*")
-            if p.is_file() and p.name not in (cls.MANIFEST_FNAME, Metadata.FNAME)
+            if p.is_file()
+            and p.name
+            not in (cls.MANIFEST_FNAME, cls.OLD_MANIFEST_FNAME, Metadata.FNAME)
         ]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
@@ -252,4 +254,17 @@ class ImagingResource:
             return self.name
         return self.scan.path + ":" + self.name
 
-    MANIFEST_FNAME = "MANIFEST.json"
+    @classmethod
+    def manifest_fpath(cls, resource_dir: Path) -> Path:
+        """Return the path to the manifest file within a resource directory, falling
+        back to the legacy filename if the current one isn't present, for backwards
+        compatibility with resources saved by older versions of xnat-ingest"""
+        manifest_file = resource_dir / cls.MANIFEST_FNAME
+        if not manifest_file.exists():
+            old_manifest_file = resource_dir / cls.OLD_MANIFEST_FNAME
+            if old_manifest_file.exists():
+                return old_manifest_file
+        return manifest_file
+
+    MANIFEST_FNAME = "__MANIFEST__.json"
+    OLD_MANIFEST_FNAME = "MANIFEST.json"
