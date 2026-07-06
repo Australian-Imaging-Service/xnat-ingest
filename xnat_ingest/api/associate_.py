@@ -23,7 +23,7 @@ def associate(
     raise_errors: bool = False,
     require_manifest: bool = True,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
-    delete: bool = False,
+    unlink_source: str | None = None,
 ) -> list[str]:
 
     session_dirs = list_session_dirs(input_dir)
@@ -92,8 +92,13 @@ def associate(
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if delete:
-                associated.unlink()
+            if unlink_source is not None:
+                # 'all' and 'keep-metadata' are equivalent here: the associated files
+                # live at an arbitrary external location, not a directory tree
+                # xnat-ingest owns, so only the individual matched files are ever
+                # removed
+                for fileset in associated:
+                    fileset.unlink()
 
     for session in tqdm(
         metadata_sessions,
@@ -118,7 +123,7 @@ def associate(
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if delete:
+            if unlink_source is not None:
                 for fileset in associated:
                     fileset.unlink()
 

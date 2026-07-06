@@ -67,10 +67,17 @@ are uploaded to XNAT
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not (XINGEST_DELETE env. var)",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
+    help=(
+        "Whether to unlink the source files matched by GLOB after they have been "
+        "associated. 'all' and 'keep-metadata' behave the same here (individual "
+        "source files are removed one by one), since these files live at an "
+        "arbitrary external location rather than a directory tree xnat-ingest "
+        "owns. If not set, the source files are left in place (XINGEST_UNLINK_SOURCE env. var)"
+    ),
 )
 @click.option(
     "--logger",
@@ -155,7 +162,7 @@ def associate_cli(
     loop: int,
     temp_dir: Path | None,
     copy_mode: FileSet.CopyMode,
-    delete: bool,
+    unlink_source: str | None,
     require_manifest: bool,
 ) -> None:
 
@@ -188,7 +195,7 @@ def associate_cli(
             raise_errors=raise_errors,
             require_manifest=require_manifest,
             copy_mode=copy_mode,
-            delete=delete,
+            unlink_source=unlink_source,
         )
         if errors:
             logger.error(

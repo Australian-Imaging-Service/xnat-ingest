@@ -101,12 +101,17 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
     help=(
-        "Whether to delete the grouped session directories after they have been "
-        "assigned or not (XINGEST_DELETE env. var)"
+        "Whether to unlink the grouped session directories after they have been "
+        "assigned. 'all' removes the whole grouped session directory; "
+        "'keep-metadata' removes the resource data but leaves the session/scan-"
+        "level metadata behind, so a lightweight skeleton of the session survives "
+        "(e.g. for 'associate' to use later). If not set, the grouped directories "
+        "are left in place (XINGEST_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -149,7 +154,7 @@ def assign_cli(
     session_field: str,
     constant_project_id: str | None,
     scan_field: str | None,
-    delete: bool,
+    unlink_source: str | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
@@ -179,7 +184,7 @@ def assign_cli(
             session_field=session_field,
             project_id=constant_project_id,
             scan_field=scan_field,
-            delete=delete,
+            unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )
