@@ -1,0 +1,6 @@
+/* Furo's default h2 (2em) sits very close to h1 (2.5em); dial it back a
+   notch towards h3 (1.5em) so second-level section headings read as
+   sub-sections rather than near-titles. */
+h2 {
+    font-size: 1.6em;
+}

@@ -34,7 +34,7 @@ are uploaded to XNAT
 )
 @click.argument("input_paths", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
 @click.option(
     "--session",

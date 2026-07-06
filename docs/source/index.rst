@@ -42,6 +42,7 @@ This work is licensed under the
     :hidden:
 
     quick_start
+    how_to
     cli
     api
     developer
