@@ -45,7 +45,8 @@ are uploaded to XNAT
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID."
+        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID. Can also be a Python format "
+        "string over several fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
     ),
 )
 @click.option(
@@ -57,7 +58,8 @@ are uploaded to XNAT
     metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN env. var)"
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
+        "Python format string over several fields (see --session) (XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
@@ -70,7 +72,8 @@ are uploaded to XNAT
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
-        "for different datatypes (use `generic/file-set` as a catch-all if required). (XINGEST_RESOURCE env. var)"
+        "for different datatypes (use `generic/file-set` as a catch-all if required), or a "
+        "Python format string over several fields (see --session). (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(

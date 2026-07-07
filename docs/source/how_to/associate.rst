@@ -8,11 +8,17 @@ patient/session metadata of their own, or live in a completely separate export
 location to the DICOMs. If those files can still be found some other way (a shared
 naming convention with the primary DICOMs, in the same folder or elsewhere) and you
 know which scan/resource they belong to from their path, ``associate`` can link them
-into an already-assigned session.
+into a session that's already been through ``group``.
 
-It has to run on :ref:`assign <2. Assign project/subject/session IDs>`'s output (or
-later), since it needs a session's own metadata already resolved to build the search
-pattern:
+It can run at any point after :ref:`1. Group files into sessions/scans/resources`
+— on ``group``'s own output, on ``assign``'s, or later — since it only needs the
+session's own metadata (read from the primary files' own headers), not resolved
+project/subject/session IDs. The one real ordering constraint is ``deidentify``: run
+``associate`` *before* it if ``GLOB`` relies on identifying metadata, as in the
+example below (``{PatientName.family_name}``) — ``deidentify`` replaces
+``PatientName`` with a fixed placeholder rather than removing it, so the glob would
+still evaluate afterward, just silently against the wrong (anonymised) name, and
+never find the real files:
 
 .. code-block:: console
 
@@ -21,7 +27,8 @@ pattern:
         "/data/raw-exports/{PatientName.family_name}_{PatientName.given_name}*.ptd" \
         ".*/[^.]+\.[^.]+\.[^.]+\.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^.]+).*"
 
-* ``INPUT_DIR`` — the ``assign`` output directory (``XINGEST_INPUT_DIR``)
+* ``INPUT_DIR`` — the directory of sessions to associate files into, from whichever
+  stage you're running this after (``XINGEST_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where sessions are written with the associated files attached
   (``XINGEST_OUTPUT_DIR``)
 * ``DATATYPE`` — the format of the files being linked in, as one or more

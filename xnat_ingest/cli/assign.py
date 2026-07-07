@@ -25,6 +25,12 @@ INPUT_DIR is the path to the directory containing the grouped-but-not-yet-assign
 sessions (the output of the 'group' command)
 
 OUTPUT_DIR is the directory that the assigned sessions will be written to
+
+If a project/subject/session ID can't be resolved from a session's metadata, it is
+assigned a unique 'INVALID_NOTFOUND_<FIELD>_<random>' placeholder instead of being
+dropped, and the whole session is saved under an '__invalid__' subdirectory of
+OUTPUT_DIR instead of alongside normally-assigned ones, so it can be found and
+manually reviewed/reprocessed rather than silently lost.
 """,
 )
 @click.argument(
@@ -42,8 +48,9 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="StudyComments",
     envvar="XINGEST_PROJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT project ID from "
-        "(XINGEST_PROJECT env. var)"
+        "The keyword of the metadata field to extract the XNAT project ID from, or "
+        "a Python format string over several fields, e.g. "
+        "'{PatientID}_{StudyDate:%Y%m%d}', to compose one (XINGEST_PROJECT env. var)"
     ),
 )
 @click.option(
@@ -53,7 +60,8 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="PatientID",
     envvar="XINGEST_SUBJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT subject ID from "
+        "The keyword of the metadata field to extract the XNAT subject ID from, or "
+        "a Python format string over several fields (see --project) "
         "(XINGEST_SUBJECT env. var)"
     ),
 )
@@ -64,7 +72,8 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="AccessionNumber",
     envvar="XINGEST_SESSION",
     help=(
-        "The keyword of the metadata field to extract the XNAT session ID from "
+        "The keyword of the metadata field to extract the XNAT session ID from, or "
+        "a Python format string over several fields (see --project) "
         "(XINGEST_SESSION env. var)"
     ),
 )
