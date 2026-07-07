@@ -42,7 +42,6 @@ external dependencies (e.g. dcm2niix, MRtrix3):
 
 .. code-block:: console
 
-    $ docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
     $ docker run ghcr.io/australian-imaging-service/xnat-ingest --help
 
 See :ref:`Deployment tips` for how this fits into Docker Compose

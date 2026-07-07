@@ -9,7 +9,7 @@
 XNAT-Ingest is a toolkit used for sorting data into project/subject/sessions, de-identifying images before
 uploading them to an XNAT instance. Support for various file formats is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
-(e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/)).
+(e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/), [FileFormats Siemens](https://arcanaframework.github.io/fileformats-vendor-siemens/),...).
 
 
 ## Installation

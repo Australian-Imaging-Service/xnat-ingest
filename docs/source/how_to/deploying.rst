@@ -57,7 +57,7 @@ a service sharing a named volume for the staging directories:
 
       upload:
         image: ghcr.io/australian-imaging-service/xnat-ingest
-        command: upload /staging/assigned xnat.example.org --always-include all --loop 300
+        command: upload /staging/assigned xnat.example.org --loop 300
         environment:
           XINGEST_USER: my-upload-user
           XINGEST_PASS: my-upload-password
@@ -78,3 +78,8 @@ user, password) injected via a ``ConfigMap``/``Secret`` as ``XINGEST_*`` environ
 variables rather than passed as command-line flags. ``check-upload`` doesn't support
 ``--loop``, so it's a natural fit for a ``CronJob`` instead, run periodically to audit
 what has and hasn't made it to XNAT rather than as an always-on service.
+
+Rather than writing these manifests from scratch, `ais-edge
+<https://github.com/Australian-Imaging-Service/ais-edge>`_ provides ready-made Helm
+charts for deploying *XNAT Ingest* (alongside other edge-node components) to
+Kubernetes, and is a good starting point for a production setup.

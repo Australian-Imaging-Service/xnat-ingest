@@ -133,11 +133,7 @@ jobs:
     needs: [build]
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
-    - name: Unset header
-      # checkout@v2 adds a header that makes branch protection report errors
-      # because the Github action bot is not a collaborator on the repo
-      run: git config --local --unset http.https://github.com/.extraheader
+      uses: actions/checkout@v4
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
@@ -151,9 +147,9 @@ jobs:
         cd docs
         make html
         cd ..
-    - uses: actions/upload-artifact@v4
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
       with:
-        name: built-docs
         path: docs/build/html
 
   deploy-pypi:
@@ -224,3 +220,18 @@ jobs:
         tags: |
           ${{ steps.versions.outputs.TAG }}
           ${{ steps.versions.outputs.IMAGE }}:latest
+
+  deploy-docs:
+    if: github.event_name == 'release'
+    needs: [build-docs, deploy-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
