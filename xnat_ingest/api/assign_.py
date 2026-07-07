@@ -9,6 +9,8 @@ from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
 
+INVALID_NAME_DEFAULT = "__invalid__"
+
 
 def assign(
     input_dir: Path,
@@ -52,6 +54,14 @@ def assign(
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
+
+    Notes
+    -----
+    If a session's project/subject/session ID can't be resolved from its metadata, it
+    is saved with placeholder IDs (see `ImagingSession.assign`) under an
+    `INVALID_NAME_DEFAULT` ('__invalid__') subdirectory of `output_dir` instead of the
+    regular output location, so it can be found and manually reprocessed rather than
+    being lost.
     """
 
     sessions: list[LocalSessionListing] = [
@@ -88,8 +98,18 @@ def assign(
                 scan_field=scan_field,
             )
 
+            if session.invalid_ids:
+                logger.warning(
+                    "Could not fully resolve project/subject/session IDs for '%s', "
+                    "saving to '%s' for manual review instead",
+                    session_listing.name,
+                    INVALID_NAME_DEFAULT,
+                )
+            dest_dir = (
+                output_dir / INVALID_NAME_DEFAULT if session.invalid_ids else output_dir
+            )
             session.save(
-                dest_dir=output_dir,
+                dest_dir=dest_dir,
                 copy_mode=copy_mode,
             )
         except Exception as e:

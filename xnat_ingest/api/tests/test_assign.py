@@ -8,7 +8,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )  # type: ignore[import-untyped]
 
-from xnat_ingest.api.assign_ import assign
+from xnat_ingest.api.assign_ import INVALID_NAME_DEFAULT, assign
 from xnat_ingest.api.group_ import group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
@@ -35,6 +35,7 @@ def test_assign_calls_load_assign_save_for_each_session(
     output_dir.mkdir()
 
     mock_session = MagicMock()
+    mock_session.invalid_ids = False
     with patch.object(ImagingSession, "load", return_value=mock_session) as mock_load:
         errors = assign(
             input_dir=grouped_dir,
@@ -55,6 +56,30 @@ def test_assign_calls_load_assign_save_for_each_session(
     )
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir,
+        copy_mode=FileSet.CopyMode.hardlink_or_copy,
+    )
+
+
+def test_assign_routes_invalid_ids_to_invalid_subdir(
+    grouped_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+
+    mock_session = MagicMock()
+    mock_session.invalid_ids = True
+    with patch.object(ImagingSession, "load", return_value=mock_session):
+        errors = assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert errors == []
+    mock_session.save.assert_called_once_with(
+        dest_dir=output_dir / INVALID_NAME_DEFAULT,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
     )
 
@@ -279,3 +304,42 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     assert not scan_dir.name.endswith(".")
     assert scan_dir.name == "4.PET SWB 8MIN"
+
+
+def test_assign_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    """A session whose project field can't be resolved from its metadata should be
+    saved with a placeholder ID under __invalid__, not dropped"""
+    grouped_dir = tmp_path / "grouped"
+    grouped_dir.mkdir()
+    group_errors = group(
+        input_paths=[str(dicom_dir)],
+        output_dir=grouped_dir,
+        datatypes=[DicomSeries],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+        resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+    )
+    assert group_errors == []
+
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+
+    errors = assign(
+        input_dir=grouped_dir,
+        output_dir=output_dir,
+        project_field="ThisFieldDoesNotExistInTheMetadata",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+
+    assert errors == []
+    assert list(output_dir.iterdir()) == [output_dir / INVALID_NAME_DEFAULT]
+    session_dirs = list((output_dir / INVALID_NAME_DEFAULT).iterdir())
+    assert len(session_dirs) == 1
+    project_id = session_dirs[0].name.split(".")[0]
+    assert project_id.startswith("INVALID_NOTFOUND_")
+
+    reloaded = ImagingSession.load(session_dirs[0])
+    assert reloaded.invalid_ids

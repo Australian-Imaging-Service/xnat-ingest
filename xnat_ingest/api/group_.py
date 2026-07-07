@@ -11,7 +11,6 @@ from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
 BUILD_NAME_DEFAULT = "__build__"
-INVALID_NAME_DEFAULT = "__invalid__"
 
 
 def group(
@@ -78,13 +77,11 @@ def group(
 
     errors = []
 
-    # Create sub-directories of the output directory for the different phases of the
-    # staging process
+    # Create sub-directory of the output directory to build sessions in before
+    # moving them into their final location
     build_dir = output_dir / BUILD_NAME_DEFAULT
-    invalid_dir = output_dir / INVALID_NAME_DEFAULT
 
     build_dir.mkdir(parents=True, exist_ok=True)
-    invalid_dir.mkdir(parents=True, exist_ok=True)
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
@@ -171,13 +168,11 @@ def group_orthanc(
 
     errors = []
 
-    # Create sub-directories of the output directory for the different phases of the
-    # staging process
+    # Create sub-directory of the output directory to build sessions in before
+    # moving them into their final location
     build_dir = output_dir / BUILD_NAME_DEFAULT
-    invalid_dir = output_dir / INVALID_NAME_DEFAULT
 
     build_dir.mkdir(parents=True, exist_ok=True)
-    invalid_dir.mkdir(parents=True, exist_ok=True)
 
     sessions = ImagingSession.from_orthanc(  # noqa
         url=url,

@@ -499,18 +499,26 @@ class ImagingSession:
             the field can't be resolved are left without a description (saved with a
             trailing-dot '<scan_id>.' directory name)
 
-        Raises
-        ------
-        ImagingSessionParseError
-            if none of the candidate fields for a given ID resolve to a value in the
-            session's metadata
+        Notes
+        -----
+        If a project/subject/session field can't be resolved from the session's
+        metadata, a unique 'INVALID_NOTFOUND_<FIELD>_<random>' placeholder is used
+        instead of raising, so the session can still be saved (see `invalid_ids`) for
+        manual review/reprocessing rather than being silently dropped.
         """
+        missing_ids: dict[str, str] = {}
         if constant_project_id is None:
-            self.project_id = IDSpec(project_field).get_value(self.metadata)
+            self.project_id = IDSpec(project_field).get_value(
+                self.metadata, missing_ids=missing_ids
+            )
         else:
             self.project_id = constant_project_id
-        self.subject_id = IDSpec(subject_field).get_value(self.metadata)
-        self.session_id = IDSpec(session_field).get_value(self.metadata)
+        self.subject_id = IDSpec(subject_field).get_value(
+            self.metadata, missing_ids=missing_ids
+        )
+        self.session_id = IDSpec(session_field).get_value(
+            self.metadata, missing_ids=missing_ids
+        )
 
         if scan_field is not None:
             for scan in self.scans.values():

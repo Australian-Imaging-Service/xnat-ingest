@@ -649,6 +649,25 @@ def test_id_escape(tmp_path: Path) -> None:
     assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
 
 
+def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
+    imaging_session: ImagingSession,
+) -> None:
+    """A project/subject/session field that can't be resolved from the session's
+    metadata should produce a placeholder ID (and flag the session via
+    'invalid_ids'), rather than raising and losing the session entirely"""
+    imaging_session.assign(
+        project_field="ThisFieldDoesNotExistInTheMetadata",
+        subject_field="PatientID",
+        session_field="AccessionNumber",
+    )
+    assert imaging_session.project_id.startswith(
+        "INVALID_NOTFOUND_THISFIELDDOESNOTEXISTINTHEMETADATA_"
+    )
+    assert imaging_session.invalid_ids
+    # the other, resolvable fields are unaffected
+    assert not imaging_session.subject_id.startswith("INVALID_NOTFOUND_")
+
+
 # ---------------------------------------------------------------------------
 # ImagingSession.deidentify tests
 # ---------------------------------------------------------------------------
