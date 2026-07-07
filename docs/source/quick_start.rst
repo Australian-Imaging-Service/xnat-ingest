@@ -4,8 +4,8 @@ Quick start
 This walks through getting a single DICOM series from a directory on disk into an
 XNAT project, using a synthetic sample scan so you don't need real patient data or an
 existing XNAT server to follow along. It uses the same three commands you'd use in
-production — see :doc:`how_to` for the full pipeline (including de-identification) and
-:doc:`cli` for every option.
+production — see :doc:`/how_to/pipeline` for the full pipeline (including
+de-identification) and :doc:`cli` for every option.
 
 
 1. Install
@@ -68,7 +68,7 @@ Assign the session to your project. The sample data from step 3 doesn't have
 ``StudyComments``/``AccessionNumber`` populated (the fields ``assign`` uses by default
 for project/session), so we fix the project explicitly and use ``StudyInstanceUID`` for
 the session instead — real scanner data may populate these differently, or the same
-way, depending on your site (see :doc:`how_to`):
+way, depending on your site (see :ref:`2. Assign project/subject/session IDs`):
 
 .. code-block:: console
 
@@ -90,6 +90,6 @@ which is overkill for a first try:
 ----------------------
 
 Log in to the XNAT web interface and open ``MYPROJECT`` — you should see a new
-subject and session containing the uploaded scan. From here, see :doc:`how_to` for
-adding de-identification to the pipeline, and :doc:`cli`/:doc:`api` for the full set of
-options.
+subject and session containing the uploaded scan. From here, see :doc:`/how_to/deidentify`
+for adding de-identification to the pipeline, and :doc:`cli`/:doc:`api` for the full set
+of options.

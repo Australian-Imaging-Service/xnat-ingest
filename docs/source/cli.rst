@@ -2,7 +2,8 @@ Command-line interface
 ======================
 
 XNAT Ingest's command line interface consists of a number of sub-commands under the
-`xnat-ingest` command. See :doc:`how_to` for how these fit together into a pipeline.
+`xnat-ingest` command. See :doc:`/how_to/pipeline` for how these fit together into a
+pipeline.
 
 
 .. click:: xnat_ingest.cli.group:group_cli

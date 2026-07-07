@@ -24,10 +24,10 @@ metadata to be sorted on their own, optionally de-identifies everything, and upl
 the result. Each of these is a separate step that can be chained together and left
 running continuously as a service, watching for new files as they arrive.
 
-* :ref:`Run the basic ingest pipeline` — group, assign and upload files to XNAT
-* :ref:`Associate files that don't carry their own sorting metadata` — link in files by filename pattern instead
-* :ref:`Deidentify images before upload` — strip patient-identifying data first
-* :ref:`Deploying as a long-running service` — run the pipeline continuously via Docker/Kubernetes
+* :ref:`Basic ingest workflow` — group, assign and upload files to XNAT
+* :ref:`Associate files with minimal metadata` — link in files by filename pattern instead
+* :ref:`Deidentification` — strip patient-identifying data first
+* :ref:`Deployment` — run the pipeline continuously via Docker/Kubernetes
 * :doc:`cli` — full command-line reference
 
 See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data.
@@ -45,7 +45,7 @@ external dependencies (e.g. dcm2niix, MRtrix3):
     $ docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
     $ docker run ghcr.io/australian-imaging-service/xnat-ingest --help
 
-See :ref:`Deploying as a long-running service` for how this fits into Docker Compose
+See :ref:`Deployment` for how this fits into Docker Compose
 or Kubernetes.
 
 Alternatively, *XNAT Ingest* can be installed for Python >=3.11 using *pip*:
@@ -67,13 +67,30 @@ This work is licensed under the
     :hidden:
 
     quick_start
-    how_to
-    cli
+
+.. toctree::
+    :maxdepth: 2
+    :caption: How-to
+    :hidden:
+
+    how_to/pipeline
+    how_to/deidentify
+    how_to/associate
+    how_to/deploying
 
 .. toctree::
     :maxdepth: 2
     :caption: Developer Guide
     :hidden:
 
-    developer
+    developer/file_formats
+    developer/data_model
+    developer/contributing
+
+.. toctree::
+    :maxdepth: 2
+    :caption: Reference
+    :hidden:
+
     api
+    cli
