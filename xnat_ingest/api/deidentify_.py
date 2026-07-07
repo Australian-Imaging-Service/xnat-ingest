@@ -16,6 +16,8 @@ from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
+from dicom_deid.engine import DeidEngine
+from dicom_deid.header_reid import build_reid_document, snapshot_from_pydicom
 DEFAULT_SPEC_DIR = "__default__"
 
 
@@ -144,4 +146,84 @@ def dicom_deidentify(
     spec: ty.Any = None,
     out_dir: os.PathLike[str] | None = None,
 ) -> tuple[DicomImage, ty.Mapping[str, ty.Any]]:
-    raise NotImplementedError
+    """
+    De-identify a single DicomImage using the dicom_deid engine.
+    
+    Returns the de-identified DicomImage and a mapping dict of metadata for aggregation by XNAT Ingest's session-level reid logic.
+    
+    Parameters
+    ----------
+    dicom : DicomImage
+        The DicomImage to de-identify.
+    spec : ty.Any, optional
+        Path to a project-specific deidentification specification file.
+    out_dir : os.PathLike[str] | None, optional
+        The output directory for the de-identified image. If none, a temporary directory will be used.
+    
+    Returns
+    -------
+    tuple[DicomImage, ty.Mapping[str, ty.Any]]
+        The de-identified DicomImage and a mapping dict of metadata.
+    """
+    import tempfile
+    import pydicom
+    
+    # Add value error when spec is none, since dicom_deid requires a spec to run.
+    if spec is None:
+        raise ValueError(
+            "No deidentification spec provided to dicom_deidentify(). "
+            "Ensure a project-specific recipe file exists in spec_dir for this project and is named using the mime-type convention (e.g. 'medimage@dicom-image')."
+        )
+    recipe_path = Path(spec)
+    if not recipe_path.exists():
+        raise FileNotFoundError(
+            f"Recipe file not found at: {recipe_path}"
+    )
+
+    # Resolve output path
+    if out_dir is None:
+        out_dir = Path(tempfile.mkdtemp())
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve input file path from DicomImage object
+    infile = Path(dicom.fspath)
+    outfile = out_dir / infile.name
+
+    # Take pre-snapshot before de-identification for reid metadata
+    original_ds = pydicom.dcmread(str(infile), stop_before_pixels=True)
+    pre_snapshot = snapshot_from_pydicom(original_ds)
+
+    # Configure deidentification
+    # Claude suggested moving this outside the function to reduce overhead if processing many files with the same spec. It suggested creating a cache dict that maps spec paths to DeidEngine instances. Is this something we should consider?
+    _engine = DeidEngine(
+        recipe_path = Path(spec),   # Tom to add guard for if spec is None (use a default recipe or raise an error)
+        capture_headers = False,  # header capture is handled by xnat-ingest's reid logic
+        strip_sequences = True,
+        remove_private = True,
+    )
+
+    # Run de-identification using dicom_deid
+    result = _engine.process_file(infile, outfile)
+
+    if not result.success:
+        raise RuntimeError(
+            f"De-identification failed for {infile.name}: {result.error}"
+        )
+    
+    #Take post-snapshot after de-identification for reid metadata
+    deid_ds = pydicom.dcmread(str(outfile), stop_before_pixels=True)
+    post_snapshot = snapshot_from_pydicom(deid_ds)
+
+    #Build re-identification mapping dict
+    reid_mdata = build_reid_document(
+        pre_snapshot = pre_snapshot,
+        post_snapshot = post_snapshot,
+        uid_keys = ["SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID"],
+        source_file = str(infile),
+        format_label = "DICOM",
+    )
+
+    # Return the de-identified DicomImage and the re-identification metadata
+    deid_dicom = DicomImage(outfile)
+    return deid_dicom, reid_mdata
