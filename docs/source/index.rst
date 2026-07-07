@@ -11,7 +11,7 @@ XNAT Ingest
    :alt: Latest Version
 .. image:: https://img.shields.io/github/stars/australian-imaging-service/xnat-ingest?label=GitHub
    :alt: GitHub stars
-   :target: https://github.com/ArcanaFramework/xnat-ingest
+   :target: https://github.com/australian-imaging-service/xnat-ingest
 
 
 *XNAT Ingest* is a toolkit for capturing data from instruments and uploading it to XNAT.
