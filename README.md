@@ -1,5 +1,5 @@
 
-# Xnat-ingest
+# XNAT Ingest
 
 [![CI/CD](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest)
@@ -10,6 +10,20 @@ XNAT-Ingest is a toolkit used for sorting data into project/subject/sessions, de
 uploading them to an XNAT instance. Support for various file formats is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
 (e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/), [FileFormats Siemens](https://arcanaframework.github.io/fileformats-vendor-siemens/),...).
+
+```mermaid
+flowchart LR
+    Scanner(["Scanner / instrument"]) --> Group["group"]
+    Group --> Assign["assign"]
+    Assign --> Deidentify["deidentify (optional)"]
+    Deidentify --> Upload["upload"]
+    Upload --> XNAT[("XNAT")]
+    Upload -.-> CheckUpload["check-upload"]
+
+    Extra(["files without\nsorting metadata"]) -.-> Associate["associate (optional)"]
+    Assign -.-> Associate
+    Associate -.-> Deidentify
+```
 
 
 ## Installation
