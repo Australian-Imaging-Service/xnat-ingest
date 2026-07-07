@@ -25,9 +25,9 @@ the result. Each of these is a separate step that can be chained together and le
 running continuously as a service, watching for new files as they arrive.
 
 * :ref:`Basic ingest workflow` — group, assign and upload files to XNAT
-* :ref:`Associate files with minimal metadata` — link in files by filename pattern instead
+* :ref:`Associate files without relevant metadata` — link in files by filename pattern instead
 * :ref:`Deidentification` — strip patient-identifying data first
-* :ref:`Deployment` — run the pipeline continuously via Docker/Kubernetes
+* :ref:`Deployment tips` — run the pipeline continuously via Docker/Kubernetes
 * :doc:`cli` — full command-line reference
 
 See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data.
@@ -45,7 +45,7 @@ external dependencies (e.g. dcm2niix, MRtrix3):
     $ docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
     $ docker run ghcr.io/australian-imaging-service/xnat-ingest --help
 
-See :ref:`Deployment` for how this fits into Docker Compose
+See :ref:`Deployment tips` for how this fits into Docker Compose
 or Kubernetes.
 
 Alternatively, *XNAT Ingest* can be installed for Python >=3.11 using *pip*:
@@ -80,17 +80,17 @@ This work is licensed under the
 
 .. toctree::
     :maxdepth: 2
-    :caption: Developer Guide
+    :caption: Developer
     :hidden:
 
+    developer/contributing
     developer/file_formats
     developer/data_model
-    developer/contributing
 
 .. toctree::
     :maxdepth: 2
     :caption: Reference
     :hidden:
 
-    api
     cli
+    api

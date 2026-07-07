@@ -97,7 +97,6 @@ exclude = "xnat_ingest/_version.py"
 
 [tool.isort]
 profile = "black"
-multi_line_mode = 3
 line_length = 88
 skip_gitignore = true
 

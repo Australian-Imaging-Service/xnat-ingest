@@ -1,5 +1,5 @@
-Associate files with minimal metadata
-=====================================
+Associate files without relevant metadata
+=========================================
 
 ``group``/``assign`` sort files using metadata read out of the files themselves (DICOM
 tags, by default). Some data that belongs in a session doesn't work that way — e.g.

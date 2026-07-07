@@ -79,7 +79,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
 @click.option(
     "--always-include",
     "-i",
-    default=[],
+    default=["all"],
     type=str,
     multiple=True,
     envvar="XINGEST_ALWAYSINCLUDE",

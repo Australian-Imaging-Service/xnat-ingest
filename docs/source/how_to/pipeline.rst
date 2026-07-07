@@ -88,6 +88,13 @@ Credentials are read from the environment if the flags are omitted, so on a shar
 node you'd typically set ``XINGEST_HOST``, ``XINGEST_USER`` and ``XINGEST_PASS`` once
 in the environment rather than passing them on every invocation.
 
+At the upload stage you are able to filter which resources get uploaded based on their
+file types. This can be specified by the "always-include" flag, e.g. ``--always-include medimage/dicom-series``
+(defaults to all file types ``--always-include all``) uploads every file found in the session
+that matches that type. The alternative is defining an expected column layout for the
+project with the `frametree <https://arcanaframework.github.io/frametree/>`_ tool, and
+only data with a matching column in the dataset definition is uploaded.
+
 
 4. Check what made it up
 ----------------------------

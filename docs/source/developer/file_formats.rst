@@ -1,5 +1,5 @@
-Adding support for file types
-=============================
+Adding support for new file types
+=================================
 
 *XNAT Ingest* doesn't have built-in knowledge of DICOM, NIfTI, or any other specific
 format baked into its core logic. Instead, every file on disk is represented as a

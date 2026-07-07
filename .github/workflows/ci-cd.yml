@@ -17,6 +17,16 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: "3.13"
+    - uses: pre-commit/action@v3.0.1
+
   test:
     services:
       orthanc:
@@ -92,7 +102,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
 
   build:
-    needs: [test]
+    needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3

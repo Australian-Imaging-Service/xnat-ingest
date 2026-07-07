@@ -1,5 +1,5 @@
-Deployment
-==========
+Deployment tips
+===============
 
 Rather than a one-off run, most nodes want ``group``/``assign``/``deidentify``/
 ``upload`` running continuously, each watching its input directory and picking up new

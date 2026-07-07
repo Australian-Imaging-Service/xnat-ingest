@@ -24,16 +24,9 @@ Alternatively, a Docker image containing the toolkit can be pulled from `docker 
 
 ## Running
 
-XNAT Ingest has a public API and a command-line interface (CLI). The CLI can be explored by its in-built
-help menu, e.g.
+XNAT Ingest has a public API and a command-line interface (CLI), with sub-commands to group, assign,
+associate, de-identify, and upload imaging sessions to XNAT — either as a one-off run or as a
+continuously-running service (e.g. via Docker Compose or Kubernetes).
 
-```
-$ xnat-ingest --help
-```
-
-When using docker, the root CLI command is set to be the entrypoint of the Docker image so it can be run
-by
-
-```
-docker run xnat-ingest --help
-```
+See the [full documentation](https://australian-imaging-service.github.io/xnat-ingest/) for a hands-on
+quick start, how-to guides for each part of the pipeline, and the complete CLI/API reference.

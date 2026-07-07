@@ -75,15 +75,12 @@ way, depending on your site (see :ref:`2. Assign project/subject/session IDs`):
     $ xnat-ingest assign /tmp/xnat-ingest-quickstart/grouped /tmp/xnat-ingest-quickstart/assigned \
         --constant-project-id MYPROJECT --session StudyInstanceUID
 
-Upload to XNAT. ``--always-include all`` uploads every file found in the session
-regardless of type — the alternative is defining an expected column layout for the
-project with the `frametree <https://arcanaframework.github.io/frametree/>`_ tool,
-which is overkill for a first try:
+Then upload to XNAT
 
 .. code-block:: console
 
     $ xnat-ingest upload /tmp/xnat-ingest-quickstart/assigned http://localhost:8080 \
-        --user admin --password admin --always-include all
+        --user admin --password admin
 
 
 5. Check the result

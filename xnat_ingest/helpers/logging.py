@@ -1,6 +1,5 @@
 """Helper functions and classes for logging"""
 
-import asyncio
 import json
 
 import logging
