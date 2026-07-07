@@ -34,7 +34,7 @@ are uploaded to XNAT
 )
 @click.argument("input_paths", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_STAGING_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
 @click.option(
     "--session",
@@ -135,12 +135,16 @@ are uploaded to XNAT
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
     help=(
-        "Whether to delete the session directories after they have been uploaded or "
-        "not (XINGEST_DELETE env. var)"
+        "Whether to unlink the source files after they have been successfully "
+        "grouped. 'all' and 'keep-metadata' behave the same here (individual "
+        "source files are removed one by one) since 'group's source isn't a "
+        "directory tree that xnat-ingest owns and can't have a metadata skeleton "
+        "left behind in it (XINGEST_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -197,7 +201,7 @@ def group_cli(
     scan: list[IDSpec],
     resource: list[IDSpec],
     path_metadata_regex: list[PathMetadataRegex],
-    delete: bool,
+    unlink_source: str | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
@@ -229,7 +233,7 @@ def group_cli(
             session=session,
             scan=scan,
             resource=resource,
-            delete=delete,
+            unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             wait_period=wait_period,
@@ -310,12 +314,13 @@ PASSWORD for the Orthanc user
     ),
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
     help=(
-        "Whether to delete the session directories after they have been uploaded or "
-        "not (XINGEST_DELETE env. var)"
+        "Whether to unlink the source studies in Orthanc after they have been "
+        "successfully grouped. Not yet implemented (XINGEST_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -383,7 +388,7 @@ def group_orthanc_cli(
     password: str,
     processed_label: str | None,
     to_process_label: str | None,
-    delete: bool,
+    unlink_source: str | None,
     raise_errors: bool,
     loop: int,
     wait_period: int,
@@ -414,7 +419,7 @@ def group_orthanc_cli(
             password=password,
             processed_label=processed_label,
             to_process_label=to_process_label,
-            delete=delete,
+            unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )

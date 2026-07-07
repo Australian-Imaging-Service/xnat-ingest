@@ -240,8 +240,22 @@ class ImagingResource:
                     f"resource: {differing}"
                 )
 
-    def unlink(self) -> None:
-        """Remove all files in the file-set, the object will be unusable after this"""
+    def unlink(self, remove_dir: bool = False) -> None:
+        """Remove all files in the file-set, the object will be unusable after this
+
+        Parameters
+        ----------
+        remove_dir : bool, optional
+            if True, remove the resource's directory in its entirety, including its
+            own manifest and metadata files, rather than just the underlying data
+            files. Only safe to use on a directory that this resource exclusively
+            owns (e.g. a staged ``<scan_dir>/<resource_name>`` directory) — never on
+            a resource loaded from a shared source directory, since the whole parent
+            directory is removed, by default False
+        """
+        if remove_dir:
+            shutil.rmtree(self.fileset.parent)
+            return
         for fspath in self.fileset.fspaths:
             if fspath.is_file():
                 fspath.unlink()

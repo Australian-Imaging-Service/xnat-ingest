@@ -137,7 +137,7 @@ def test_assign_raise_errors_propagates(grouped_dir: Path, tmp_path: Path) -> No
             )
 
 
-def test_assign_deletes_source_dir_on_success_when_delete_true(
+def test_assign_deletes_source_dir_on_success_when_unlink_source_all(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
@@ -153,14 +153,14 @@ def test_assign_deletes_source_dir_on_success_when_delete_true(
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
             session_field=SESSION_FIELD,
-            delete=True,
+            unlink_source="all",
         )
 
     assert errors == []
     assert not session_dir.exists()
 
 
-def test_assign_leaves_source_dir_when_delete_false(
+def test_assign_leaves_source_dir_when_unlink_source_none(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
@@ -175,13 +175,39 @@ def test_assign_leaves_source_dir_when_delete_false(
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
             session_field=SESSION_FIELD,
-            delete=False,
+            unlink_source=None,
         )
 
     assert session_dir.exists()
 
 
-def test_assign_does_not_delete_on_failure_even_if_delete_true(
+def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
+    grouped_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+    session_dir = next(grouped_dir.iterdir())
+
+    mock_session = MagicMock()
+    with patch.object(ImagingSession, "load", return_value=mock_session):
+        errors = assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            unlink_source="keep-metadata",
+        )
+
+    assert errors == []
+    # the grouped session directory itself is untouched by 'keep-metadata' mode
+    # (only the loaded session's own resource data would be removed, leaving its
+    # session/scan-level metadata behind)
+    assert session_dir.exists()
+    mock_session.unlink.assert_called_once_with(keep_metadata=True)
+
+
+def test_assign_does_not_delete_on_failure_even_if_unlink_source_all(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
@@ -197,7 +223,7 @@ def test_assign_does_not_delete_on_failure_even_if_delete_true(
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
             session_field=SESSION_FIELD,
-            delete=True,
+            unlink_source="all",
         )
 
     assert session_dir.exists()

@@ -3,11 +3,13 @@
 
 [![CI/CD](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/xnat-ingest/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/xnat-ingest)
+[![PyPI](https://img.shields.io/pypi/v/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
+[![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://australian-imaging-service.github.io/xnat-ingest/)
 
 XNAT-Ingest is a toolkit used for sorting data into project/subject/sessions, de-identifying images before
 uploading them to an XNAT instance. Support for various file formats is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
-(e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/)).
+(e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/), [FileFormats Siemens](https://arcanaframework.github.io/fileformats-vendor-siemens/),...).
 
 
 ## Installation
@@ -22,16 +24,9 @@ Alternatively, a Docker image containing the toolkit can be pulled from `docker 
 
 ## Running
 
-XNAT Ingest has a public API and a command-line interface (CLI). The CLI can be explored by its in-built
-help menu, e.g.
+XNAT Ingest has a public API and a command-line interface (CLI), with sub-commands to group, assign,
+associate, de-identify, and upload imaging sessions to XNAT — either as a one-off run or as a
+continuously-running service (e.g. via Docker Compose or Kubernetes).
 
-```
-$ xnat-ingest --help
-```
-
-When using docker, the root CLI command is set to be the entrypoint of the Docker image so it can be run
-by
-
-```
-docker run xnat-ingest --help
-```
+See the [full documentation](https://australian-imaging-service.github.io/xnat-ingest/) for a hands-on
+quick start, how-to guides for each part of the pipeline, and the complete CLI/API reference.

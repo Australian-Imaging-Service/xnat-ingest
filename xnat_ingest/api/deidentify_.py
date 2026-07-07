@@ -28,7 +28,7 @@ def deidentify(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
     require_manifest: bool = True,
-    delete: bool = False,
+    unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
 ) -> list[str]:
 
@@ -100,9 +100,13 @@ def deidentify(
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if delete:
-                # remove the original session directory after successful deidentification
+            if unlink_source == "all":
+                # remove the original (assigned) session directory in its entirety
                 session_listing.session_dir.rmdir()
+            elif unlink_source == "keep-metadata":
+                # remove just the resource data, leaving the session/scan-level
+                # metadata behind as a lightweight skeleton
+                session.unlink(keep_metadata=True)
     return errors
 
 

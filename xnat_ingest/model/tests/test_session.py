@@ -29,6 +29,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 
 from conftest import get_raw_data_files
 from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.model.session import ImagingScan, ImagingSession
 from xnat_ingest.model.store import DummyAxes
 
@@ -256,6 +257,56 @@ def test_session_save_roundtrip(
     #             assert isinstance(resource, FileSet)
     #             scan.resources[key] = DicomSeries(resource)
     # assert loaded_no_manifest == saved
+
+
+def test_unlink_keep_metadata(tmp_path: Path, imaging_session: ImagingSession) -> None:
+    """unlink(keep_metadata=True) should remove resource directories in their
+    entirety, while leaving the scan/session-level metadata behind so the session
+    can still be reloaded (e.g. by 'associate' to work out which scan a
+    late-arriving file belongs to) without its underlying data"""
+
+    # Force each scan's metadata to be read from its resources before saving, as
+    # 'assign' would do in production when resolving a scan description from
+    # metadata — otherwise the lazily-populated Metadata objects are still empty
+    # at save time and nothing meaningful ends up in '__METADATA__.json'
+    for scan in imaging_session.scans.values():
+        assert "SeriesDescription" in scan.metadata
+
+    saved, session_dir = imaging_session.save(tmp_path)
+
+    # Sanity check: resource directories exist with data before unlinking, and are
+    # direct children of their scan's own directory
+    resource_dirs = [
+        resource.fileset.parent
+        for scan in saved.scans.values()
+        for resource in scan.resources.values()
+    ]
+    scan_dirs = {resource_dir.parent for resource_dir in resource_dirs}
+    assert resource_dirs
+    for resource_dir in resource_dirs:
+        assert resource_dir.exists()
+        assert any(resource_dir.iterdir())
+
+    saved.unlink(keep_metadata=True)
+
+    # Resource directories should be gone entirely, scan/session metadata should remain
+    for resource_dir in resource_dirs:
+        assert not resource_dir.exists()
+    for scan_dir in scan_dirs:
+        assert (scan_dir / Metadata.FNAME).exists()
+    assert (session_dir / Metadata.FNAME).exists()
+
+    # The skeleton should still be loadable, with scan-level metadata intact but no
+    # resources
+    reloaded = ImagingSession.load(session_dir)
+    assert reloaded.uid == saved.uid
+    assert reloaded.project_id == saved.project_id
+    for scan_id, scan in reloaded.scans.items():
+        assert scan.resources == {}
+        assert (
+            scan.metadata["SeriesDescription"]
+            == imaging_session.scans[scan_id].metadata["SeriesDescription"]
+        )
 
 
 def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None:

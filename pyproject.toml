@@ -45,6 +45,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 dynamic = ["version"]
@@ -60,9 +61,19 @@ test = [
     "moto >=4.0.11",
     "PyYAML",
 ]
+docs = [
+    "packaging",
+    "docutils>=0.10",
+    "mock>1.0",
+    "sphinx >=2.1.2,<9",
+    "sphinx-argparse>=0.2.0",
+    "sphinx-click>=3.1",
+    "furo>=2022.2.14.1",
+    "numpydoc>=0.6.0",
+]
 # Aliases
-tests = ["xnat-exported-scans[test]"]
-all = ["xnat-exported-scans[dev,test]"]
+tests = ["xnat-ingest[test]"]
+all = ["xnat-ingest[dev,test]"]
 
 [project.urls]
 repository = "https://github.com/Australian-Imaging-Service/xnat_ingest"
@@ -86,7 +97,6 @@ exclude = "xnat_ingest/_version.py"
 
 [tool.isort]
 profile = "black"
-multi_line_mode = 3
 line_length = 88
 skip_gitignore = true
 

@@ -22,7 +22,7 @@ def group(
     scan: list[IDSpec],
     resource: list[IDSpec],
     path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
-    delete: bool = False,
+    unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
@@ -55,8 +55,10 @@ def group(
         Regular expressions to extract "metadata" values from resource file paths as named groups. The named
         groups are used as metadata fields for the resource files, and the extracted values will be used to populate
         the corresponding metadata fields to complement the metadata read from the file headers.
-    delete: bool
-        If True, the input files will be deleted after staging. If False, the input files will be left in place.
+    unlink_source: str | None
+        If "all" or "keep-metadata", the input files will be unlinked one by one after staging (both behave the same
+        here, since the source isn't a directory tree that xnat-ingest owns). If None, the input files will be left
+        in place.
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
@@ -102,7 +104,7 @@ def group(
         build_dir=build_dir,
         copy_mode=copy_mode,
         output_dir=output_dir,
-        delete=delete,
+        unlink_source=unlink_source,
         raise_errors=raise_errors,
         collation_map=collation_map,
     )
@@ -118,7 +120,7 @@ def group_orthanc(
     password: str,
     to_process_label: str | None = None,
     processed_label: str | None = None,
-    delete: bool = False,
+    unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
 ) -> list[str]:
@@ -144,8 +146,9 @@ def group_orthanc(
         session ID will be generated from the subject and visit IDs.
     scan_id: list[FieldSpec]
         List of field specifications to use for extracting the scan ID from the input files.
-    delete: bool
-        If True, the input files will be deleted after staging. If False, the input files will be left in place.
+    unlink_source: str | None
+        If "all" or "keep-metadata", the source studies in Orthanc will be unlinked after staging. Not yet
+        implemented. If None, the source studies will be left in place.
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
@@ -158,12 +161,12 @@ def group_orthanc(
     """
 
     if (
-        delete is True
+        unlink_source is not None
         or copy_mode is not FileSet.CopyMode.hardlink_or_copy
         or raise_errors is True
     ):
         raise NotImplementedError(
-            "'delete', copy_mode' and 'raise_errors' are not yet implemented for Orthanc grouping."
+            "'unlink_source', copy_mode' and 'raise_errors' are not yet implemented for Orthanc grouping."
         )
 
     errors = []
@@ -195,7 +198,7 @@ def group_orthanc(
     #     build_dir=build_dir,
     #     copy_mode=copy_mode,
     #     output_dir=output_dir,
-    #     delete=delete,
+    #     unlink_source=unlink_source,
     #     raise_errors=raise_errors,
     # )
 
@@ -210,7 +213,7 @@ def save_sessions_to_dir(
     output_dir: Path,
     wait_period: int = 0,
     collation_map=None,
-    delete: bool = False,
+    unlink_source: str | None = None,
     raise_errors: bool = False,
 ):
     errors = []
@@ -245,7 +248,12 @@ def save_sessions_to_dir(
             )
             session_output_dir = output_dir.joinpath(*session.staging_relpath)
             ImagingSession.move_dir(saved_dir, session_output_dir)
-            if delete:
+            if unlink_source is not None:
+                # 'all' and 'keep-metadata' are equivalent here: this session's source
+                # files may live in a directory shared with other, not-yet-processed
+                # sessions, so only the individual files are ever removed — never the
+                # whole parent directory (unlike 'assign'/'deidentify', which clean up
+                # a staged directory that xnat-ingest created and owns exclusively)
                 session.unlink()
         except Exception as e:
             if not raise_errors:

@@ -321,7 +321,7 @@ class ImagingSession:
         resource_field: list[IdField]
             the value of this field is to resources
         recursive : bool, optional
-            recurse into directories passed as file paths (i.e. by appending '**/*' and running a glob),
+            recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
             by default False
         avoid_clashes : bool, optional
             if a resource with the same name already exists in the scan, increment the
@@ -1144,7 +1144,7 @@ class ImagingSession:
             this directory, along with the scans manifest
         available_projects : list[str], optional
             list of available project IDs on the XNAT server, if the project ID of the
-            session is not in this list, it will be prefixed with "INVALID_UNRECOGNISED_"
+            session is not in this list, it will be prefixed with ``INVALID_UNRECOGNISED_``
             to avoid upload errors, by default None
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
@@ -1226,11 +1226,29 @@ class ImagingSession:
 
     MANIFEST_FNAME = "MANIFEST.yaml"
 
-    def unlink(self) -> None:
-        """Unlink all resources in the session"""
+    def unlink(self, keep_metadata: bool = False) -> None:
+        """Unlink all resources in the session
+
+        Parameters
+        ----------
+        keep_metadata : bool, optional
+            if True, each resource's directory is removed in its entirety (data
+            files plus its own manifest/metadata), but the enclosing scan and
+            session directories — and their own ``__METADATA__.json`` files, which
+            are always written by :meth:`save` — are left in place. This leaves a
+            lightweight metadata-only skeleton of the session on disk that can
+            still be loaded later (e.g. by ``associate`` to work out which scan a
+            late-arriving file belongs to) without needing to know whether the
+            session's data has already been cleaned up. Only safe to use on a
+            staged session directory that this session exclusively owns — never on
+            a session loaded from a shared source directory (see
+            :meth:`ImagingResource.unlink`), by default False
+        """
         for scan in self.scans.values():
             for resource in scan.resources.values():
-                resource.unlink()
+                resource.unlink(remove_dir=keep_metadata)
+        for resource in self.session_resources.values():
+            resource.unlink(remove_dir=keep_metadata)
 
     def last_modified(self) -> int:
         """Returns the timestamp of the most recently modified file in the session

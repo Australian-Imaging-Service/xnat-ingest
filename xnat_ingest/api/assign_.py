@@ -19,7 +19,7 @@ def assign(
     scan_field: str | None = None,
     project_id: str | None = None,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    delete: bool = False,
+    unlink_source: str | None = None,
     raise_errors: bool = False,
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
@@ -45,8 +45,10 @@ def assign(
     copy_mode: FileSet.CopyMode
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
-    delete: bool
-        If True, the input files will be deleted after staging. If False, the input files will be left in place.
+    unlink_source: str | None
+        If "all", the grouped session directory is removed in its entirety after assignment. If "keep-metadata", the
+        resource data is removed but the session/scan-level metadata is left behind as a lightweight skeleton. If
+        None, the grouped session directory is left in place.
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
@@ -101,7 +103,11 @@ def assign(
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if delete:
-                # remove the original session directory after successful deidentification
+            if unlink_source == "all":
+                # remove the grouped session directory in its entirety
                 shutil.rmtree(session_listing.fspath)
+            elif unlink_source == "keep-metadata":
+                # remove just the resource data, leaving the session/scan-level
+                # metadata behind as a lightweight skeleton
+                session.unlink(keep_metadata=True)
     return errors
