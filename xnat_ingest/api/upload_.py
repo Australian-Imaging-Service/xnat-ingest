@@ -386,4 +386,8 @@ def upload(
                 else:
                     raise
 
-        return errors
+    if errors:
+        logger.error("Upload completed with %s errors", len(errors))
+    else:
+        logger.info("Upload completed successfully")
+    return errors

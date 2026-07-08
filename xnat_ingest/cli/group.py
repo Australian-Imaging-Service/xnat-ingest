@@ -258,7 +258,7 @@ def group_cli(
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Group took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,
@@ -414,7 +414,7 @@ def group_orthanc_cli(
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = group_orthanc(
+        group_orthanc(
             url=url,
             store_dir=store_dir,
             output_dir=output_dir,
@@ -426,21 +426,13 @@ def group_orthanc_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )
-        if errors:
-            logger.error(
-                "Staging completed with %s errors:\n\n%s",
-                len(errors),
-                "\n".join(errors),
-            )
-        else:
-            logger.info("Staging completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Sorting from Orthan took %s seconds, waiting another %s seconds before running "
+            "Grouping from Orthanc took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,

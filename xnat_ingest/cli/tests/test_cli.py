@@ -902,7 +902,9 @@ def test_assign_missing_id_field_collects_error(
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = assign_log_file.read_text()
-    assert "Assign completed with 1 errors" in logs, show_cli_trace(result)
+    assert (
+        "Encountered 1 errors while assigning IDs in input directory" in logs
+    ), show_cli_trace(result)
     # The session couldn't be assigned an ID, so nothing was written to the output dir
     assert not list(assigned_dir.iterdir())
 

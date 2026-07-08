@@ -348,9 +348,6 @@ def upload_cli(
                     ),
                 )
                 if errors:
-                    logger.error(
-                        f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
-                    )
                     # If the errors are XNAT auth failures, the held session has
                     # expired — reconnect so the next iteration uses a fresh
                     # session. Reactive ONLY: we must not reconnect on every
@@ -372,8 +369,6 @@ def upload_cli(
                                 reconnect_err,
                             )
                             xnat_repo = None
-                else:
-                    logger.info("Upload completed successfully without errors")
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.ConnectTimeout,
@@ -403,7 +398,7 @@ def upload_cli(
             elapsed_seconds = (end_time - start_time).total_seconds()
             sleep_time = loop - elapsed_seconds
             logger.info(
-                "Stage took %s seconds, waiting another %s seconds before running "
+                "Upload took %s seconds, waiting another %s seconds before running "
                 "again (loop every %s seconds)",
                 elapsed_seconds,
                 sleep_time,

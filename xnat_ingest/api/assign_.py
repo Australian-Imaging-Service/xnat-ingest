@@ -99,8 +99,8 @@ def assign(
             )
 
             if session.invalid_ids:
-                logger.warning(
-                    "Could not fully resolve project/subject/session IDs for '%s', "
+                logger.error(
+                    "Could not resolve project/subject/session IDs for '%s', "
                     "saving to '%s' for manual review instead",
                     session_listing.name,
                     INVALID_NAME_DEFAULT,
@@ -130,4 +130,11 @@ def assign(
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton
                 session.unlink(keep_metadata=True)
+    if errors:
+        logger.error(
+            "Assign completed with %s errors",
+            len(errors),
+        )
+    else:
+        logger.info("Assign completed successfully")
     return errors

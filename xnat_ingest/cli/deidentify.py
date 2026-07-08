@@ -190,7 +190,7 @@ def deidentify_cli(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = deidentify(
+        deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
             spec_dir=spec_dir,
@@ -202,12 +202,6 @@ def deidentify_cli(
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
         )
-        if errors:
-            logger.error(
-                f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
-            )
-        else:
-            logger.info("Deidentification completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

@@ -29,6 +29,7 @@ def associate(
     session_dirs = list_session_dirs(input_dir)
     sessions: list[LocalSessionListing] = [LocalSessionListing(p) for p in session_dirs]
 
+    errors: list[str] = []
     # Check __metadata__/ for sessions whose directories have been
     # removed. Create metadata-only sessions from the YAML files so associated files can still be discovered.
     metadata_dir = input_dir / ImagingSession.METADATA_DIR
@@ -48,11 +49,12 @@ def associate(
                         yaml_path,
                     )
                 except Exception as e:
-                    logger.warning(
+                    logger.error(
                         "Failed to load metadata session from '%s': %s",
                         yaml_path,
                         e,
                     )
+                    errors.append(str(e))
 
     num_sessions = len(sessions) + len(metadata_sessions)
     logger.info(
@@ -60,8 +62,6 @@ def associate(
         num_sessions,
         input_dir,
     )
-
-    errors: list[str] = []
 
     for session_listing in tqdm(
         sessions,
@@ -126,5 +126,8 @@ def associate(
             if unlink_source is not None:
                 for fileset in associated:
                     fileset.unlink()
-
+    if errors:
+        logger.error("Association completed with %s errors", len(errors))
+    else:
+        logger.info("Association completed successfully without errors")
     return errors

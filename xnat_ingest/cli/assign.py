@@ -185,7 +185,7 @@ def assign_cli(
     # Run the assign process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = assign(
+        assign(
             input_dir=input_dir,
             output_dir=output_dir,
             project_field=project_field,
@@ -197,14 +197,6 @@ def assign_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )
-        if errors:
-            logger.error(
-                "Assign completed with %s errors:\n\n%s",
-                len(errors),
-                "\n".join(errors),
-            )
-        else:
-            logger.info("Assign completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

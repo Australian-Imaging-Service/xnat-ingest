@@ -184,7 +184,7 @@ def associate_cli(
     # Loop the upload process if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = associate(
+        associate(
             input_dir=input_dir,
             output_dir=output_dir,
             datatype=datatype,
@@ -197,19 +197,13 @@ def associate_cli(
             copy_mode=copy_mode,
             unlink_source=unlink_source,
         )
-        if errors:
-            logger.error(
-                f"Association completed with {len(errors)} errors:\n\n{''.join(errors)}"
-            )
-        else:
-            logger.info("Association completed successfully without errors")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Associate took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,

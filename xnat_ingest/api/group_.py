@@ -94,7 +94,7 @@ def group(
         path_metadata_regex=path_metadata_regex,
     )
 
-    save_sessions_to_dir(
+    errors = save_sessions_to_dir(
         sessions,
         f"Grouping files found in '{input_paths}' to {str(output_dir)}",
         wait_period=wait_period,
@@ -105,7 +105,10 @@ def group(
         raise_errors=raise_errors,
         collation_map=collation_map,
     )
-
+    if errors:
+        logger.error("Grouping completed with %s errors", len(errors))
+    else:
+        logger.info("Grouping completed successfully")
     return errors
 
 
@@ -187,7 +190,7 @@ def group_orthanc(
     # Should from_orthanc() not actually move the data, just reference it in place like from_paths()
     # does? If so, we can just call save_sessions_to_dir() here.
 
-    # save_sessions_to_dir(
+    # errors = save_sessions_to_dir(
     #     sessions,
     #     f"Grouping resources found in Orthanc instance at '{url}' to {output_dir}",
     #     build_dir=build_dir,
@@ -197,6 +200,10 @@ def group_orthanc(
     #     raise_errors=raise_errors,
     # )
 
+    if errors:
+        logger.error("Grouping from Orthanc completed with %s errors", len(errors))
+    else:
+        logger.info("Grouping from Orthanc completed successfully")
     return errors
 
 
@@ -210,7 +217,7 @@ def save_sessions_to_dir(
     collation_map=None,
     unlink_source: str | None = None,
     raise_errors: bool = False,
-):
+) -> list[str]:
     errors = []
     for session in tqdm(sessions, msg):
 
@@ -261,3 +268,9 @@ def save_sessions_to_dir(
                 continue
             else:
                 raise
+
+    if errors:
+        logger.error("Grouping from Orthanc completed with %s errors", len(errors))
+    else:
+        logger.info("Grouping from Orthanc completed successfully")
+    return errors
