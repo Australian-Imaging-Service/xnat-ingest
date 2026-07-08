@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.deidentify_ import deidentify
+from ..api.deidentify_api import deidentify
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 

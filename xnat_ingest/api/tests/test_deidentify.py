@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
-from xnat_ingest.api.deidentify_ import DEFAULT_SPEC_DIR, deidentify, load_specs
+from xnat_ingest.api.deidentify_api import DEFAULT_SPEC_DIR, deidentify, load_specs
 from xnat_ingest.model.session import ImagingSession
 
 PROJECT_ID = "PROJ"

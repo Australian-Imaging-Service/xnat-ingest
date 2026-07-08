@@ -6,7 +6,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )  # type: ignore[import-untyped]
 
-from xnat_ingest.api.group_ import (
+from xnat_ingest.api.group_api import (
     BUILD_NAME_DEFAULT,
     group,
 )

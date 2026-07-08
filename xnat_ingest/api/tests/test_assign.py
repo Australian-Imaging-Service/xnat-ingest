@@ -8,8 +8,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )  # type: ignore[import-untyped]
 
-from xnat_ingest.api.assign_ import INVALID_DIRNAME, assign
-from xnat_ingest.api.group_ import group
+from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
+from xnat_ingest.api.group_api import group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
 

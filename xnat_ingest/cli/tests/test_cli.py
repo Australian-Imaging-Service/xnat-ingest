@@ -32,7 +32,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
-from xnat_ingest.api.assign_ import INVALID_DIRNAME
+from xnat_ingest.api.assign_api import INVALID_DIRNAME
 from xnat_ingest.cli import (
     assign_cli,
     associate_cli,

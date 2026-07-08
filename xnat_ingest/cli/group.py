@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import base_cli
 
-from ..api.group_ import group, group_orthanc
+from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
     CollationSpec,
     CopyModeParamType,
