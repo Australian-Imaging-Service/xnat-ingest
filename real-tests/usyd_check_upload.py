@@ -2,13 +2,13 @@ import os
 
 from click.testing import CliRunner
 
-from xnat_ingest.cli import check_upload
+from xnat_ingest.cli import check_upload_cli
 from xnat_ingest.utils import show_cli_trace
 
 runner = CliRunner()
 
 result = runner.invoke(
-    check_upload,
+    check_upload_cli,
     [
         "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/NEW-STAGING",
         "https://xnat.sydney.edu.au",

@@ -8,7 +8,7 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from ..cli.base import cli
+from .base import cli
 from ..helpers.arg_types import LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
