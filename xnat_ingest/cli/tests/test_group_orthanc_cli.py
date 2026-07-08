@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from conftest import show_cli_trace
-from xnat_ingest.cli import group_orthanc_cli
+from xnat_ingest.cli import group_orthanc_cmd
 from xnat_ingest.model.session import ImagingSession
 
 
@@ -34,7 +34,7 @@ def test_group_orthanc_cli_runs_and_passes_labels_through(
         ImagingSession, "from_orthanc", return_value=[]
     ) as mock_from_orthanc:
         result = cli_runner(
-            group_orthanc_cli,
+            group_orthanc_cmd,
             [
                 "http://orthanc.example.org:8042",
                 str(store_dir),
@@ -69,7 +69,7 @@ def test_group_orthanc_cli_defaults_to_no_to_process_label(
         ImagingSession, "from_orthanc", return_value=[]
     ) as mock_from_orthanc:
         result = cli_runner(
-            group_orthanc_cli,
+            group_orthanc_cmd,
             [
                 "http://orthanc.example.org:8042",
                 str(store_dir),

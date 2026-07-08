@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
 from ..api.deidentify_api import deidentify
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
@@ -15,7 +15,7 @@ from ..helpers.logging import logger, set_logger_handling
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
-@base_cli.command(
+@cli.command(
     name="deidentify",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -155,7 +155,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
         "e.g. generated using `Fernet.generate_key()` from the cryptography package"
     ),
 )
-def deidentify_cli(
+def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,

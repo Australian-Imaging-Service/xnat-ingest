@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 import requests.exceptions
 
 from conftest import show_cli_trace
-from xnat_ingest.cli import upload_cli
+from xnat_ingest.cli import upload_cmd
 
 STAGED = "/staged"
 SERVER = "https://xnat.example.org"
@@ -71,7 +71,7 @@ def _run_loop(
         mock_sleep.side_effect = sleep_side_effect
 
         result = cli_runner(
-            upload_cli,
+            upload_cmd,
             COMMON_ARGS + ["--loop", "1"],
             env=CLEAN_ENV,
         )
@@ -197,7 +197,7 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
             "connection reset by peer"
         )
 
-        result = cli_runner(upload_cli, COMMON_ARGS, env=CLEAN_ENV)
+        result = cli_runner(upload_cmd, COMMON_ARGS, env=CLEAN_ENV)
 
     assert isinstance(
         result.exception, requests.exceptions.ConnectionError

@@ -8,7 +8,7 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from ..cli.base import base_cli
+from ..cli.base import cli
 from ..helpers.arg_types import LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
@@ -36,7 +36,7 @@ class CopyModeParamType(click.ParamType):
             self.fail(f"{value!r} is not a valid copy mode", param, ctx)
 
 
-@base_cli.command(
+@cli.command(
     name="associate",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -148,7 +148,7 @@ are uploaded to XNAT
     help=("Whether to require manifest files in the staged resources or not"),
     type=bool,
 )
-def associate_cli(
+def associate_cmd(
     input_dir: Path,
     output_dir: Path,
     datatype: str,

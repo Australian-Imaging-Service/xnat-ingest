@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
 from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
@@ -20,7 +20,7 @@ from ..helpers.arg_types import (
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="group",
     help="""Groups images found in the input paths into separate resources, grouped into
 scans and acquisition sessions
@@ -196,7 +196,7 @@ are uploaded to XNAT
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
-def group_cli(
+def group_cmd(
     input_paths: list[str],
     output_dir: Path,
     datatype: list[MimeType] | None,
@@ -267,7 +267,7 @@ def group_cli(
         time.sleep(loop)
 
 
-@base_cli.command(
+@cli.command(
     name="group-orthanc",
     help="""Groups images stored within an Orthanc instance into directories that can be processed by
 subsequent processing steps.
@@ -383,7 +383,7 @@ PASSWORD for the Orthanc user
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def group_orthanc_cli(
+def group_orthanc_cmd(
     url: str,
     store_dir: Path,
     output_dir: Path,

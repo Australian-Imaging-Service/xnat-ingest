@@ -3,14 +3,14 @@ from pathlib import Path
 
 import click
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 from xnat_ingest.helpers.arg_types import LoggerConfig, StoreCredentials
 from xnat_ingest.helpers.logging import set_logger_handling
 
 from ..api import check_upload
 
 
-@base_cli.command(
+@cli.command(
     name="check-upload",
     help="""Checks staging directory against uploaded files and logs all files that aren't uploaded
 
@@ -121,7 +121,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     envvar="XINGEST_DISABLE_PROGRESS",
     help=("Disable the progress bar"),
 )
-def check_upload_cli(
+def check_upload_cmd(
     input_dir: str,
     server: str,
     user: str,

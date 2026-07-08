@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
 from ..api.assign_api import assign
 from ..helpers.arg_types import (
@@ -16,7 +16,7 @@ from ..helpers.arg_types import (
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="assign",
     help="""Assigns project, subject and session IDs, extracted from session
 metadata, to sessions that have already been grouped into scans/resources
@@ -155,7 +155,7 @@ manually reviewed/reprocessed rather than silently lost.
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def assign_cli(
+def assign_cmd(
     input_dir: Path,
     output_dir: Path,
     project_field: str,

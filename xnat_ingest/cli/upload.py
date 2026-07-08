@@ -14,14 +14,14 @@ from frametree.xnat import Xnat
 
 from xnat.exceptions import XNATResponseError
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
 from ..api import upload
 from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="upload",
     help="""uploads all sessions found in the staging directory (as prepared by the
 `stage` sub-command) to XNAT.
@@ -208,7 +208,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "List the sessions that will be uploaded instead of the actually uploading them"
     ),
 )
-def upload_cli(
+def upload_cmd(
     staged: str,
     server: str,
     user: str,
