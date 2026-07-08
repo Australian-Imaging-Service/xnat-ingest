@@ -6,28 +6,28 @@ XNAT Ingest's command line interface consists of a number of sub-commands under 
 pipeline.
 
 
-.. click:: xnat_ingest.cli.group:group_cli
+.. click:: xnat_ingest.cli.group_cli:group_cmd
    :prog: xnat-ingest group
 
-.. click:: xnat_ingest.cli.group:group_orthanc_cli
+.. click:: xnat_ingest.cli.group_cli:group_orthanc_cmd
    :prog: xnat-ingest group-orthanc
 
 
-.. click:: xnat_ingest.cli.assign:assign_cli
+.. click:: xnat_ingest.cli.assign_cli:assign_cmd
    :prog: xnat-ingest assign
 
 
-.. click:: xnat_ingest.cli.deidentify:deidentify_cli
+.. click:: xnat_ingest.cli.deidentify_cli:deidentify_cmd
    :prog: xnat-ingest deidentify
 
 
-.. click:: xnat_ingest.cli.upload:upload_cli
+.. click:: xnat_ingest.cli.upload_cli:upload_cmd
    :prog: xnat-ingest upload
 
 
-.. click:: xnat_ingest.cli.check_upload:check_upload_cli
+.. click:: xnat_ingest.cli.check_upload_cli:check_upload_cmd
    :prog: xnat-ingest check-upload
 
 
-.. click:: xnat_ingest.cli.associate:associate_cli
+.. click:: xnat_ingest.cli.associate_cli:associate_cmd
    :prog: xnat-ingest associate
