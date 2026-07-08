@@ -59,9 +59,9 @@ def _run_loop(
     xnat_side_effect: ty.Optional[ty.List[ty.Any]] = None,
 ) -> ty.Tuple[ty.Any, MagicMock, MagicMock]:
     with (
-        patch("xnat_ingest.cli.upload.Xnat") as mock_xnat_cls,
-        patch("xnat_ingest.cli.upload.upload") as mock_upload,
-        patch("xnat_ingest.cli.upload.time.sleep") as mock_sleep,
+        patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("xnat_ingest.cli.upload_cli.upload") as mock_upload,
+        patch("xnat_ingest.cli.upload_cli.time.sleep") as mock_sleep,
     ):
         if xnat_side_effect is not None:
             mock_xnat_cls.side_effect = xnat_side_effect
@@ -189,8 +189,8 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
     the caller instead of being swallowed -- there's no daemon to keep
     alive, so callers need to see the failure."""
     with (
-        patch("xnat_ingest.cli.upload.Xnat") as mock_xnat_cls,
-        patch("xnat_ingest.cli.upload.upload") as mock_upload,
+        patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("xnat_ingest.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.side_effect = requests.exceptions.ConnectionError(

@@ -35,7 +35,7 @@ def test_assign_calls_load_assign_save_for_each_session(
     output_dir.mkdir()
 
     mock_session = MagicMock()
-    mock_session.invalid_ids = False
+    mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session) as mock_load:
         errors = assign(
             input_dir=grouped_dir,
@@ -67,7 +67,7 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
     output_dir.mkdir()
 
     mock_session = MagicMock()
-    mock_session.invalid_ids = True
+    mock_session.assign.return_value = {"PatientID": "INVALID_MISSING_PATIENTID_abc123"}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
             input_dir=grouped_dir,
@@ -77,7 +77,8 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
             session_field=SESSION_FIELD,
         )
 
-    assert errors == []
+    assert len(errors) == 1
+    assert "PatientID" in errors[0]
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir / INVALID_DIRNAME,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
@@ -171,6 +172,7 @@ def test_assign_deletes_source_dir_on_success_when_unlink_source_all(
     (session_dir / "some_file.txt").write_text("data")
 
     mock_session = MagicMock()
+    mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
             input_dir=grouped_dir,
@@ -214,6 +216,7 @@ def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
     session_dir = next(grouped_dir.iterdir())
 
     mock_session = MagicMock()
+    mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
             input_dir=grouped_dir,
@@ -334,7 +337,8 @@ def test_assign_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
         session_field=SESSION_FIELD,
     )
 
-    assert errors == []
+    assert len(errors) == 1
+    assert "ThisFieldDoesNotExistInTheMetadata" in errors[0]
     assert list(output_dir.iterdir()) == [output_dir / INVALID_DIRNAME]
     session_dirs = list((output_dir / INVALID_DIRNAME).iterdir())
     assert len(session_dirs) == 1
