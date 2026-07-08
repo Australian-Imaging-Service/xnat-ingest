@@ -6,9 +6,9 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
-from ..api.group_ import group, group_orthanc
+from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
     CollationSpec,
     CopyModeParamType,
@@ -20,7 +20,7 @@ from ..helpers.arg_types import (
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="group",
     help="""Groups images found in the input paths into separate resources, grouped into
 scans and acquisition sessions
@@ -45,7 +45,8 @@ are uploaded to XNAT
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID."
+        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID. Can also be a Python format "
+        "string over several fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
     ),
 )
 @click.option(
@@ -57,7 +58,8 @@ are uploaded to XNAT
     metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN",
     help=(
-        "The keyword of the metadata field to extract the XNAT imaging scan ID from (XINGEST_SCAN env. var)"
+        "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
+        "Python format string over several fields (see --session) (XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
@@ -70,7 +72,8 @@ are uploaded to XNAT
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
-        "for different datatypes (use `generic/file-set` as a catch-all if required). (XINGEST_RESOURCE env. var)"
+        "for different datatypes (use `generic/file-set` as a catch-all if required), or a "
+        "Python format string over several fields (see --session). (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -193,7 +196,7 @@ are uploaded to XNAT
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
-def group_cli(
+def group_cmd(
     input_paths: list[str],
     output_dir: Path,
     datatype: list[MimeType] | None,
@@ -255,7 +258,7 @@ def group_cli(
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Group took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,
@@ -264,7 +267,7 @@ def group_cli(
         time.sleep(loop)
 
 
-@base_cli.command(
+@cli.command(
     name="group-orthanc",
     help="""Groups images stored within an Orthanc instance into directories that can be processed by
 subsequent processing steps.
@@ -380,7 +383,7 @@ PASSWORD for the Orthanc user
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def group_orthanc_cli(
+def group_orthanc_cmd(
     url: str,
     store_dir: Path,
     output_dir: Path,
@@ -411,7 +414,7 @@ def group_orthanc_cli(
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = group_orthanc(
+        group_orthanc(
             url=url,
             store_dir=store_dir,
             output_dir=output_dir,
@@ -423,21 +426,13 @@ def group_orthanc_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )
-        if errors:
-            logger.error(
-                "Staging completed with %s errors:\n\n%s",
-                len(errors),
-                "\n".join(errors),
-            )
-        else:
-            logger.info("Staging completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Sorting from Orthan took %s seconds, waiting another %s seconds before running "
+            "Grouping from Orthanc took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,

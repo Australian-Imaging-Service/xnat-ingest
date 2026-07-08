@@ -9,6 +9,8 @@ from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
 
+INVALID_DIRNAME = "__invalid__"
+
 
 def assign(
     input_dir: Path,
@@ -52,6 +54,14 @@ def assign(
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
+
+    Notes
+    -----
+    If a session's project/subject/session ID can't be resolved from its metadata, it
+    is saved with placeholder IDs (see `ImagingSession.assign`) under an
+    `INVALID_NAME_DEFAULT` ('__invalid__') subdirectory of `output_dir` instead of the
+    regular output location, so it can be found and manually reprocessed rather than
+    being lost.
     """
 
     sessions: list[LocalSessionListing] = [
@@ -80,7 +90,7 @@ def assign(
                 session_listing.cache_path,
             )
 
-            session.assign(
+            missing_ids = session.assign(
                 project_field=project_field,
                 subject_field=subject_field,
                 session_field=session_field,
@@ -88,8 +98,17 @@ def assign(
                 scan_field=scan_field,
             )
 
+            if missing_ids:
+                msg = (
+                    f"Could not resolve project/subject/session IDs for '{session_listing.name}', "
+                    f"due to missing metadata fields {list(missing_ids)}. "
+                    f"Saved to '{output_dir}/{INVALID_DIRNAME}/{session.name}' for manual review instead"
+                )
+                logger.error(msg)
+                errors.append(msg)
+            dest_dir = (output_dir / INVALID_DIRNAME) if missing_ids else output_dir
             session.save(
-                dest_dir=output_dir,
+                dest_dir=dest_dir,
                 copy_mode=copy_mode,
             )
         except Exception as e:
@@ -110,4 +129,11 @@ def assign(
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton
                 session.unlink(keep_metadata=True)
+    if errors:
+        logger.error(
+            "Assign completed with %s errors",
+            len(errors),
+        )
+    else:
+        logger.info("Assign completed successfully")
     return errors

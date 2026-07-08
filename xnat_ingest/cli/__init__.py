@@ -1,18 +1,18 @@
-from .assign import assign_cli
-from .associate import associate_cli
-from .base import base_cli
-from .check_upload import check_upload_cli
-from .deidentify import deidentify_cli
-from .group import group_cli, group_orthanc_cli
-from .upload import upload_cli
+from .assign_cli import assign_cmd
+from .associate_cli import associate_cmd
+from .base import cli
+from .check_upload_cli import check_upload_cmd
+from .deidentify_cli import deidentify_cmd
+from .group_cli import group_cmd, group_orthanc_cmd
+from .upload_cli import upload_cmd
 
 __all__ = [
-    "assign_cli",
-    "associate_cli",
-    "check_upload_cli",
-    "deidentify_cli",
-    "base_cli",
-    "upload_cli",
-    "group_cli",
-    "group_orthanc_cli",
+    "assign_cmd",
+    "associate_cmd",
+    "check_upload_cmd",
+    "deidentify_cmd",
+    "cli",
+    "upload_cmd",
+    "group_cmd",
+    "group_orthanc_cmd",
 ]

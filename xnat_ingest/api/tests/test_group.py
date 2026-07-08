@@ -6,9 +6,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )  # type: ignore[import-untyped]
 
-from xnat_ingest.api.group_ import (
+from xnat_ingest.api.group_api import (
     BUILD_NAME_DEFAULT,
-    INVALID_NAME_DEFAULT,
     group,
 )
 from xnat_ingest.helpers.arg_types import IDSpec
@@ -41,9 +40,7 @@ def test_group_creates_pre_assign_session_dir(dicom_dir: Path, tmp_path: Path) -
 
     assert errors == []
     session_dirs = [
-        d
-        for d in output_dir.iterdir()
-        if d.is_dir() and d.name not in (BUILD_NAME_DEFAULT, INVALID_NAME_DEFAULT)
+        d for d in output_dir.iterdir() if d.is_dir() and d.name != BUILD_NAME_DEFAULT
     ]
     assert len(session_dirs) == 1
     session_dir = session_dirs[0]
@@ -106,7 +103,7 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_group_creates_build_and_invalid_dirs(tmp_path: Path) -> None:
+def test_group_creates_build_dir(tmp_path: Path) -> None:
     output_dir = tmp_path / "grouped"
     output_dir.mkdir()
     empty_input = tmp_path / "empty"
@@ -122,4 +119,3 @@ def test_group_creates_build_and_invalid_dirs(tmp_path: Path) -> None:
     )
 
     assert (output_dir / BUILD_NAME_DEFAULT).exists()
-    assert (output_dir / INVALID_NAME_DEFAULT).exists()

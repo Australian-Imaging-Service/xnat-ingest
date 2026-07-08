@@ -6,16 +6,16 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
-from ..api.deidentify_ import deidentify
+from ..api.deidentify_api import deidentify
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
-@base_cli.command(
+@cli.command(
     name="deidentify",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -155,7 +155,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
         "e.g. generated using `Fernet.generate_key()` from the cryptography package"
     ),
 )
-def deidentify_cli(
+def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
@@ -190,7 +190,7 @@ def deidentify_cli(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = deidentify(
+        deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
             spec_dir=spec_dir,
@@ -202,12 +202,6 @@ def deidentify_cli(
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
         )
-        if errors:
-            logger.error(
-                f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
-            )
-        else:
-            logger.info("Deidentification completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

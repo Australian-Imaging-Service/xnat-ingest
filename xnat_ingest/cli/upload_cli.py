@@ -14,14 +14,14 @@ from frametree.xnat import Xnat
 
 from xnat.exceptions import XNATResponseError
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
 from ..api import upload
 from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="upload",
     help="""uploads all sessions found in the staging directory (as prepared by the
 `stage` sub-command) to XNAT.
@@ -208,7 +208,7 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "List the sessions that will be uploaded instead of the actually uploading them"
     ),
 )
-def upload_cli(
+def upload_cmd(
     staged: str,
     server: str,
     user: str,
@@ -348,9 +348,6 @@ def upload_cli(
                     ),
                 )
                 if errors:
-                    logger.error(
-                        f"Upload completed with {len(errors)} errors:\n\n{''.join(errors)}"
-                    )
                     # If the errors are XNAT auth failures, the held session has
                     # expired — reconnect so the next iteration uses a fresh
                     # session. Reactive ONLY: we must not reconnect on every
@@ -372,8 +369,6 @@ def upload_cli(
                                 reconnect_err,
                             )
                             xnat_repo = None
-                else:
-                    logger.info("Upload completed successfully without errors")
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.ConnectTimeout,
@@ -403,7 +398,7 @@ def upload_cli(
             elapsed_seconds = (end_time - start_time).total_seconds()
             sleep_time = loop - elapsed_seconds
             logger.info(
-                "Stage took %s seconds, waiting another %s seconds before running "
+                "Upload took %s seconds, waiting another %s seconds before running "
                 "again (loop every %s seconds)",
                 elapsed_seconds,
                 sleep_time,

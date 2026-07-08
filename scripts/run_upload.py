@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from xnat_ingest.cli import upload
+from xnat_ingest.cli import upload_cli
 from xnat_ingest.utils import show_cli_trace
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
@@ -8,7 +8,7 @@ PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 runner = CliRunner()
 
 result = runner.invoke(
-    upload,
+    upload_cli,
     [
         "/Users/tclo7153/Data/TBP/TEST-STAGING/",
         "http://localhost:8080",

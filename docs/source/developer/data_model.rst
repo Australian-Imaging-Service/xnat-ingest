@@ -1,5 +1,5 @@
-Building tools/data model
-=========================
+Data model: building your own tools
+===================================
 
 The directory structure ``xnat_ingest`` reads and writes at every pipeline stage is
 deliberately plain and human-readable, rather than a database or opaque intermediate

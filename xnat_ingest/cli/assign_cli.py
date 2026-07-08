@@ -6,9 +6,9 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
-from ..api.assign_ import assign
+from ..api.assign_api import assign
 from ..helpers.arg_types import (
     CopyModeParamType,
     LoggerConfig,
@@ -16,7 +16,7 @@ from ..helpers.arg_types import (
 from ..helpers.logging import logger, set_logger_handling
 
 
-@base_cli.command(
+@cli.command(
     name="assign",
     help="""Assigns project, subject and session IDs, extracted from session
 metadata, to sessions that have already been grouped into scans/resources
@@ -25,6 +25,12 @@ INPUT_DIR is the path to the directory containing the grouped-but-not-yet-assign
 sessions (the output of the 'group' command)
 
 OUTPUT_DIR is the directory that the assigned sessions will be written to
+
+If a project/subject/session ID can't be resolved from a session's metadata, it is
+assigned a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder instead of being
+dropped, and the whole session is saved under an '__invalid__' subdirectory of
+OUTPUT_DIR instead of alongside normally-assigned ones, so it can be found and
+manually reviewed/reprocessed rather than silently lost.
 """,
 )
 @click.argument(
@@ -42,8 +48,9 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="StudyComments",
     envvar="XINGEST_PROJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT project ID from "
-        "(XINGEST_PROJECT env. var)"
+        "The keyword of the metadata field to extract the XNAT project ID from, or "
+        "a Python format string over several fields, e.g. "
+        "'{PatientID}_{StudyDate:%Y%m%d}', to compose one (XINGEST_PROJECT env. var)"
     ),
 )
 @click.option(
@@ -53,7 +60,8 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="PatientID",
     envvar="XINGEST_SUBJECT",
     help=(
-        "The keyword of the metadata field to extract the XNAT subject ID from "
+        "The keyword of the metadata field to extract the XNAT subject ID from, or "
+        "a Python format string over several fields (see --project) "
         "(XINGEST_SUBJECT env. var)"
     ),
 )
@@ -64,7 +72,8 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     default="AccessionNumber",
     envvar="XINGEST_SESSION",
     help=(
-        "The keyword of the metadata field to extract the XNAT session ID from "
+        "The keyword of the metadata field to extract the XNAT session ID from, or "
+        "a Python format string over several fields (see --project) "
         "(XINGEST_SESSION env. var)"
     ),
 )
@@ -146,7 +155,7 @@ OUTPUT_DIR is the directory that the assigned sessions will be written to
     type=bool,
     help="Whether to raise errors instead of logging them (typically for debugging)",
 )
-def assign_cli(
+def assign_cmd(
     input_dir: Path,
     output_dir: Path,
     project_field: str,
@@ -176,7 +185,7 @@ def assign_cli(
     # Run the assign process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = assign(
+        assign(
             input_dir=input_dir,
             output_dir=output_dir,
             project_field=project_field,
@@ -188,14 +197,6 @@ def assign_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
         )
-        if errors:
-            logger.error(
-                "Assign completed with %s errors:\n\n%s",
-                len(errors),
-                "\n".join(errors),
-            )
-        else:
-            logger.info("Assign completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

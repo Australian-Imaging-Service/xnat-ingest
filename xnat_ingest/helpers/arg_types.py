@@ -9,10 +9,10 @@ import string
 import typing as ty
 from collections import Counter
 from pathlib import Path
-from datetime import datetime
 
 import attrs
 import click.types
+from dateutil import parser as dateutil_parser
 from fileformats.core import DataType, FileSet, from_mime
 
 from ..exceptions import ImagingSessionParseError
@@ -208,15 +208,41 @@ class StoreCredentials(CliTyped):
     access_secret: str
 
 
+class _PlaceholderStr(str):
+    """A plain placeholder string that tolerates being substituted into a
+    strftime-style ('%...') format spec (e.g. '{MissingDateField:%Y%m%d}') by just
+    rendering itself as-is, rather than raising - a normal ``str`` doesn't understand
+    '%' format codes and would otherwise turn a missing-field placeholder into a
+    ``ValueError`` instead of the placeholder text it's meant to be.
+    """
+
+    def __format__(self, format_spec: str) -> str:
+        if format_spec and "%" in format_spec:
+            return str(self)
+        return super().__format__(format_spec)
+
+
 @attrs.define
 class IDSpec(MultiCliTyped):
-    """Extract an ID to sort the data with (e.g. project, subject, session, scan,...) from
-    either a metadata field or the path that the resource is saved with. If the 'type' is
-    'field' then the specifier is the name of the field, if it is 'path', the specifier
-    is a Python-style regular expression with a single matching group to select a portion
-    of the path. 'datatype' restricts the specification to resources of that type (default
-    is FileSet, i.e. any type), and 'formatter' is an optional format string (or strftime
-    format for datetime values) applied to the extracted value.
+    """Extract an ID to sort the data with (e.g. project, subject, session, scan,...)
+    from the resource's metadata. 'specifier' is either:
+
+    - the name of a metadata field, optionally with a '[index]' or '[start:end]' slice
+      suffix to select part of a list/string value, e.g. 'SeriesNumber' or
+      'ImageType[2:]'
+    - a Python format string over the metadata fields, to compose an ID from more
+      than one field and/or apply formatting, e.g.
+      '{PatientID}_{AcquisitionDate:%Y%m%d}' (detected by the presence of '{' in the
+      specifier). Fields with a strftime-style ('%...') format spec are parsed from
+      plain strings into dates first if needed (via `dateutil`), since metadata that
+      has round-tripped through JSON (e.g. reloaded in a later pipeline stage) loses
+      its original date/datetime typing. Only named fields can be referenced this way
+      - an all-digit field name (as DICOM falls back to for private/unnamed tags)
+      can't be, since Python's format-string syntax always treats an all-digit name as
+      a positional index rather than a keyword lookup.
+
+    'datatype' restricts the specification to resources of that type (default is
+    FileSet, i.e. any type).
     """
 
     specifier: str = attrs.field()
@@ -262,6 +288,44 @@ class IDSpec(MultiCliTyped):
         """
         if not isinstance(metadata, ty.Mapping):
             metadata = metadata.metadata
+        if "{" in self.specifier:
+            value = self._get_formatted_value(metadata, missing_ids=missing_ids)
+        else:
+            value = self._get_field_value(metadata, missing_ids=missing_ids)
+        if escape:
+            value = self.xnat_id_escape_re.sub("_", value)
+        return value
+
+    def _missing_field_placeholder(
+        self,
+        field_name: str,
+        metadata: ty.Mapping[str, ty.Any],
+        missing_ids: dict[str, str] | None,
+    ) -> str:
+        """Generate (or reuse) a unique placeholder for a metadata field that wasn't
+        found, or raise if no missing_ids dict was provided to hold it"""
+        if missing_ids is not None:
+            try:
+                return missing_ids[field_name]
+            except KeyError:
+                placeholder = missing_ids[field_name] = _PlaceholderStr(
+                    "INVALID_MISSING_"
+                    + re.sub(r"[^A-Z0-9_]", "_", field_name.upper())
+                    + "_"
+                    + "".join(random.choices(string.ascii_letters + string.digits, k=8))
+                )
+                return placeholder
+        raise ImagingSessionParseError(
+            f"Did not find '{field_name}' field in {metadata!r}, "
+            "cannot uniquely identify the resource, found:\n" + "\n".join(metadata)
+        )
+
+    def _get_field_value(
+        self,
+        metadata: ty.Mapping[str, ty.Any],
+        missing_ids: dict[str, str] | None,
+    ) -> str:
+        """Handles today's plain 'FieldName' / 'FieldName[index]' specifier syntax"""
         if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.specifier):
             _, index = match.groups()
             if ":" in index:
@@ -275,24 +339,9 @@ class IDSpec(MultiCliTyped):
         except KeyError:
             value = ""
         if not value:
-            if missing_ids is not None:
-                try:
-                    value = missing_ids[self.specifier_name]
-                except KeyError:
-                    value = missing_ids[self.specifier_name] = (
-                        "INVALID_NOTFOUND_"
-                        + re.sub(r"[^A-Z0-9_]", "_", self.specifier_name.upper())
-                        + "_"
-                        + "".join(
-                            random.choices(string.ascii_letters + string.digits, k=8)
-                        )
-                    )
-            else:
-                raise ImagingSessionParseError(
-                    f"Did not find '{self.specifier_name}' field in {metadata!r}, "
-                    "cannot uniquely identify the resource, found:\n"
-                    + "\n".join(metadata)
-                )
+            value = self._missing_field_placeholder(
+                self.specifier_name, metadata, missing_ids
+            )
         if index is not None:
             value = value[index]
             if isinstance(value, list):
@@ -300,26 +349,49 @@ class IDSpec(MultiCliTyped):
         elif isinstance(value, list):
             frequency = Counter(value)
             value = frequency.most_common(1)[0][0]
-        value = str(value)
-        if escape:
-            value = self.xnat_id_escape_re.sub("_", value)
-        return value
+        return str(value)
 
-    def format_value(self, value: ty.Any):
-        if self.formatter is None:
-            formatted = value
-        elif isinstance(value, ty.Mapping):
-            formatted = self.formatter.format(**value)
-        elif isinstance(value, ty.Iterable):
-            formatted = self.formatter.format(*value)
-        elif isinstance(value, datetime):
-            formatted = value.strftime(self.formatter)
-        else:
-            raise TypeError(
-                f"Unsupported type for value to format, {value}, for "
-                f"formatter '{self.formatter}"
-            )
-        return invalid_path_chars_re.sub("_", str(formatted))
+    def _get_formatted_value(
+        self,
+        metadata: ty.Mapping[str, ty.Any],
+        missing_ids: dict[str, str] | None,
+    ) -> str:
+        """Handles the '{Field}_{OtherField:spec}'-style format-string specifier
+        syntax, composing an ID from one or more metadata fields"""
+        values: dict[str, ty.Any] = {}
+        for _, field_name, format_spec, _ in string.Formatter().parse(self.specifier):
+            if not field_name or field_name.isdigit():
+                # Skip literal text segments and positional ('{}'/'{0}') fields,
+                # which aren't meaningful for metadata-field lookups
+                continue
+            base_name = re.split(r"[.\[]", field_name, maxsplit=1)[0]
+            if base_name in values:
+                continue
+            value = metadata.get(base_name, "")
+            if not value:
+                value = self._missing_field_placeholder(
+                    base_name, metadata, missing_ids
+                )
+            elif isinstance(value, str) and format_spec and "%" in format_spec:
+                try:
+                    value = dateutil_parser.parse(value)
+                except (dateutil_parser.ParserError, ValueError, OverflowError):
+                    pass
+            values[base_name] = value
+        try:
+            return str(self.specifier.format(**values))
+        except IndexError:
+            # An all-digit field name (e.g. '{00100010}', as DICOM falls back to for
+            # private/unnamed tags) is always parsed by str.format as a *positional*
+            # index rather than a keyword lookup, regardless of what's in `values` -
+            # so it can't be supported directly. Fail clearly rather than let a raw,
+            # confusing IndexError propagate.
+            raise ImagingSessionParseError(
+                f"Specifier '{self.specifier}' references an all-digit field name, "
+                "which can't be resolved from metadata directly (only named fields "
+                "are supported in format-string specifiers) - use "
+                "'--path-metadata-regex' to give it a proper name first if needed"
+            ) from None
 
     xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
 
@@ -414,6 +486,3 @@ class CopyModeParamType(click.ParamType):
             return FileSet.CopyMode[value.lower()]
         except KeyError:
             self.fail(f"{value!r} is not a valid copy mode", param, ctx)
-
-
-invalid_path_chars_re = re.compile(r'[\-<>:"/\\|?*\x00-\x1F]')

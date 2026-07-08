@@ -32,13 +32,14 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
+from xnat_ingest.api.assign_api import INVALID_DIRNAME
 from xnat_ingest.cli import (
-    assign_cli,
-    associate_cli,
-    check_upload_cli,
-    deidentify_cli,
-    group_cli,
-    upload_cli,
+    assign_cmd,
+    associate_cmd,
+    check_upload_cmd,
+    deidentify_cmd,
+    group_cmd,
+    upload_cmd,
 )
 from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from xnat_ingest.helpers.arg_types import IDSpec, XnatLogin
@@ -444,7 +445,7 @@ def test_stage_and_upload(
         assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [str(d) for d in dicoms_dirs]
         + [
             str(sorted_dir),
@@ -470,7 +471,7 @@ def test_stage_and_upload(
     assigned_dir = tmp_path / "assigned"
     assigned_dir.mkdir()
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -483,7 +484,7 @@ def test_stage_and_upload(
     associated_dir = tmp_path / "associated"
 
     result = cli_runner(
-        associate_cli,
+        associate_cmd,
         [
             str(assigned_dir),
             str(associated_dir),
@@ -512,7 +513,7 @@ def test_stage_and_upload(
     )
 
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -548,7 +549,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -636,7 +637,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        check_upload_cli,
+        check_upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -670,7 +671,7 @@ def test_additional_logger_routes_to_configured_handler(
     stage_log_file = tmp_path / "stage-logs.log"
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(dicoms_dir),
             str(sorted_dir),
@@ -710,7 +711,7 @@ def test_stage_wait_period(
     get_pet_image(dicoms_path)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(dicoms_path),
             str(sorted_dir),
@@ -735,7 +736,7 @@ def test_stage_wait_period(
     time.sleep(10)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(dicoms_path),
             str(sorted_dir),
@@ -768,7 +769,7 @@ def test_group_path_metadata_regex(
     get_pet_image(dicoms_dir)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(dicoms_dir),
             str(sorted_dir),
@@ -816,7 +817,7 @@ def test_sort_orthanc_collate_resources(
 
     # Without --collate-resources the nested source structure is preserved in the resource dir
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(orthanc_dir),
             str(sorted_dir),
@@ -841,7 +842,7 @@ def test_sort_orthanc_collate_resources(
     sorted_collated_dir.mkdir()
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(orthanc_dir),
             str(sorted_collated_dir),
@@ -887,13 +888,13 @@ def test_assign_missing_id_field_collects_error(
     get_pet_image(dicoms_path, PatientID="")
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [str(dicoms_path), str(grouped_dir), "--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(grouped_dir), str(assigned_dir)] + ASSIGN_ID_ARGS,
         env={
             "XINGEST_LOGGERS": f"file debug {assign_log_file};stream info stdout",
@@ -904,7 +905,9 @@ def test_assign_missing_id_field_collects_error(
     logs = assign_log_file.read_text()
     assert "Assign completed with 1 errors" in logs, show_cli_trace(result)
     # The session couldn't be assigned an ID, so nothing was written to the output dir
-    assert not list(assigned_dir.iterdir())
+    assert not [
+        d for d in assigned_dir.iterdir() if d.name != INVALID_DIRNAME
+    ], show_cli_trace(result)
 
 
 @mock_aws
@@ -950,7 +953,7 @@ def test_check_upload_missing_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -976,7 +979,7 @@ def test_check_upload_missing_scan(
 
     assigned_dir = tmp_path / "assigned"
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(sorted_dir), str(assigned_dir)]
         + ASSIGN_ID_ARGS
         + ["--scan", "SeriesDescription", "--raise-errors"],
@@ -993,7 +996,7 @@ def test_check_upload_missing_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1015,7 +1018,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cli,
+        check_upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1083,7 +1086,7 @@ def test_check_upload_empty_scan(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -1103,7 +1106,7 @@ def test_check_upload_empty_scan(
 
     assigned_dir = tmp_path / "assigned"
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1118,7 +1121,7 @@ def test_check_upload_empty_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1147,7 +1150,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cli,
+        check_upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1216,7 +1219,7 @@ def test_check_upload_missing_resource(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -1236,7 +1239,7 @@ def test_check_upload_missing_resource(
 
     assigned_dir = tmp_path / "assigned"
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1251,7 +1254,7 @@ def test_check_upload_missing_resource(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1280,7 +1283,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cli,
+        check_upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1347,7 +1350,7 @@ def test_check_upload_checksum_fail(
     Json.new(inputs_dir / "file2.json", file2_metadata)
 
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(inputs_dir),
             str(sorted_dir),
@@ -1367,7 +1370,7 @@ def test_check_upload_checksum_fail(
 
     assigned_dir = tmp_path / "assigned"
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(sorted_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1375,7 +1378,7 @@ def test_check_upload_checksum_fail(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cli,
+        upload_cmd,
         [
             str(assigned_dir),
             "--always-include",
@@ -1424,7 +1427,7 @@ def test_check_upload_checksum_fail(
     )
 
     result = cli_runner(
-        check_upload_cli,
+        check_upload_cmd,
         [
             source_dir,
             "--always-include",
@@ -1493,7 +1496,7 @@ def test_deidentify_cli_dicom(
     staged_dir.mkdir()
     sort_log = tmp_path / "sort.log"
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [
             str(dicoms_dir),
             str(staged_dir),
@@ -1510,7 +1513,7 @@ def test_deidentify_cli_dicom(
     assigned_dir = tmp_path / "assigned"
     assigned_dir.mkdir()
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1531,7 +1534,7 @@ def test_deidentify_cli_dicom(
     deid_log = tmp_path / "deid.log"
 
     result = cli_runner(
-        deidentify_cli,
+        deidentify_cmd,
         [
             str(assigned_dir),
             str(output_dir),
@@ -1593,7 +1596,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
     staged_dir = tmp_path / "staged"
     staged_dir.mkdir()
     result = cli_runner(
-        group_cli,
+        group_cmd,
         [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1601,7 +1604,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
     assigned_dir = tmp_path / "assigned"
     assigned_dir.mkdir()
     result = cli_runner(
-        assign_cli,
+        assign_cmd,
         [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1622,7 +1625,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
 
     with patch.object(ImagingSession, "deidentify", mock_deidentify):
         result = cli_runner(
-            deidentify_cli,
+            deidentify_cmd,
             [
                 str(assigned_dir),
                 str(output_dir),

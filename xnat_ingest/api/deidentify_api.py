@@ -107,6 +107,14 @@ def deidentify(
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton
                 session.unlink(keep_metadata=True)
+    if errors:
+        logger.error(
+            "Deidentification completed with %d errors",
+            len(errors),
+        )
+    else:
+        logger.info("Deidentification completed successfully")
+
     return errors
 
 
