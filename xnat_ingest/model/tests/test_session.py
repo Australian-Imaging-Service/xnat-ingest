@@ -661,11 +661,11 @@ def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
         session_field="AccessionNumber",
     )
     assert imaging_session.project_id.startswith(
-        "INVALID_NOTFOUND_THISFIELDDOESNOTEXISTINTHEMETADATA_"
+        "INVALID_MISSING_THISFIELDDOESNOTEXISTINTHEMETADATA_"
     )
     assert imaging_session.invalid_ids
     # the other, resolvable fields are unaffected
-    assert not imaging_session.subject_id.startswith("INVALID_NOTFOUND_")
+    assert not imaging_session.subject_id.startswith("INVALID_MISSING_")
 
 
 # ---------------------------------------------------------------------------

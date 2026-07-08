@@ -5,7 +5,6 @@ import pytest
 from xnat_ingest.exceptions import ImagingSessionParseError
 from xnat_ingest.helpers.arg_types import IDSpec
 
-
 # ── existing plain-field / slice syntax, unaffected by the new format-string mode ──
 
 
@@ -32,7 +31,7 @@ def test_plain_field_missing_raises_without_missing_ids() -> None:
 def test_plain_field_missing_uses_placeholder() -> None:
     missing: dict[str, str] = {}
     value = IDSpec("SeriesNumber").get_value({}, missing_ids=missing)
-    assert value.startswith("INVALID_NOTFOUND_SERIESNUMBER_")
+    assert value.startswith("INVALID_MISSING_SERIESNUMBER_")
     assert missing["SeriesNumber"] == value
 
 
@@ -74,7 +73,7 @@ def test_missing_field_in_compound_specifier_uses_placeholder() -> None:
     missing: dict[str, str] = {}
     spec = IDSpec("{PatientID}_{AccessionNumber}")
     value = spec.get_value({"PatientID": "subj01"}, missing_ids=missing)
-    assert value.startswith("subj01_INVALID_NOTFOUND_ACCESSIONNUMBER_")
+    assert value.startswith("subj01_INVALID_MISSING_ACCESSIONNUMBER_")
     assert missing["AccessionNumber"] in value
 
 
@@ -90,7 +89,7 @@ def test_missing_date_field_with_percent_spec_uses_placeholder() -> None:
     missing: dict[str, str] = {}
     spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
     value = spec.get_value({"PatientID": "subj01"}, missing_ids=missing)
-    assert value.startswith("subj01_INVALID_NOTFOUND_ACQUISITIONDATE_")
+    assert value.startswith("subj01_INVALID_MISSING_ACQUISITIONDATE_")
 
 
 def test_unreferenced_non_identifier_key_is_harmless() -> None:

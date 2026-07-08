@@ -8,7 +8,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )  # type: ignore[import-untyped]
 
-from xnat_ingest.api.assign_ import INVALID_NAME_DEFAULT, assign
+from xnat_ingest.api.assign_ import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_ import group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
@@ -79,7 +79,7 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
 
     assert errors == []
     mock_session.save.assert_called_once_with(
-        dest_dir=output_dir / INVALID_NAME_DEFAULT,
+        dest_dir=output_dir / INVALID_DIRNAME,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
     )
 
@@ -335,11 +335,11 @@ def test_assign_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
     )
 
     assert errors == []
-    assert list(output_dir.iterdir()) == [output_dir / INVALID_NAME_DEFAULT]
-    session_dirs = list((output_dir / INVALID_NAME_DEFAULT).iterdir())
+    assert list(output_dir.iterdir()) == [output_dir / INVALID_DIRNAME]
+    session_dirs = list((output_dir / INVALID_DIRNAME).iterdir())
     assert len(session_dirs) == 1
     project_id = session_dirs[0].name.split(".")[0]
-    assert project_id.startswith("INVALID_NOTFOUND_")
+    assert project_id.startswith("INVALID_MISSING_")
 
     reloaded = ImagingSession.load(session_dirs[0])
     assert reloaded.invalid_ids

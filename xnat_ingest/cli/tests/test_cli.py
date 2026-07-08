@@ -32,6 +32,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
+from xnat_ingest.api.assign_ import INVALID_DIRNAME
 from xnat_ingest.cli import (
     assign_cli,
     associate_cli,
@@ -902,11 +903,11 @@ def test_assign_missing_id_field_collects_error(
 
     assert result.exit_code == 0, show_cli_trace(result)
     logs = assign_log_file.read_text()
-    assert (
-        "Encountered 1 errors while assigning IDs in input directory" in logs
-    ), show_cli_trace(result)
+    assert "Assign completed with 1 errors" in logs, show_cli_trace(result)
     # The session couldn't be assigned an ID, so nothing was written to the output dir
-    assert not list(assigned_dir.iterdir())
+    assert not [
+        d for d in assigned_dir.iterdir() if d.name != INVALID_DIRNAME
+    ], show_cli_trace(result)
 
 
 @mock_aws

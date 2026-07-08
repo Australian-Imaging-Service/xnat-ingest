@@ -309,7 +309,7 @@ class IDSpec(MultiCliTyped):
                 return missing_ids[field_name]
             except KeyError:
                 placeholder = missing_ids[field_name] = _PlaceholderStr(
-                    "INVALID_NOTFOUND_"
+                    "INVALID_MISSING_"
                     + re.sub(r"[^A-Z0-9_]", "_", field_name.upper())
                     + "_"
                     + "".join(random.choices(string.ascii_letters + string.digits, k=8))

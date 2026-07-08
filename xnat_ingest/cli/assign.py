@@ -27,7 +27,7 @@ sessions (the output of the 'group' command)
 OUTPUT_DIR is the directory that the assigned sessions will be written to
 
 If a project/subject/session ID can't be resolved from a session's metadata, it is
-assigned a unique 'INVALID_NOTFOUND_<FIELD>_<random>' placeholder instead of being
+assigned a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder instead of being
 dropped, and the whole session is saved under an '__invalid__' subdirectory of
 OUTPUT_DIR instead of alongside normally-assigned ones, so it can be found and
 manually reviewed/reprocessed rather than silently lost.

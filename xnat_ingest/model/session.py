@@ -502,7 +502,7 @@ class ImagingSession:
         Notes
         -----
         If a project/subject/session field can't be resolved from the session's
-        metadata, a unique 'INVALID_NOTFOUND_<FIELD>_<random>' placeholder is used
+        metadata, a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder is used
         instead of raising, so the session can still be saved (see `invalid_ids`) for
         manual review/reprocessing rather than being silently dropped.
         """
@@ -524,7 +524,7 @@ class ImagingSession:
             for scan in self.scans.values():
                 try:
                     scan.type = IDSpec(scan_field).get_value(
-                        scan.metadata, escape=False
+                        scan.metadata, escape=False, missing_ids=missing_ids
                     )
                 except ImagingSessionParseError:
                     logger.debug(
@@ -534,6 +534,7 @@ class ImagingSession:
                         scan_field,
                     )
                     scan.type = scan.id
+        return missing_ids
 
     @classmethod
     def from_orthanc(

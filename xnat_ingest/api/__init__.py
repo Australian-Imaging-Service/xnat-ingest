@@ -1,5 +1,5 @@
 from .associate_ import associate
-from .assign_ import assign, INVALID_NAME_DEFAULT
+from .assign_ import assign, INVALID_DIRNAME
 from .check_upload_ import check_upload
 from .group_ import group, group_orthanc, BUILD_NAME_DEFAULT
 from .upload_ import upload
@@ -14,5 +14,5 @@ __all__ = [
     "deidentify",
     "associate",
     "BUILD_NAME_DEFAULT",
-    "INVALID_NAME_DEFAULT",
+    "INVALID_DIRNAME",
 ]

@@ -9,7 +9,7 @@ from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
 
-INVALID_NAME_DEFAULT = "__invalid__"
+INVALID_DIRNAME = "__invalid__"
 
 
 def assign(
@@ -90,7 +90,7 @@ def assign(
                 session_listing.cache_path,
             )
 
-            session.assign(
+            missing_ids = session.assign(
                 project_field=project_field,
                 subject_field=subject_field,
                 session_field=session_field,
@@ -98,16 +98,15 @@ def assign(
                 scan_field=scan_field,
             )
 
-            if session.invalid_ids:
-                logger.error(
-                    "Could not resolve project/subject/session IDs for '%s', "
-                    "saving to '%s' for manual review instead",
-                    session_listing.name,
-                    INVALID_NAME_DEFAULT,
+            if missing_ids:
+                msg = (
+                    f"Could not resolve project/subject/session IDs for '{session_listing.name}', "
+                    f"due to missing metadata fields {list(missing_ids)}. "
+                    f"Saved to '{output_dir}/{INVALID_DIRNAME}/{session.name}' for manual review instead"
                 )
-            dest_dir = (
-                output_dir / INVALID_NAME_DEFAULT if session.invalid_ids else output_dir
-            )
+                logger.error(msg)
+                errors.append(msg)
+            dest_dir = (output_dir / INVALID_DIRNAME) if missing_ids else output_dir
             session.save(
                 dest_dir=dest_dir,
                 copy_mode=copy_mode,
