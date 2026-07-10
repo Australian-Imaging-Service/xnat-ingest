@@ -13,8 +13,8 @@ a format-specific branch for each one.
 Grouping files into resources
 ----------------------------------
 
-``group``'s ``--datatype`` option (see :doc:`/cli`) is a FileFormats MIME-like
-identifier (or a ``|``-separated union of several) that says which types of file to
+``group``'s ``--datatype`` option (see :doc:`/cli`) is a `FileFormats MIME-like
+identifier <https://arcanaframework.github.io/fileformats/mime.html>`_ (or a ``|``-separated union of several) that says which types of file to
 look for in the input paths at all. Within a matched session, ``--scan``/
 ``--resource`` (:class:`~xnat_ingest.helpers.arg_types.IDSpec`) then decide which
 scan and resource each file belongs to, based on values read out of the file's own
