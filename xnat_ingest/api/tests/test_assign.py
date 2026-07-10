@@ -347,3 +347,49 @@ def test_assign_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
 
     reloaded = ImagingSession.load(session_dirs[0])
     assert reloaded.invalid_ids
+
+
+def test_assign_skips_duplicate_invalid_sessions(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    """Running assign twice on the same unresolvable session should not create
+    a second directory in __invalid__."""
+    grouped_dir = tmp_path / "grouped"
+    grouped_dir.mkdir()
+    group_errors = group(
+        input_paths=[str(dicom_dir)],
+        output_dir=grouped_dir,
+        datatypes=[DicomSeries],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+        resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+    )
+    assert group_errors == []
+
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+
+    errors1 = assign(
+        input_dir=grouped_dir,
+        output_dir=output_dir,
+        project_field="NonExistentField",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+    assert len(errors1) == 1
+    invalid_dir = output_dir / INVALID_DIRNAME
+    entries_after_first = list(invalid_dir.iterdir())
+    assert len(entries_after_first) == 1
+
+    # Second run should skip
+    errors2 = assign(
+        input_dir=grouped_dir,
+        output_dir=output_dir,
+        project_field="NonExistentField",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+    assert errors2 == []
+    entries_after_second = list(invalid_dir.iterdir())
+    assert len(entries_after_second) == 1
+    assert entries_after_second[0] == entries_after_first[0]
