@@ -93,6 +93,82 @@ specifier can't be resolved at all, that part of the ID falls back to the same
 placeholder mechanism described below for ``assign``.
 
 
+Grouping straight from an Orthanc server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If your scanner pushes to an `Orthanc <https://www.orthanc-server.com/>`_ instance
+rather than exporting to a plain directory, ``group-orthanc`` replaces the ``group``
+step: it queries Orthanc's REST API for studies and stages them into the same grouped
+layout that ``assign`` reads, hardlinking the DICOM files straight out of Orthanc's
+storage area rather than copying them.
+
+.. code-block:: console
+
+    $ xnat-ingest group-orthanc http://localhost:8042 /var/lib/orthanc/db \
+        /data/staging/grouped orthanc-user orthanc-password
+
+* ``URL`` — the Orthanc REST endpoint (``XINGEST_ORTHANC_URL``)
+* ``STORE_DIR`` — Orthanc's ``StorageDirectory``, as seen from wherever the command
+  runs (``XINGEST_ORTHANC_STORE_DIR``)
+* ``OUTPUT_DIR`` — where grouped sessions are written, same as for ``group``
+* ``USER``/``PASSWORD`` — Orthanc credentials
+  (``XINGEST_ORTHANC_USER``/``XINGEST_ORTHANC_PASSWORD``)
+
+Because the files are hardlinked, ``STORE_DIR`` and ``OUTPUT_DIR`` must be on the
+same filesystem, and Orthanc's storage must be uncompressed. Compression is off by
+default, so this only matters if you've enabled ``StorageCompression`` in the Orthanc
+configuration.
+
+Sessions are grouped by ``StudyInstanceUID``, scans by ``SeriesNumber`` (described by
+``SeriesDescription``) and resources by ``ImageType``, following Orthanc's own
+study/series/instance hierarchy. These groupings are currently fixed, there are no
+``--session``/``--scan``/``--resource`` overrides like ``group``'s. What
+*metadata* is available for the later ``assign`` stage can be extended through the
+Orthanc configuration however (see below).
+
+Controlling which studies get processed
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Which studies are staged (and staged only once) is controlled through Orthanc
+*labels* rather than by moving or deleting anything:
+
+* ``--to-process-label <label>`` — only studies carrying this label are considered.
+  If unset, every study on the server is a candidate
+  (``XINGEST_ORTHANC_TO_PROCESS``)
+* ``--processed-label <label>`` — applied to each study once it's been staged, and
+  any study already carrying it is skipped on later runs
+  (``XINGEST_ORTHANC_PROCESSED``)
+
+Removing the processed label from a study (e.g. through the Orthanc web UI) makes it
+eligible for re-staging. Note that ``--unlink-source`` is not yet implemented for
+``group-orthanc`` — the source studies always stay in Orthanc, and the processed
+label is what stops them being staged again.
+
+Available metadata fields
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Unlike ``group``, which reads each file's full DICOM header, ``group-orthanc`` only
+sees the tags Orthanc itself indexes: the study-level ``MainDicomTags`` and
+``PatientMainDicomTags``. These are what end up in the session's
+``__METADATA__.json``, and therefore what ``assign``'s
+``--project``/``--subject``/``--session`` specifiers can draw on:
+
+* study tags — ``StudyInstanceUID``, ``StudyID``, ``StudyDate``, ``StudyTime``,
+  ``StudyDescription``, ``AccessionNumber``, ``InstitutionName``,
+  ``ReferringPhysicianName``, ``RequestingPhysician``,
+  ``RequestedProcedureDescription``
+* patient tags — ``PatientID``, ``PatientName``, ``PatientBirthDate``,
+  ``PatientSex``, ``OtherPatientIDs``
+* ``Modality``, aggregated across the study's series
+
+If the field you need isn't in that list (e.g. ``StudyComments``, ``assign``'s
+default project field), either point ``assign`` at one that is (e.g. ``--project
+RequestedProcedureDescription``), or add the tag to Orthanc's index via
+``"ExtraMainDicomTags"`` in its configuration. This only applies to
+studies received after the setting is in place, unless the existing ones are
+reconstructed.
+
+
 2. Assign project/subject/session IDs
 -----------------------------------------
 
