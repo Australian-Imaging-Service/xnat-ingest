@@ -107,6 +107,26 @@ are uploaded to XNAT
     ),
 )
 @click.option(
+    "--avoid-clashes/--allow-clashes",
+    type=bool,
+    default=True,
+    help=(
+        "Whether to avoid clashes in resource names by appending _1, _2 etc. to the name until a "
+        "unique name is found (default: True)"
+    ),
+)
+@click.option(
+    "--ignore",
+    type=str,
+    default=None,
+    envvar="XINGEST_IGNORE",
+    help=(
+        "A regular expression to match paths that should be ignored when grouping files into sessions. "
+        "If None, no paths will be ignored. To ignore all paths by default, use '.*' as the value for this parameter. "
+        "(XINGEST_IGNORE env. var)"
+    ),
+)
+@click.option(
     "--loop",
     type=int,
     default=-1,
@@ -208,6 +228,8 @@ def group_cmd(
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
+    avoid_clashes: bool,
+    ignore: str | None,
     loop: int,
     wait_period: int,
     recursive: bool,
@@ -239,6 +261,8 @@ def group_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
+            ignore=ignore,
+            avoid_clashes=avoid_clashes,
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,

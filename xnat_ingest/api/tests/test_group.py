@@ -1,6 +1,8 @@
+import shutil
 from pathlib import Path
 
 import pytest
+from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,
@@ -101,6 +103,73 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
 
     # No files found, so no sessions and no errors either
     assert errors == []
+
+
+def test_group_unrecognised_file_raises_without_ignore(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    input_dir = tmp_path / "input"
+    shutil.copytree(dicom_dir, input_dir)
+    (input_dir / "notes.txt").write_text("not a recognised format")
+
+    with pytest.raises(FormatRecognitionError, match="notes.txt"):
+        group(
+            input_paths=[str(input_dir)],
+            output_dir=output_dir,
+            datatypes=[DicomSeries],
+            session=SESSION_FIELD,
+            scan=SCAN_FIELD,
+            resource=RESOURCE_FIELD,
+        )
+
+
+def test_group_ignore_skips_matching_unrecognised_files(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    input_dir = tmp_path / "input"
+    shutil.copytree(dicom_dir, input_dir)
+    (input_dir / "notes.txt").write_text("not a recognised format")
+
+    errors = group(
+        input_paths=[str(input_dir)],
+        output_dir=output_dir,
+        datatypes=[DicomSeries],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        ignore=r"notes\.txt",
+    )
+
+    assert errors == []
+    session_dirs = [
+        d for d in output_dir.iterdir() if d.is_dir() and d.name != BUILD_NAME_DEFAULT
+    ]
+    assert len(session_dirs) == 1
+
+
+def test_group_ignore_pattern_not_matching_still_raises(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    input_dir = tmp_path / "input"
+    shutil.copytree(dicom_dir, input_dir)
+    (input_dir / "notes.txt").write_text("not a recognised format")
+
+    with pytest.raises(FormatRecognitionError, match="notes.txt"):
+        group(
+            input_paths=[str(input_dir)],
+            output_dir=output_dir,
+            datatypes=[DicomSeries],
+            session=SESSION_FIELD,
+            scan=SCAN_FIELD,
+            resource=RESOURCE_FIELD,
+            ignore=r"unrelated-pattern",
+        )
 
 
 def test_group_creates_build_dir(tmp_path: Path) -> None:

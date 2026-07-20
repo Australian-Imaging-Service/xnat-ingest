@@ -301,6 +301,7 @@ class ImagingSession:
         resource_field: list[IDSpec],
         recursive: bool = False,
         avoid_clashes: bool = True,
+        ignore: str | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
@@ -319,7 +320,7 @@ class ImagingSession:
         scan_field: list[IdField]
             the value of this field is used to group resources under single scans.
         resource_field: list[IdField]
-            the value of this field is to resources
+            the value of this field is used to identify resources
         recursive : bool, optional
             recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
             by default False
@@ -327,6 +328,8 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
+        ignore : str or None, optional
+            a regular expression to match paths that should be ignored
         path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
@@ -411,7 +414,7 @@ class ImagingSession:
         filesets = from_paths(
             fspaths,
             *datatypes,
-            ignore=".*",
+            ignore=ignore,
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
         sessions: ty.Dict[ty.Tuple[str, str, str] | str, Self] = {}
