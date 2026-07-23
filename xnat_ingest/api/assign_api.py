@@ -1,3 +1,4 @@
+import json
 import shutil
 import traceback
 from pathlib import Path
@@ -6,10 +7,38 @@ from fileformats.core import FileSet
 from tqdm import tqdm
 
 from ..helpers.logging import logger
+from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
 
 INVALID_DIRNAME = "__invalid__"
+
+
+def _existing_invalid_uids(invalid_dir: Path) -> set[str]:
+    """Return the set of source UIDs already saved under __invalid__/.
+
+    Each subdirectory's __METADATA__.json is checked for the ``__uid__`` key
+    that ``ImagingSession.save()`` writes.  Directories whose metadata can't
+    be read are silently skipped.
+    """
+    uids: set[str] = set()
+    if not invalid_dir.is_dir():
+        return uids
+    for session_dir in invalid_dir.iterdir():
+        if not session_dir.is_dir():
+            continue
+        meta_path = session_dir / Metadata.FNAME
+        if not meta_path.exists():
+            continue
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            uid = meta.get(ImagingSession.UID_METADATA_KEY)
+            if uid is not None:
+                uids.add(uid)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return uids
 
 
 def assign(
@@ -77,6 +106,8 @@ def assign(
     # Ensure the output and reid directories exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    invalid_dir = output_dir / INVALID_DIRNAME
+    already_invalid = _existing_invalid_uids(invalid_dir)
     errors: list[str] = []
 
     for session_listing in tqdm(
@@ -99,14 +130,24 @@ def assign(
             )
 
             if missing_ids:
+                if session.uid in already_invalid:
+                    logger.warning(
+                        "Skipping '%s' — already saved as invalid (uid=%s). "
+                        "Manually review/fix and remove from '%s' to re-process.",
+                        session_listing.name,
+                        session.uid,
+                        invalid_dir,
+                    )
+                    continue
                 msg = (
                     f"Could not resolve project/subject/session IDs for '{session_listing.name}', "
                     f"due to missing metadata fields {list(missing_ids)}. "
-                    f"Saved to '{output_dir}/{INVALID_DIRNAME}/{session.name}' for manual review instead"
+                    f"Saved to '{invalid_dir}/{session.name}' for manual review instead"
                 )
                 logger.error(msg)
                 errors.append(msg)
-            dest_dir = (output_dir / INVALID_DIRNAME) if missing_ids else output_dir
+                already_invalid.add(session.uid)
+            dest_dir = invalid_dir if missing_ids else output_dir
             session.save(
                 dest_dir=dest_dir,
                 copy_mode=copy_mode,
