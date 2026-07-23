@@ -26,7 +26,7 @@ def group(
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
     ignore_paths: list[str] | None = None,
-    ignore_types: list[type[FileSet]] = None,
+    ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
     avoid_clashes: bool = True,
     recursive: bool = False,
@@ -96,7 +96,7 @@ def group(
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
-        datatypes=datatypes + ignore_types,
+        datatypes=datatypes,
         session_field=session,
         scan_field=scan,
         resource_field=resource,

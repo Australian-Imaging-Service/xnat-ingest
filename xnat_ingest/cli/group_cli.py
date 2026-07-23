@@ -10,7 +10,6 @@ from xnat_ingest.cli.base import cli
 
 from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
-    CliType,
     CollationSpec,
     CopyModeParamType,
     IDSpec,
@@ -119,8 +118,8 @@ are uploaded to XNAT
 @click.option(
     "--ignore-path",
     "ignore_paths",
-    type=CliType(str, multiple=True),
-    default=None,
+    type=str,
+    default=(),
     multiple=True,
     envvar="XINGEST_IGNORE_PATH",
     help=(

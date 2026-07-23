@@ -436,7 +436,7 @@ class ImagingSession:
         filesets = from_paths(
             fspaths,
             *(datatypes + ignore_types),
-            ignore="|".join(ignore_paths),
+            ignore="|".join(ignore_paths) if ignore_paths else None,
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
         if ignore_types:

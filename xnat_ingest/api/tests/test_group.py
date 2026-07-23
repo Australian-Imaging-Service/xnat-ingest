@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from fileformats.application import Json
 from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
@@ -105,7 +106,7 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_group_unrecognised_file_raises_without_ignore(
+def test_group_unrecognised_file_raises_without_ignore_paths(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -125,7 +126,7 @@ def test_group_unrecognised_file_raises_without_ignore(
         )
 
 
-def test_group_ignore_skips_matching_unrecognised_files(
+def test_group_ignore_paths_skips_matching_unrecognised_files(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -141,7 +142,7 @@ def test_group_ignore_skips_matching_unrecognised_files(
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        ignore=r"notes\.txt",
+        ignore_paths=[r"notes\.txt"],
     )
 
     assert errors == []
@@ -151,7 +152,7 @@ def test_group_ignore_skips_matching_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_ignore_pattern_not_matching_still_raises(
+def test_group_ignore_paths_pattern_not_matching_still_raises(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -168,7 +169,74 @@ def test_group_ignore_pattern_not_matching_still_raises(
             session=SESSION_FIELD,
             scan=SCAN_FIELD,
             resource=RESOURCE_FIELD,
-            ignore=r"unrelated-pattern",
+            ignore_paths=[r"unrelated-pattern"],
+        )
+
+
+def test_group_ignore_types_excludes_recognised_but_unwanted_files(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    input_dir = tmp_path / "input"
+    shutil.copytree(dicom_dir, input_dir)
+    (input_dir / "notes.json").write_text("{}")
+
+    errors = group(
+        input_paths=[str(input_dir)],
+        output_dir=output_dir,
+        datatypes=[DicomSeries],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        ignore_types=[Json],
+    )
+
+    assert errors == []
+    session_dirs = [
+        d for d in output_dir.iterdir() if d.is_dir() and d.name != BUILD_NAME_DEFAULT
+    ]
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert not list(resource_dir.rglob("notes.json"))
+
+
+def test_group_without_ignore_types_raises_on_recognised_extra_type(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    input_dir = tmp_path / "input"
+    shutil.copytree(dicom_dir, input_dir)
+    (input_dir / "notes.json").write_text("{}")
+
+    with pytest.raises(FormatRecognitionError, match="notes.json"):
+        group(
+            input_paths=[str(input_dir)],
+            output_dir=output_dir,
+            datatypes=[DicomSeries],
+            session=SESSION_FIELD,
+            scan=SCAN_FIELD,
+            resource=RESOURCE_FIELD,
+        )
+
+
+def test_group_ignore_types_contradicting_datatype_raises(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+
+    with pytest.raises(ValueError, match="listed for both"):
+        group(
+            input_paths=[str(dicom_dir)],
+            output_dir=output_dir,
+            datatypes=[DicomSeries],
+            session=SESSION_FIELD,
+            scan=SCAN_FIELD,
+            resource=RESOURCE_FIELD,
+            ignore_types=[DicomSeries],
         )
 
 

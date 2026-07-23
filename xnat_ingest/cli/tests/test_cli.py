@@ -792,7 +792,7 @@ def test_group_path_metadata_regex(
     assert mdata["cohort"] == "cohort-A"
 
 
-def test_group_ignore_option_skips_unrecognised_files(
+def test_group_ignore_path_option_skips_unrecognised_files(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -822,7 +822,7 @@ def test_group_ignore_option_skips_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_without_ignore_fails_on_unrecognised_file(
+def test_group_without_ignore_path_fails_on_unrecognised_file(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -848,7 +848,7 @@ def test_group_without_ignore_fails_on_unrecognised_file(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_pattern_not_matching_still_fails(
+def test_group_ignore_path_pattern_not_matching_still_fails(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -874,6 +874,91 @@ def test_group_ignore_pattern_not_matching_still_fails(
     )
     assert result.exit_code != 0
     assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_group_ignore_type_excludes_recognised_but_unwanted_files(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--ignore-type",
+            "application/json",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+
+
+def test_group_without_ignore_type_fails_on_recognised_extra_type(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_group_ignore_type_contradicting_datatype_fails(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--datatype",
+            "medimage/dicom-series",
+            "--ignore-type",
+            "medimage/dicom-series",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
 
 
 def test_sort_orthanc_collate_resources(
