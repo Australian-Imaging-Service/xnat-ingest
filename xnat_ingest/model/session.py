@@ -18,6 +18,7 @@ import yaml
 from filelock import SoftFileLock
 from tqdm import tqdm
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.generic import Directory
 from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
 from fileformats.medimage import DicomCollection
@@ -301,7 +302,8 @@ class ImagingSession:
         resource_field: list[IDSpec],
         recursive: bool = False,
         avoid_clashes: bool = True,
-        ignore: str | None = None,
+        ignore_paths: list[str] | None = None,
+        ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     ) -> ty.List[Self]:
         """Loads all imaging sessions from a list of DICOM files
@@ -328,8 +330,10 @@ class ImagingSession:
             if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found,
             by default False
-        ignore : str or None, optional
-            a regular expression to match paths that should be ignored
+        ignore_paths : list[str] or None, optional
+            regular expressions to match paths that should be ignored
+        ignore_types : list[type[FileSet]] or None, optional
+            types to be ignored
         path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
@@ -347,6 +351,24 @@ class ImagingSession:
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
+
+        if ignore_types:
+            if contradicting := set(datatypes) & set(ignore_types):
+                raise ValueError(
+                    "The following datatypes were listed for both inclusion (`datatypes`) and exclusion "
+                    f"(`ignore_types`): {list(contradicting)}"
+                )
+        else:
+            ignore_types = []
+
+        if recursive:
+            if Directory in datatypes or FileSet in datatypes:
+                raise ValueError(
+                    "Cannot use `generic/directory` or `generic/file-set` datatypes with the `recursive` option. Please "
+                    "define a more specific directory datatype (datatypes={datatypes})"
+                )
+            ignore_types.append(Directory)
+
         if isinstance(files_path, (Path, str)):
             files_path = [files_path]
         elif not isinstance(files_path, ty.Sequence):
@@ -413,10 +435,15 @@ class ImagingSession:
         logger.info(f"Loading {datatypes} from {files_path}...")
         filesets = from_paths(
             fspaths,
-            *datatypes,
-            ignore=ignore,
+            *(datatypes + ignore_types),
+            ignore="|".join(ignore_paths),
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
+        if ignore_types:
+            filesets = [
+                f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
+            ]
+
         sessions: ty.Dict[ty.Tuple[str, str, str] | str, Self] = {}
 
         for fileset in tqdm(

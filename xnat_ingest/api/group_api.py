@@ -25,7 +25,8 @@ def group(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
-    ignore: str | None = None,
+    ignore_paths: list[str] | None = None,
+    ignore_types: list[type[FileSet]] = None,
     wait_period: int = 0,
     avoid_clashes: bool = True,
     recursive: bool = False,
@@ -68,9 +69,12 @@ def group(
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
         A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
         sessions. If None, the default collation behavior for each FileSet type will be used.
-    ignore: str | None
-        A regular expression to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
+    ignore_paths: list[str] | None
+        Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
         To ignore all paths by default, use ".*" as the value for this parameter.
+    ignore_types: list[type[FileSet]] | None
+        Datatypes that should be ignored when grouping files into sessions. If None, paths that aren't recognised as part of the
+        requested datatypes or filtered using ignore_paths will raise an error
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
@@ -92,13 +96,14 @@ def group(
 
     sessions = ImagingSession.from_paths(
         files_path=input_paths,
-        datatypes=datatypes,
+        datatypes=datatypes + ignore_types,
         session_field=session,
         scan_field=scan,
         resource_field=resource,
         recursive=recursive,
         avoid_clashes=avoid_clashes,
-        ignore=ignore,
+        ignore_paths=ignore_paths,
+        ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,
     )
 

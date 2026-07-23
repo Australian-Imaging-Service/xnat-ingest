@@ -812,7 +812,7 @@ def test_group_ignore_option_skips_unrecognised_files(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore",
+            "--ignore-path",
             r".*\.txt",
         ],
     )
@@ -868,7 +868,7 @@ def test_group_ignore_pattern_not_matching_still_fails(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore",
+            "--ignore-path",
             r"unrelated-pattern",
         ],
     )

@@ -10,6 +10,7 @@ from xnat_ingest.cli.base import cli
 
 from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
+    CliType,
     CollationSpec,
     CopyModeParamType,
     IDSpec,
@@ -116,14 +117,29 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--ignore",
-    type=str,
+    "--ignore-path",
+    "ignore_paths",
+    type=CliType(str, multiple=True),
     default=None,
-    envvar="XINGEST_IGNORE",
+    multiple=True,
+    envvar="XINGEST_IGNORE_PATH",
     help=(
-        "A regular expression to match paths that should be ignored when grouping files into sessions. "
-        "If None, no paths will be ignored. To ignore all paths by default, use '.*' as the value for this parameter. "
-        "(XINGEST_IGNORE env. var)"
+        "Regular expressions to match paths that should be ignored when grouping files into sessions. "
+        "If None, no paths will be ignored. To ignore all paths by default, use '.*' as the value "
+        "for this parameter. (XINGEST_IGNORE env. var)"
+    ),
+)
+@click.option(
+    "--ignore-type",
+    "ignore_types",
+    type=MimeType.cli_type,
+    default=None,
+    multiple=True,
+    envvar="XINGEST_IGNORE_TYPE",
+    help=(
+        "Datatypes that should be ignored when grouping files into sessions. If None, paths "
+        "that aren't recognised as part of the requested datatypes or filtered using "
+        "ignore_paths will raise an error (XINGEST_IGNORE env. var)"
     ),
 )
 @click.option(
@@ -229,7 +245,8 @@ def group_cmd(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     avoid_clashes: bool,
-    ignore: str | None,
+    ignore_paths: list[str] | None,
+    ignore_types: list[MimeType] | None,
     loop: int,
     wait_period: int,
     recursive: bool,
@@ -261,7 +278,8 @@ def group_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            ignore=ignore,
+            ignore_paths=ignore_paths,
+            ignore_types=[dt.datatype for dt in ignore_types],
             avoid_clashes=avoid_clashes,
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,
