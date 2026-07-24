@@ -14,23 +14,30 @@ XNAT Ingest
    :target: https://github.com/australian-imaging-service/xnat-ingest
 
 
-*XNAT Ingest* is a toolkit for capturing data from instruments and uploading it to XNAT.
-Files coming straight off a scanner or other instrument aren't organised the way XNAT
+*XNAT Ingest* is a toolkit for capturing data from instruments and uploading them to an XNAT
+instance.
+
+Data files coming straight off a scanner or other instrument aren't organised the way XNAT
 expects, and — particularly on clinical scanners — often still carry patient-identifying
 information that needs stripping before they leave clinical control. *XNAT Ingest*
-handles all of this: it sorts raw files into scans/sessions, works out which XNAT
-project/subject/session each belongs to, links in any files that don't carry enough
-metadata to be sorted on their own, optionally de-identifies everything, and uploads
-the result. Each of these is a separate step that can be chained together and left
+contains tools for each step of this process:
+
+* Grouping DICOM and non-DICOM files into sessions, scans and resources
+* Determining which XNAT project each belongs to and assigning appropriate subject and session labels
+* De-identifying files using flexible, file-format-specific methods
+* Uploading the sorted data into the specified XNAT instance.
+
+Each of these is a separate step that can be chained together and left
 running continuously as a service, watching for new files as they arrive.
+
+See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data or go through the
+different sections in more detail using the links below
 
 * :ref:`Basic ingest workflow` — group, assign and upload files to XNAT
 * :ref:`Associate files without relevant metadata` — link in files by filename pattern instead
 * :ref:`Deidentification` — strip patient-identifying data first
 * :ref:`Deployment tips` — run the pipeline continuously via Docker/Kubernetes
 * :doc:`cli` — full command-line reference
-
-See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data.
 
 
 Installation
