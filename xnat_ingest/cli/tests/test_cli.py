@@ -11,6 +11,7 @@ import click
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.core import extra_implementation, SampleFileGenerator
+from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.application import Json
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -789,6 +790,175 @@ def test_group_path_metadata_regex(
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
     mdata = json.loads((resource_dir / Metadata.FNAME).read_bytes())
     assert mdata["cohort"] == "cohort-A"
+
+
+def test_group_ignore_path_option_skips_unrecognised_files(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--ignore-path",
+            r".*\.txt",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+
+
+def test_group_without_ignore_path_fails_on_unrecognised_file(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_group_ignore_path_pattern_not_matching_still_fails(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--ignore-path",
+            r"unrelated-pattern",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_group_ignore_type_excludes_recognised_but_unwanted_files(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--ignore-type",
+            "application/json",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+
+
+def test_group_without_ignore_type_fails_on_recognised_extra_type(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_group_ignore_type_contradicting_datatype_fails(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--datatype",
+            "medimage/dicom-series",
+            "--ignore-type",
+            "medimage/dicom-series",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
 
 
 def test_sort_orthanc_collate_resources(

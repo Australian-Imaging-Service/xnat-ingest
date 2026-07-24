@@ -25,6 +25,8 @@ def group(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+    ignore_paths: list[str] | None = None,
+    ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
     avoid_clashes: bool = True,
     recursive: bool = False,
@@ -64,6 +66,15 @@ def group(
     copy_mode: FileSet.CopyMode
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
+    collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
+        A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
+        sessions. If None, the default collation behavior for each FileSet type will be used.
+    ignore_paths: list[str] | None
+        Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
+        To ignore all paths by default, use ".*" as the value for this parameter.
+    ignore_types: list[type[FileSet]] | None
+        Datatypes that should be ignored when grouping files into sessions. If None, paths that aren't recognised as part of the
+        requested datatypes or filtered using ignore_paths will raise an error
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
@@ -91,6 +102,8 @@ def group(
         resource_field=resource,
         recursive=recursive,
         avoid_clashes=avoid_clashes,
+        ignore_paths=ignore_paths,
+        ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,
     )
 
