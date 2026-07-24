@@ -22,10 +22,10 @@ expects, and — particularly on clinical scanners — often still carry patient
 information that needs stripping before they leave clinical control. *XNAT Ingest*
 contains tools for each step of this process:
 
-* grouping DICOM and non-DICOM files into sessions, scans and resources
-* determining which XNAT project each belongs to and assigning appropriate subject and session labels
-* optionally de-identifies files using flexible, file-format-specific methods
-* uploads the sorted data into the specified XNAT instance.
+* Grouping DICOM and non-DICOM files into sessions, scans and resources
+* Determining which XNAT project each belongs to and assigning appropriate subject and session labels
+* De-identifying files using flexible, file-format-specific methods
+* Uploading the sorted data into the specified XNAT instance.
 
 Each of these is a separate step that can be chained together and left
 running continuously as a service, watching for new files as they arrive.
