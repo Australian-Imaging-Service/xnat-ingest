@@ -5,8 +5,8 @@ import pytest
 from fileformats.core import FileSet
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 
 from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_api import group

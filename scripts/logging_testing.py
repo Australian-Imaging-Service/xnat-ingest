@@ -1,7 +1,7 @@
 from click.testing import CliRunner
-from xnat_ingest.utils import show_cli_trace
 
 from xnat_ingest.cli.sort import sort
+from xnat_ingest.utils import show_cli_trace
 
 runner = CliRunner()
 result = runner.invoke(

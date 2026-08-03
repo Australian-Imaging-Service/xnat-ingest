@@ -11,7 +11,6 @@ import click
 import requests.exceptions
 import xnat
 from frametree.xnat import Xnat
-
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.cli.base import cli

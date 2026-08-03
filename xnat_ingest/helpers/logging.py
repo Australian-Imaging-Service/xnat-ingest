@@ -1,7 +1,6 @@
 """Helper functions and classes for logging"""
 
 import json
-
 import logging
 import os
 import sys

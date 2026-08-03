@@ -1,10 +1,10 @@
 import tempfile
 from pathlib import Path
-from fileformats.medimage import DicomSeries
-from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (  # type: ignore[import-untyped]
-    get_image as get_pet_image,
-)
 
+from fileformats.medimage import DicomSeries
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 
 tmp_path = Path(tempfile.mkdtemp())
 

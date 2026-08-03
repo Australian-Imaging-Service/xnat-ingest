@@ -24,7 +24,7 @@ def group(
     unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-    collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+    collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
@@ -109,7 +109,7 @@ def group(
 
     errors = save_sessions_to_dir(
         sessions,
-        f"Grouping files found in '{input_paths}' to {str(output_dir)}",
+        f"Grouping files found in '{input_paths}' to {output_dir!s}",
         wait_period=wait_period,
         build_dir=build_dir,
         copy_mode=copy_mode,

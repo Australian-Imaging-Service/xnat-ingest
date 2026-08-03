@@ -6,13 +6,10 @@ from fileformats.application import Json
 from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
-
-from xnat_ingest.api.group_api import (
-    BUILD_NAME_DEFAULT,
-    group,
+    get_image as get_pet_image,  # type: ignore[import-untyped]
 )
+
+from xnat_ingest.api.group_api import BUILD_NAME_DEFAULT, group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
 

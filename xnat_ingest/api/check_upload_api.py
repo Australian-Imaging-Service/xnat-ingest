@@ -3,13 +3,14 @@ import pprint
 import subprocess as sp
 import tempfile
 import typing as ty
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from tqdm import tqdm
 import xnat
 from fileformats.core import FileSet, from_mime, to_mime
 from fileformats.medimage import DicomSeries
 from frametree.xnat import Xnat
+from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.helpers.arg_types import StoreCredentials
@@ -33,6 +34,7 @@ def check_upload(
     verify_ssl: bool = True,
     use_curl_jsession: bool = False,
     disable_progress: bool = False,
+    max_workers: ty.Optional[int] = None,
 ) -> None:
     """Checks the staged sessions against the XNAT server to check for any issues before upload.
 
@@ -58,6 +60,10 @@ def check_upload(
         A list of MIME types to always include in the check, even if they aren't defined in
         the frameset on XNAT. This can be used to include additional file formats that aren't
         defined in the frameset, or to include all file formats by using "all".
+    max_workers : int, optional
+        the number of threads to use to fetch checksums from XNAT concurrently
+        (per-session), once the resources to check have been resolved. If None,
+        defaults to `concurrent.futures.ThreadPoolExecutor`'s default.
     """
 
     xnat_repo = Xnat(
@@ -171,6 +177,12 @@ def check_upload(
 
             logger.info("CHECKING %s", session_listing.name)
 
+            # Resolve which resources need a checksum comparison sequentially, since
+            # this touches xnatpy's lazy-loading scan/resource caches (of uncertain
+            # thread-safety) and can trigger a catalog-refresh POST. The checksum
+            # fetch itself (get_xnat_checksums) is a stateless GET against an
+            # already-resolved resource, so it's safe to fan out below.
+            to_check: list[tuple[str, str, str, ty.Dict[str, str], ty.Any]] = []
             for resource_path, manifests in session_listing.resource_manifests.items():
                 scan_path, resource_name = resource_path.split("/", 1)
                 scan_id, _ = scan_path.split(".", 1)
@@ -243,7 +255,22 @@ def check_upload(
                     )
                     num_issues += 1
                     continue
-                xchecksums = get_xnat_checksums(xresource)
+                to_check.append(
+                    (scan_path, resource_name, session_desc, checksums, xresource)
+                )
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                all_xchecksums = executor.map(
+                    lambda item: get_xnat_checksums(item[4]), to_check
+                )
+
+            for (
+                scan_path,
+                resource_name,
+                session_desc,
+                checksums,
+                _,
+            ), xchecksums in zip(to_check, all_xchecksums):
                 if not any(xchecksums.values()):
                     logger.debug(
                         "Skipping checksum check for '%s' resource in '%s' in %s as "

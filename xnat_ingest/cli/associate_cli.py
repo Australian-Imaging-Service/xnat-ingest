@@ -8,9 +8,9 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from .base import cli
 from ..helpers.arg_types import LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
+from .base import cli
 
 PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
 STAGED_NAME_DEFAULT = "STAGED"
