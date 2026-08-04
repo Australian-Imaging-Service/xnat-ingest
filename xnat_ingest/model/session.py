@@ -5,26 +5,27 @@ import logging
 import os
 import platform
 import re
-import requests
 import typing as ty
 from collections import Counter
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from functools import cached_property
 from glob import glob
 from pathlib import Path
+from typing import Self
 
 import attrs
+import requests
 import yaml
-from filelock import SoftFileLock
-from tqdm import tqdm
-from fileformats.core import FileSet, from_mime, from_paths, to_mime
-from fileformats.generic import Directory
-from fileformats.core.utils import collate_metadata_series
 from fileformats.application import Yaml
+from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.core.utils import collate_metadata_series
+from fileformats.generic import Directory
 from fileformats.medimage import DicomCollection
+from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
-from typing_extensions import Self
+from tqdm import tqdm
 
 from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
@@ -174,7 +175,7 @@ class ImagingSession:
         return tuple(modalities)
 
     @property
-    def primary_parents(self) -> ty.Set[Path]:
+    def primary_parents(self) -> set[Path]:
         "Return parent directories for all resources in the session"
         return set(r.fileset.parent for r in self.primary_resources)
 
@@ -208,7 +209,7 @@ class ImagingSession:
 
     def select_resources(
         self,
-        dataset: ty.Optional[FrameSet],
+        dataset: FrameSet | None,
         always_include: ty.Sequence[str | FileSet] = (),
     ) -> ty.Iterator[ImagingResource]:
         """Returns selected resources that match the columns in the dataset definition
@@ -296,7 +297,7 @@ class ImagingSession:
     def from_paths(
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
-        datatypes: ty.Union[ty.Type[FileSet], ty.Sequence[ty.Type[FileSet]]],
+        datatypes: type[FileSet] | ty.Sequence[type[FileSet]],
         session_field: list[IDSpec],
         scan_field: list[IDSpec],
         resource_field: list[IDSpec],
@@ -305,7 +306,7 @@ class ImagingSession:
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
-    ) -> ty.List[Self]:
+    ) -> list[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
         Parameters
@@ -316,12 +317,12 @@ class ImagingSession:
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
             [DicomSeries, NiftiGz]
-        session_field: list[IdField]
+        session_field: list[IDSpec]
             the metadata field that uniquely identifies the session, used to group files
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
-        scan_field: list[IdField]
+        scan_field: list[IDSpec]
             the value of this field is used to group resources under single scans.
-        resource_field: list[IdField]
+        resource_field: list[IDSpec]
             the value of this field is used to identify resources
         recursive : bool, optional
             recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
@@ -422,7 +423,7 @@ class ImagingSession:
         for fspath in fspaths:
             crypto.update(str(fspath.absolute()).encode())
         run_uid: str = crypto.hexdigest()[:6] + datetime.strftime(
-            datetime.now(),
+            datetime.now(UTC),
             "%Y%m%d%H%M%S",
         )
 
@@ -444,7 +445,7 @@ class ImagingSession:
                 f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
             ]
 
-        sessions: ty.Dict[ty.Tuple[str, str, str] | str, Self] = {}
+        sessions: dict[tuple[str, str, str] | str, Self] = {}
 
         for fileset in tqdm(
             filesets,
@@ -576,7 +577,8 @@ class ImagingSession:
         password: str,
         to_process_label: str | None = None,
         processed_label: str = "xnat-sorted",
-    ) -> ty.List["ImagingSession"]:
+        max_workers: int | None = None,
+    ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
 
@@ -596,6 +598,10 @@ class ImagingSession:
         processed_label : str, optional
             Label applied after staging to prevent re-processing, by default 'xnat-sorted'.
             Remove via the Orthanc UI to re-sort a study.
+        max_workers : int, optional
+            the number of threads to use to fetch per-instance attachment info from
+            Orthanc concurrently. If None, defaults to
+            `concurrent.futures.ThreadPoolExecutor`'s default.
 
         Returns
         -------
@@ -677,8 +683,12 @@ class ImagingSession:
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
-                checksums: dict[str, str] = {}
-                for instance in instances:
+
+                def _link_instance(
+                    instance: ty.Mapping[str, ty.Any],
+                    resource_dir: Path = resource_dir,
+                    series_id: str = series_id,
+                ) -> tuple[str, str] | None:
                     instance_id = instance["ID"]
                     sop_uid = instance["MainDicomTags"].get(
                         "SOPInstanceUID", instance_id
@@ -686,7 +696,7 @@ class ImagingSession:
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
                     if dest_path.exists():
-                        continue
+                        return None
                     attachment = get_json(
                         f"/instances/{instance_id}/attachments/dicom/info"
                     )
@@ -699,7 +709,11 @@ class ImagingSession:
                     uuid = attachment["Uuid"]
                     src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
                     os.link(src_path, dest_path)
-                    checksums[fname] = attachment["UncompressedMD5"]
+                    return fname, attachment["UncompressedMD5"]
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    linked = executor.map(_link_instance, instances)
+                checksums: dict[str, str] = dict(r for r in linked if r is not None)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
                 with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
@@ -732,7 +746,7 @@ class ImagingSession:
     def deidentify(
         self,
         dest_dir: Path,
-        specs: dict[type[FileSet], ty.Any] = None,
+        specs: dict[type[FileSet], ty.Any] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
@@ -837,7 +851,7 @@ class ImagingSession:
 
     def associate_files(
         self,
-        patterns: ty.List[AssociatedFiles],
+        patterns: list[AssociatedFiles],
         spaces_to_underscores: bool = True,
         avoid_clashes: bool = False,
     ) -> list[FileSet]:
@@ -856,7 +870,7 @@ class ImagingSession:
             # substitute string templates int the glob template with values from the
             # DICOM metadata to construct a glob pattern to select files associated
             # with current session
-            associated_fspaths: ty.Set[Path] = set()
+            associated_fspaths: set[Path] = set()
             primary_parents = self.primary_parents
             if primary_parents:
                 for parent_dir in primary_parents:
@@ -919,7 +933,7 @@ class ImagingSession:
         overwrite: bool = False,
         associated: AssociatedFiles | None = None,
         avoid_clashes: bool = False,
-        metadata: ty.Mapping[str, ty.Any] = None,
+        metadata: dict[str, ty.Any] | None = None,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -1167,9 +1181,9 @@ class ImagingSession:
     def save(
         self,
         dest_dir: Path,
-        available_projects: ty.Optional[ty.List[str]] = None,
+        available_projects: list[str] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+        collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -1206,7 +1220,7 @@ class ImagingSession:
                 project_id = self.project_id
             else:
                 project_id = "INVALID_UNRECOGNISED_" + self.project_id
-            session_dirname = ".".join((project_id, self.subject_id, self.session_id))
+            session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
             if self.run_uid:
                 session_dirname += f".{self.run_uid}"
         session_dir = dest_dir / session_dirname

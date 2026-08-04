@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import typing as ty
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import attrs
@@ -21,9 +22,9 @@ from tqdm import tqdm
 
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
-from .metadata import Metadata
 from .arg_types import StoreCredentials
 from .logging import logger
+from .metadata import Metadata
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -194,19 +195,28 @@ class S3SessionListing(SessionListing):
     bucket: ty.Any
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
+    max_workers: ty.Optional[int] = None
 
     @property
     def cache_path(self) -> Path:
         logger.info("Downloading session '%s' from S3 bucket", self.name)
-        for relpath, obj in tqdm(
-            self.objects,
-            desc=f"Downloading scans in '{self.name}' session from S3 bucket",
-        ):
+
+        def _download(item: ty.Tuple[ty.List[str], ty.Any]) -> None:
+            relpath, obj = item
             obj_path = self._cache_path.joinpath(*relpath)
             obj_path.parent.mkdir(parents=True, exist_ok=True)
             logger.debug("Downloading %s to %s", obj, obj_path)
             with open(obj_path, "wb") as f:
                 self.bucket.download_fileobj(obj.key, f)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            list(
+                tqdm(
+                    executor.map(_download, self.objects),
+                    total=len(self.objects),
+                    desc=f"Downloading scans in '{self.name}' session from S3 bucket",
+                )
+            )
         return self._cache_path
 
     @property
@@ -594,7 +604,9 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
     return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
 
 
-def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
+def calculate_checksums(
+    scan: FileSet, max_workers: ty.Optional[int] = None
+) -> ty.Dict[str, str]:
     """
     Calculates the MD5 digests associated with the files in a fileset.
 
@@ -602,14 +614,17 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
     ----------
     scan : FileSet
         the file-set to calculate the checksums for
+    max_workers : int, optional
+        the number of threads to use to hash the files concurrently. If None,
+        defaults to `concurrent.futures.ThreadPoolExecutor`'s default.
 
     Returns
     -------
     dict[str, str]
         the calculated checksums
     """
-    checksums = {}
-    for fspath in scan.fspaths:
+
+    def _hash(fspath: Path) -> ty.Tuple[str, str]:
         try:
             hsh = hashlib.md5()
             with open(fspath, "rb") as f:
@@ -618,8 +633,10 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
             checksum = hsh.hexdigest()
         except OSError:
             raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        checksums[str(fspath.relative_to(scan.parent))] = checksum
-    return checksums
+        return str(fspath.relative_to(scan.parent)), checksum
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return dict(executor.map(_hash, scan.fspaths))
 
 
 HASH_CHUNK_SIZE = 2**20

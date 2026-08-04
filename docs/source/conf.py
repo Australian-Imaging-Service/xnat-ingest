@@ -12,10 +12,11 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 from __future__ import print_function
+
+import datetime
+import re
 import typing as ty
 from pathlib import Path
-import re
-import datetime
 
 try:
     import tomllib

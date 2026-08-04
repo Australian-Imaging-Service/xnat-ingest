@@ -10,26 +10,26 @@ from unittest.mock import patch
 import click
 import pytest
 import xnat4tests  # type: ignore[import-untyped]
-from fileformats.core import extra_implementation, SampleFileGenerator
-from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.application import Json
+from fileformats.core import SampleFileGenerator, extra_implementation
+from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 from frametree.core.cli import add_source as dataset_add_source
 from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
 from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,
-)  # type: ignore[import-untyped]
+    get_image as get_ac_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,
-)  # type: ignore[import-untyped]
+    get_image as get_statistics_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,
-)  # type: ignore[import-untyped]
+    get_image as get_topogram_image,  # type: ignore[import-untyped]
+)
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,
-)  # type: ignore[import-untyped]
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
 from moto import mock_aws
 
 from conftest import get_raw_data_files, show_cli_trace
@@ -1744,8 +1744,10 @@ def test_deidentify_cli_dicom_encrypted_reid(
     ImagingSession.deidentify is mocked so the test focuses on the encryption
     logic rather than the deidentification implementation.
     """
-    from cryptography.fernet import Fernet
     from unittest.mock import MagicMock
+
+    from cryptography.fernet import Fernet
+
     from xnat_ingest.model.session import ImagingSession
 
     PROJECT_ID = "TESTDEIDENCPROJECT"

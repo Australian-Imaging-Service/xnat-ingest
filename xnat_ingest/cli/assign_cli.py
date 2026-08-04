@@ -9,10 +9,7 @@ from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 
 from ..api.assign_api import assign
-from ..helpers.arg_types import (
-    CopyModeParamType,
-    LoggerConfig,
-)
+from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
 

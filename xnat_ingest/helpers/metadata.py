@@ -1,8 +1,7 @@
-from itertools import chain
 import json
-from pathlib import Path
 import typing as ty
-
+from itertools import chain
+from pathlib import Path
 
 import attrs
 

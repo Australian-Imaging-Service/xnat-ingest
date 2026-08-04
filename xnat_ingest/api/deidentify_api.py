@@ -1,14 +1,13 @@
-import os
 import json
+import os
 import traceback
-from pathlib import Path
 import typing as ty
+from pathlib import Path
 
 from cryptography.fernet import Fernet
-from fileformats.core import extra_implementation, from_mime
+from fileformats.core import FileSet, extra_implementation, from_mime
 from fileformats.medimage.base import MedicalImagingData
 from fileformats.medimage.dicom import DicomImage
-from fileformats.core import FileSet
 from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
