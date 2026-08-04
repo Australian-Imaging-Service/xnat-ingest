@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import traceback
 import typing as ty
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
@@ -43,6 +44,7 @@ def upload(
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
+    max_workers: ty.Optional[int] = None,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -74,6 +76,12 @@ def upload(
         the checksums of the files in the staged resources (if available) to verify that they were
     dry_run: bool
          Whether to list the sessions that would be uploaded instead of actually uploading them
+    max_workers: int, optional
+        The number of threads to use to upload resources within a session concurrently.
+        Different resources map to different scans/catalogs on XNAT so are safe to
+        upload in parallel; a failure uploading one resource doesn't stop the others
+        from being attempted. If None, defaults to
+        `concurrent.futures.ThreadPoolExecutor`'s default.
     """
 
     errors = []
@@ -219,13 +227,14 @@ def upload(
                         f"{session.path} regardless of whether they are explicitly specified"
                     )
 
-                for resource in tqdm(
-                    sorted(
-                        session.select_resources(
-                            frameset, always_include=always_include
-                        )
-                    ),
-                    f"Uploading resources found in {session.name}",
+                # Resolve which resources need uploading sequentially -- this can
+                # create new scans/resources on XNAT and mutates xsession's/xscan's
+                # shared caches, so isn't safe to do concurrently. The actual upload
+                # of each resource's files is independent (different resources map to
+                # different scan/resource catalogs on XNAT) so is safe to fan out.
+                to_upload: list[tuple[ImagingResource, ty.Any]] = []
+                for resource in sorted(
+                    session.select_resources(frameset, always_include=always_include)
                 ):
                     xresource = get_xnat_resource(resource, xsession)
                     if xresource is None:
@@ -234,12 +243,16 @@ def upload(
                             resource.path,
                         )
                         continue  # skipping as resource already exists
-                    else:
-                        logger.debug(
-                            "Uploading '%s' resource to '%s'",
-                            resource.path,
-                            xresource,
-                        )
+                    to_upload.append((resource, xresource))
+
+                def _upload_resource(
+                    resource: ImagingResource, xresource: ty.Any
+                ) -> None:
+                    logger.debug(
+                        "Uploading '%s' resource to '%s'",
+                        resource.path,
+                        xresource,
+                    )
                     if isinstance(resource.fileset, File):
                         for fspath in resource.fileset.fspaths:
                             logger.debug(
@@ -343,7 +356,43 @@ def upload(
                         )
 
                     logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
-                logger.info(f"Successfully uploaded all files in '{session.name}'")
+
+                resource_errors: list[tuple[ImagingResource, BaseException]] = []
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(_upload_resource, resource, xresource): resource
+                        for resource, xresource in to_upload
+                    }
+                    for future in tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=f"Uploading resources found in {session.name}",
+                    ):
+                        resource = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.error(
+                                "Failed to upload '%s' resource in '%s': %s\n%s",
+                                resource.path,
+                                session.name,
+                                e,
+                                traceback.format_exc(),
+                            )
+                            resource_errors.append((resource, e))
+
+                if resource_errors:
+                    msg = (
+                        f"{len(resource_errors)} of {len(to_upload)} resource(s) "
+                        f"failed to upload in '{session.name}': "
+                        + ", ".join(r.path for r, _ in resource_errors)
+                    )
+                    errors.append(msg)
+                    if raise_errors:
+                        raise RuntimeError(msg) from resource_errors[0][1]
+                    logger.error(msg)
+                else:
+                    logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
                 logger.info("Extracting metadata from DICOMs on XNAT..")
                 try:
@@ -377,8 +426,10 @@ def upload(
             except Exception as e:
                 if not raise_errors:
                     msg = [
-                        f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
-                        f"\n{traceback.format_exc()}\n\n"
+                        (
+                            f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
+                            f"\n{traceback.format_exc()}\n\n"
+                        )
                     ]
                     logger.error("".join(msg))
                     errors.extend(msg)
