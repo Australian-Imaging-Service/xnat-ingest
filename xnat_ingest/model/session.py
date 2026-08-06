@@ -7,7 +7,7 @@ import platform
 import re
 import typing as ty
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from functools import cached_property
 from glob import glob
@@ -76,6 +76,62 @@ def scans_converter(
             raise ValueError(f"Found duplicate scan IDs in list of scans: {duplicates}")
         scans = {s.id: s for s in scans}
     return scans
+
+
+def _metadata_diff(
+    orig: ty.Mapping[str, ty.Any], new: ty.Mapping[str, ty.Any]
+) -> dict[str, ty.Any]:
+    """Return the fields of `orig` that are missing from or differ in `new`, i.e. the
+    original values of any metadata fields that were stripped/modified. Used to
+    reconstruct the reid metadata that `FileSet.deidentify()` implementations no
+    longer report themselves (see `fileformats.medimage.MedicalImagingData.deidentify`
+    docstring).
+    """
+    diff: dict[str, ty.Any] = {}
+    for key, val in orig.items():
+        try:
+            new_val = new[key]
+        except KeyError:
+            diff[key] = val
+            continue
+        if isinstance(val, ty.Mapping) and isinstance(new_val, ty.Mapping):
+            nested = _metadata_diff(val, new_val)
+            if nested:
+                diff[key] = nested
+        elif val != new_val:
+            diff[key] = val
+    return diff
+
+
+def _deidentify_or_copy_resource(
+    fileset: FileSet,
+    resource_name: str,
+    resource_dest_dir: Path,
+    contains_phi: bool,
+    spec: ty.Any,
+    copy_mode: FileSet.CopyMode,
+    file_workers: int | None,
+) -> tuple[FileSet, ty.Optional[ty.Mapping[str, ty.Any]]]:
+    """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
+    resource. Module-level (not a closure) so it can be submitted to a
+    ProcessPoolExecutor, whose workers need to import and pickle it directly.
+    """
+    if not contains_phi:
+        return (
+            fileset.copy(
+                resource_dest_dir,
+                mode=copy_mode,
+                new_stem=resource_name,
+                avoid_clashes=True,
+            ),
+            None,
+        )
+    orig_metadata = dict(fileset.metadata)
+    deid_resource = fileset.deidentify(
+        out_dir=resource_dest_dir, spec=spec, max_workers=file_workers
+    )
+    reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
+    return deid_resource, reid_mdata
 
 
 @attrs.define(slots=False)
@@ -750,6 +806,8 @@ class ImagingSession:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
+        resource_workers: int | None = None,
+        file_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -772,6 +830,20 @@ class ImagingSession:
             by default False
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
+        resource_workers : int, optional
+            the number of processes to use to deidentify/copy the scans' resources in this
+            session concurrently. Different resources are independent (separate output
+            directories) so are safe to process in parallel. Uses processes rather than
+            threads so that CPU-heavy format-specific deidentify implementations still
+            get real parallelism. If None, defaults to
+            `concurrent.futures.ProcessPoolExecutor`'s default.
+        file_workers : int, optional
+            the number of threads to hand to a resource's own deidentify implementation
+            for parallelising work *within* that resource (e.g. the per-file loop for a
+            DICOM series). Passed through as `max_workers` to `FileSet.deidentify`; formats
+            that don't accept/use it just ignore it. Useful for the case of a single large
+            resource dominating a session, where `resource_workers` alone can't help
+            since there's only one such resource to distribute across processes.
 
         Returns
         -------
@@ -804,18 +876,23 @@ class ImagingSession:
 
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
-        reid_series = []
+
+        # Resolve the destination dir and deidentification spec for each resource
+        # sequentially -- spec selection can raise/warn and needs to happen before
+        # dispatch, and is cheap (pure dict lookups), so there's nothing to gain by
+        # parallelising it. The actual deidentify/copy work below is independent per
+        # resource (separate output directories) so is safe to fan out.
+        tasks: list[
+            tuple[str, str, str, FileSet, Path, bool, ty.Any]
+        ] = (
+            []
+        )  # (scan_id, scan_type, resource_name, fileset, dest_dir, contains_phi, spec)
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
-                if not getattr(resource.fileset, "contains_phi", False):
-                    deid_resource = resource.fileset.copy(
-                        resource_dest_dir,
-                        mode=copy_mode,
-                        new_stem=resource_name,
-                        avoid_clashes=True,
-                    )
-                else:
+                contains_phi = getattr(resource.fileset, "contains_phi", False)
+                resource_spec = None
+                if contains_phi:
                     resource_spec = select_spec(resource.fileset)
                     if resource_spec is None:
                         msg = (
@@ -836,13 +913,41 @@ class ImagingSession:
                             raise KeyError(msg % msg_vars)
                         else:
                             logger.warning(msg, *msg_vars)
-                    deid_resource, reid_mdata = resource.fileset.deidentify(
-                        out_dir=resource_dest_dir, spec=resource_spec
+                tasks.append(
+                    (
+                        scan.id,
+                        scan.type,
+                        resource_name,
+                        resource.fileset,
+                        resource_dest_dir,
+                        contains_phi,
+                        resource_spec,
                     )
+                )
+
+        reid_series = []
+        with ProcessPoolExecutor(max_workers=resource_workers) as executor:
+            futures = {
+                executor.submit(
+                    _deidentify_or_copy_resource,
+                    fileset,
+                    resource_name,
+                    resource_dest_dir,
+                    contains_phi,
+                    resource_spec,
+                    copy_mode,
+                    file_workers,
+                ): (scan_id, scan_type, resource_name)
+                for scan_id, scan_type, resource_name, fileset, resource_dest_dir, contains_phi, resource_spec in tasks
+            }
+            for future in as_completed(futures):
+                scan_id, scan_type, resource_name = futures[future]
+                deid_resource, reid_mdata = future.result()
+                if reid_mdata is not None:
                     reid_series.append(reid_mdata)
                 deidentified.add_resource(
-                    scan.id,
-                    scan.type,
+                    scan_id,
+                    scan_type,
                     resource_name,
                     deid_resource,
                     avoid_clashes=avoid_clashes,

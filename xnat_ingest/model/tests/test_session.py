@@ -1,3 +1,4 @@
+import functools
 import logging
 import typing as ty
 from pathlib import Path
@@ -675,22 +676,37 @@ def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
 DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 
+def _deidentify_test_impl(
+    fileset: File,
+    spec: ty.Any = None,
+    out_dir: ty.Optional[Path] = None,
+    **kwargs: ty.Any,
+) -> File:
+    dest = Path(out_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    deidentified = fileset.copy(dest)
+    # session.deidentify() now reconstructs reid metadata itself by diffing
+    # `metadata` before/after calling deidentify(), so the stand-in "stripped"
+    # fileset needs to actually report different metadata to the original.
+    deidentified._explicit_metadata = {}
+    return deidentified
+
+
 def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     """Return a File instance with contains_phi=True and an injected deidentify().
 
     Setting contains_phi=True routes it through the deidentify branch in
-    session.deidentify().  The injected method is called as an unbound function
-    (instance attribute), so it receives no implicit ``self``.
+    session.deidentify(). expected_reid is set as the fileset's explicit metadata so
+    that session.deidentify()'s before/after diff reconstructs it. The injected
+    method is a functools.partial binding a module-level function (not a closure), so
+    the fileset instance stays picklable -- session.deidentify() now dispatches
+    resources to a ProcessPoolExecutor, which requires everything submitted to it,
+    including any injected attributes on the fileset, to be picklable.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True
-
-    def _deidentify(spec: ty.Any = None, out_dir: ty.Optional[Path] = None) -> tuple:
-        dest = Path(out_dir)
-        dest.mkdir(parents=True, exist_ok=True)
-        return f.copy(dest), dict(expected_reid)
-
-    f.deidentify = _deidentify
+    f._explicit_metadata = dict(expected_reid)
+    f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
 
 
