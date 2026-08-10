@@ -111,7 +111,7 @@ def _deidentify_or_copy_resource(
     spec: ty.Any,
     copy_mode: FileSet.CopyMode,
     file_workers: int | None,
-) -> tuple[FileSet, ty.Optional[ty.Mapping[str, ty.Any]]]:
+) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
     """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
     resource. Module-level (not a closure) so it can be submitted to a
     ProcessPoolExecutor, whose workers need to import and pickle it directly.
@@ -124,11 +124,11 @@ def _deidentify_or_copy_resource(
                 new_stem=resource_name,
                 avoid_clashes=True,
             ),
-            None,
+            {},
         )
     orig_metadata = dict(fileset.metadata)
     deid_resource = fileset.deidentify(
-        out_dir=resource_dest_dir, spec=spec, max_workers=file_workers
+        resource_dest_dir, spec=spec, max_workers=file_workers
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata

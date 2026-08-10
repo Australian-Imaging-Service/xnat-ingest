@@ -678,8 +678,8 @@ DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 def _deidentify_test_impl(
     fileset: File,
+    out_dir: Path,
     spec: ty.Any = None,
-    out_dir: ty.Optional[Path] = None,
     **kwargs: ty.Any,
 ) -> File:
     dest = Path(out_dir)
