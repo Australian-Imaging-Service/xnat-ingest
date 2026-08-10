@@ -7,7 +7,7 @@ import platform
 import re
 import typing as ty
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import cached_property
 from glob import glob
@@ -110,11 +110,10 @@ def _deidentify_or_copy_resource(
     contains_phi: bool,
     spec: ty.Any,
     copy_mode: FileSet.CopyMode,
-    file_workers: int | None,
+    max_workers: int | None,
 ) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
     """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
-    resource. Module-level (not a closure) so it can be submitted to a
-    ProcessPoolExecutor, whose workers need to import and pickle it directly.
+    resource.
     """
     if not contains_phi:
         return (
@@ -128,7 +127,7 @@ def _deidentify_or_copy_resource(
         )
     orig_metadata = dict(fileset.metadata)
     deid_resource = fileset.deidentify(
-        resource_dest_dir, spec=spec, max_workers=file_workers
+        resource_dest_dir, spec=spec, max_workers=max_workers
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
@@ -806,8 +805,7 @@ class ImagingSession:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
-        resource_workers: int | None = None,
-        file_workers: int | None = None,
+        max_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -830,20 +828,13 @@ class ImagingSession:
             by default False
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
-        resource_workers : int, optional
-            the number of processes to use to deidentify/copy the scans' resources in this
-            session concurrently. Different resources are independent (separate output
-            directories) so are safe to process in parallel. Uses processes rather than
-            threads so that CPU-heavy format-specific deidentify implementations still
-            get real parallelism. If None, defaults to
-            `concurrent.futures.ProcessPoolExecutor`'s default.
-        file_workers : int, optional
-            the number of threads to hand to a resource's own deidentify implementation
-            for parallelising work *within* that resource (e.g. the per-file loop for a
-            DICOM series). Passed through as `max_workers` to `FileSet.deidentify`; formats
-            that don't accept/use it just ignore it. Useful for the case of a single large
-            resource dominating a session, where `resource_workers` alone can't help
-            since there's only one such resource to distribute across processes.
+        max_workers : int, optional
+            passed through as `max_workers` to each resource's `FileSet.deidentify`, for
+            formats whose deidentification implementation can parallelise work *within* a
+            single resource (e.g. the per-file loop for a DICOM series) using threads.
+            Formats that don't accept/use it just ignore it. Resources themselves are
+            deidentified/copied sequentially, one at a time, to keep failures easy to
+            trace back to the resource that caused them.
 
         Returns
         -------
@@ -877,16 +868,7 @@ class ImagingSession:
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
 
-        # Resolve the destination dir and deidentification spec for each resource
-        # sequentially -- spec selection can raise/warn and needs to happen before
-        # dispatch, and is cheap (pure dict lookups), so there's nothing to gain by
-        # parallelising it. The actual deidentify/copy work below is independent per
-        # resource (separate output directories) so is safe to fan out.
-        tasks: list[
-            tuple[str, str, str, FileSet, Path, bool, ty.Any]
-        ] = (
-            []
-        )  # (scan_id, scan_type, resource_name, fileset, dest_dir, contains_phi, spec)
+        reid_series = []
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
@@ -913,41 +895,20 @@ class ImagingSession:
                             raise KeyError(msg % msg_vars)
                         else:
                             logger.warning(msg, *msg_vars)
-                tasks.append(
-                    (
-                        scan.id,
-                        scan.type,
-                        resource_name,
-                        resource.fileset,
-                        resource_dest_dir,
-                        contains_phi,
-                        resource_spec,
-                    )
-                )
-
-        reid_series = []
-        with ProcessPoolExecutor(max_workers=resource_workers) as executor:
-            futures = {
-                executor.submit(
-                    _deidentify_or_copy_resource,
-                    fileset,
+                deid_resource, reid_mdata = _deidentify_or_copy_resource(
+                    resource.fileset,
                     resource_name,
                     resource_dest_dir,
                     contains_phi,
                     resource_spec,
                     copy_mode,
-                    file_workers,
-                ): (scan_id, scan_type, resource_name)
-                for scan_id, scan_type, resource_name, fileset, resource_dest_dir, contains_phi, resource_spec in tasks
-            }
-            for future in as_completed(futures):
-                scan_id, scan_type, resource_name = futures[future]
-                deid_resource, reid_mdata = future.result()
+                    max_workers,
+                )
                 if reid_mdata is not None:
                     reid_series.append(reid_mdata)
                 deidentified.add_resource(
-                    scan_id,
-                    scan_type,
+                    scan.id,
+                    scan.type,
                     resource_name,
                     deid_resource,
                     avoid_clashes=avoid_clashes,

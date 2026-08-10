@@ -698,10 +698,8 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     Setting contains_phi=True routes it through the deidentify branch in
     session.deidentify(). expected_reid is set as the fileset's explicit metadata so
     that session.deidentify()'s before/after diff reconstructs it. The injected
-    method is a functools.partial binding a module-level function (not a closure), so
-    the fileset instance stays picklable -- session.deidentify() now dispatches
-    resources to a ProcessPoolExecutor, which requires everything submitted to it,
-    including any injected attributes on the fileset, to be picklable.
+    method is a functools.partial binding a module-level function (not a closure),
+    just for consistency/reuse across the fixtures in this module.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True

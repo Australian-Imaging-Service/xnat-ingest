@@ -29,17 +29,12 @@ def deidentify(
     require_manifest: bool = True,
     unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
-    resource_workers: int | None = None,
-    file_workers: int | None = None,
+    max_workers: int | None = None,
 ) -> list[str]:
     """
     Parameters
     ----------
-    resource_workers : int, optional
-        the number of processes to use to deidentify/copy a session's resources
-        concurrently. If None, defaults to
-        `concurrent.futures.ProcessPoolExecutor`'s default.
-    file_workers : int, optional
+    max_workers : int, optional
         the number of threads handed to a resource's own deidentify implementation to
         parallelise work within that resource (e.g. the per-file loop for a DICOM
         series). Ignored by formats that don't support it.
@@ -91,8 +86,7 @@ def deidentify(
                 copy_mode=copy_mode,
                 avoid_clashes=avoid_clashes,
                 specs=specs,
-                resource_workers=resource_workers,
-                file_workers=file_workers,
+                max_workers=max_workers,
             )
             deidentified_session.save(output_dir / session_listing.name)
             reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
