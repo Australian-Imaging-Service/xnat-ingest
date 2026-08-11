@@ -95,7 +95,11 @@ def deidentify(
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
             }
-            reid_mdata_json = json.dumps(reid_document, indent=2).encode()
+            # default=str handles values that aren't natively JSON-serialisable but
+            # have a sensible string representation, e.g. pydicom's PersonName
+            # (kept as a rich object elsewhere in metadata for .family_name/
+            # .given_name access, see xnat_ingest.helpers.metadata.Metadata.save).
+            reid_mdata_json = json.dumps(reid_document, indent=2, default=str).encode()
             if reid_encrypt_key is not None:
                 reid_fspath = reid_dir / f"{session_listing.name}.json.enc"
                 reid_fspath.write_bytes(

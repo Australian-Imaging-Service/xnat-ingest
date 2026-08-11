@@ -1722,8 +1722,10 @@ def test_deidentify_cli_dicom(
     reid_file = reid_dir / f"{session_name}.json"
     assert reid_file.exists(), f"Reid file missing: {reid_file}"
     reid = json.loads(reid_file.read_bytes())
-    #    assert reid.get("PatientID") == PATIENT_ID
-    assert reid.get("PatientName") != ""
+    assert reid.get("session_uid") == STUDY_UID.replace(".", "_")
+    changed_fields = reid.get("changed_fields", {})
+    #    assert changed_fields.get("PatientID") == PATIENT_ID
+    assert changed_fields.get("PatientName")
 
     # 7. Deidentified session directory contains files
     deid_session_root = output_dir / session_name
@@ -1814,7 +1816,11 @@ def test_deidentify_cli_dicom_encrypted_reid(
     assert not (reid_dir / f"{session_name}.json").exists()
 
     decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
-    assert decrypted.get("PatientID") == PATIENT_ID
+    # session.uid is derived from StudyInstanceUID (dots -> underscores) once a
+    # session has been through real staging/assignment, not the project.subject.
+    # session directory name used for the mocked deidentify() fixtures elsewhere.
+    assert decrypted.get("session_uid") == STUDY_UID.replace(".", "_")
+    assert decrypted.get("changed_fields", {}).get("PatientID") == PATIENT_ID
 
 
 def transfer_to_source(
