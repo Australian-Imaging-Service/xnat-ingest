@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fileformats.core import FileSet
+from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,  # type: ignore[import-untyped]
@@ -57,6 +58,7 @@ def test_assign_calls_load_assign_save_for_each_session(
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
+        include=(),
     )
 
 
@@ -82,6 +84,7 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
     mock_session.save.assert_called_once_with(
         dest_dir=output_dir / INVALID_DIRNAME,
         copy_mode=FileSet.CopyMode.hardlink_or_copy,
+        include=(),
     )
 
 
@@ -307,6 +310,69 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     assert not scan_dir.name.endswith(".")
     assert scan_dir.name == "4.PET SWB 8MIN"
+
+
+def test_assign_end_to_end_routes_datatypes_to_separate_projects(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    grouped_dir = tmp_path / "grouped"
+    grouped_dir.mkdir()
+    assert (
+        group(
+            input_paths=[str(dicom_dir)],
+            output_dir=grouped_dir,
+            datatypes=[DicomSeries],
+            session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+            scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+            resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+        )
+        == []
+    )
+
+    grouped_session = ImagingSession.load(next(grouped_dir.iterdir()))
+    grouped_session.add_session_resource("report", File.sample(seed=42))
+    grouped_session.save(grouped_dir)
+
+    dicom_output = tmp_path / "dicom-assigned"
+    report_output = tmp_path / "report-assigned"
+    common_args = {
+        "input_dir": grouped_dir,
+        "project_field": PROJECT_FIELD,
+        "subject_field": SUBJECT_FIELD,
+        "session_field": SESSION_FIELD,
+    }
+    assert (
+        assign(
+            output_dir=dicom_output,
+            project_id="DICOM_PROJECT",
+            include=[DicomSeries],
+            **common_args,
+        )
+        == []
+    )
+    assert (
+        assign(
+            output_dir=report_output,
+            project_id="REPORT_PROJECT",
+            include=[File],
+            **common_args,
+        )
+        == []
+    )
+
+    dicom_session = ImagingSession.load(next(dicom_output.iterdir()))
+    report_session = ImagingSession.load(next(report_output.iterdir()))
+    assert dicom_session.project_id == "DICOM_PROJECT"
+    assert report_session.project_id == "REPORT_PROJECT"
+    assert dicom_session.resources
+    assert all(
+        isinstance(resource.fileset, DicomSeries)
+        for resource in dicom_session.resources
+    )
+    assert report_session.scans == {}
+    assert len(report_session.session_resources) == 1
+    assert isinstance(report_session.resources[0].fileset, File)
+    assert (grouped_dir / grouped_session.staging_relpath[0]).exists()
 
 
 def test_assign_end_to_end_unresolvable_project_field_goes_to_invalid_dir(

@@ -619,6 +619,33 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     )
 
 
+def test_session_save_filters_scan_and_session_resources(
+    tmp_path: Path, imaging_session: ImagingSession
+) -> None:
+    imaging_session.add_session_resource("report", File.sample(seed=42))
+
+    dicom_saved, _ = imaging_session.save(tmp_path / "dicom", include=[DicomSeries])
+    report_saved, _ = imaging_session.save(tmp_path / "report", include=[File])
+
+    assert dicom_saved.scans
+    assert dicom_saved.session_resources == {}
+    assert all(
+        isinstance(resource.fileset, DicomSeries) for resource in dicom_saved.resources
+    )
+    assert report_saved.scans == {}
+    assert set(report_saved.session_resources) == {"report"}
+    assert isinstance(report_saved.session_resources["report"].fileset, File)
+
+
+def test_session_save_include_requires_a_matching_resource(
+    tmp_path: Path, imaging_session: ImagingSession
+) -> None:
+    with pytest.raises(ValueError, match="No resources .* match"):
+        imaging_session.save(tmp_path, include=[SyngoMi_Vr20b_ListMode])
+
+    assert not (tmp_path / imaging_session.name).exists()
+
+
 def test_id_escape(tmp_path: Path) -> None:
     raw_data_dir = tmp_path / "raw"
     raw_data_dir.mkdir()

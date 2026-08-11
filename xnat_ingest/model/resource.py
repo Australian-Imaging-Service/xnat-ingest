@@ -61,6 +61,12 @@ class ImagingResource:
     def mime_like(self) -> str:
         return self.fileset.mime_like
 
+    def matches_datatypes(self, datatypes: ty.Sequence[type[FileSet]]) -> bool:
+        """Return whether this resource matches any requested datatype."""
+        return not datatypes or any(
+            isinstance(self.fileset, datatype) for datatype in datatypes
+        )
+
     def __lt__(self, other: Self) -> bool:
         if self.scan is None and other.scan is None:
             return self.name < other.name

@@ -1,6 +1,7 @@
 import json
 import shutil
 import traceback
+import typing as ty
 from pathlib import Path
 
 from fileformats.core import FileSet
@@ -52,6 +53,7 @@ def assign(
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     unlink_source: str | None = None,
     raise_errors: bool = False,
+    include: ty.Sequence[type[FileSet]] = (),
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -83,6 +85,9 @@ def assign(
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
+    include: Sequence[type[FileSet]]
+        Only stage resources matching at least one of these datatypes. An empty
+        sequence stages all resources.
 
     Notes
     -----
@@ -92,6 +97,19 @@ def assign(
     regular output location, so it can be found and manually reprocessed rather than
     being lost.
     """
+
+    if include and unlink_source is not None:
+        raise ValueError(
+            "--unlink-source cannot be used with datatype filtering because other "
+            "assign pathways may still need the grouped source"
+        )
+    if invalid := [
+        datatype for datatype in include if not issubclass(datatype, FileSet)
+    ]:
+        raise ValueError(
+            "Included datatypes must be file formats, got "
+            f"{[datatype.mime_like for datatype in invalid]}"
+        )
 
     sessions: list[LocalSessionListing] = [
         LocalSessionListing(d) for d in list_session_dirs(input_dir)
@@ -120,6 +138,16 @@ def assign(
             session = ImagingSession.load(
                 session_listing.cache_path,
             )
+
+            if include and not any(
+                resource.matches_datatypes(include) for resource in session.resources
+            ):
+                logger.info(
+                    "Skipping '%s' because it has no resources matching %s",
+                    session_listing.name,
+                    [datatype.mime_like for datatype in include],
+                )
+                continue
 
             missing_ids = session.assign(
                 project_field=project_field,
@@ -151,6 +179,7 @@ def assign(
             session.save(
                 dest_dir=dest_dir,
                 copy_mode=copy_mode,
+                include=include,
             )
         except Exception as e:
             if raise_errors:

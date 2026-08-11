@@ -1250,6 +1250,7 @@ class ImagingSession:
         available_projects: list[str] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
+        include: ty.Sequence[type[FileSet]] = (),
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
         with the project, subject and session IDs as subdirectories of this directory,
@@ -1268,6 +1269,9 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
+        include : sequence[type[FileSet]], optional
+            only save resources matching at least one of these datatypes. An empty
+            sequence saves all resources.
 
         Returns
         -------
@@ -1276,6 +1280,28 @@ class ImagingSession:
         Path
             the path to the directory where the session is saved
         """
+        included_scans = (
+            [
+                scan
+                for scan in self.scans.values()
+                if any(
+                    resource.matches_datatypes(include)
+                    for resource in scan.resources.values()
+                )
+            ]
+            if include
+            else list(self.scans.values())
+        )
+        included_session_resources = [
+            resource
+            for resource in self.session_resources.values()
+            if resource.matches_datatypes(include)
+        ]
+        if include and not included_scans and not included_session_resources:
+            raise ValueError(
+                f"No resources in {self.name or self.uid!r} match the included datatypes"
+            )
+
         saved = self.new_empty()
         if self.name is None:
             # Project/subject/session IDs haven't been assigned yet, so flag the
@@ -1291,13 +1317,16 @@ class ImagingSession:
                 session_dirname += f".{self.run_uid}"
         session_dir = dest_dir / session_dirname
         session_dir.mkdir(parents=True, exist_ok=True)
-        for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
+        for scan in tqdm(included_scans, f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(
-                session_dir, copy_mode=copy_mode, collation_map=collation_map
+                session_dir,
+                copy_mode=copy_mode,
+                collation_map=collation_map,
+                include=include,
             )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
-        for resource in self.session_resources.values():
+        for resource in included_session_resources:
             saved_resource = resource.save(session_dir, copy_mode=copy_mode)
             saved.session_resources[saved_resource.name] = saved_resource
         logger.debug("Saving session metadata")
