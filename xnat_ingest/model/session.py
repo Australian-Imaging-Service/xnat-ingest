@@ -78,6 +78,61 @@ def scans_converter(
     return scans
 
 
+def _metadata_diff(
+    orig: ty.Mapping[str, ty.Any], new: ty.Mapping[str, ty.Any]
+) -> dict[str, ty.Any]:
+    """Return the fields of `orig` that are missing from or differ in `new`, i.e. the
+    original values of any metadata fields that were stripped/modified. Used to
+    reconstruct the reid metadata that `FileSet.deidentify()` implementations no
+    longer report themselves (see `fileformats.medimage.MedicalImagingData.deidentify`
+    docstring).
+    """
+    diff: dict[str, ty.Any] = {}
+    for key, val in orig.items():
+        try:
+            new_val = new[key]
+        except KeyError:
+            diff[key] = val
+            continue
+        if isinstance(val, ty.Mapping) and isinstance(new_val, ty.Mapping):
+            nested = _metadata_diff(val, new_val)
+            if nested:
+                diff[key] = nested
+        elif val != new_val:
+            diff[key] = val
+    return diff
+
+
+def _deidentify_or_copy_resource(
+    fileset: FileSet,
+    resource_name: str,
+    resource_dest_dir: Path,
+    contains_phi: bool,
+    spec: ty.Any,
+    copy_mode: FileSet.CopyMode,
+    max_workers: int | None,
+) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
+    """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
+    resource.
+    """
+    if not contains_phi:
+        return (
+            fileset.copy(
+                resource_dest_dir,
+                mode=copy_mode,
+                new_stem=resource_name,
+                avoid_clashes=True,
+            ),
+            {},
+        )
+    orig_metadata = dict(fileset.metadata)
+    deid_resource = fileset.deidentify(
+        resource_dest_dir, spec=spec, max_workers=max_workers
+    )
+    reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
+    return deid_resource, reid_mdata
+
+
 @attrs.define(slots=False)
 class ImagingSession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
@@ -750,6 +805,7 @@ class ImagingSession:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         avoid_clashes: bool = False,
         require_matching_spec: bool = True,
+        max_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -772,6 +828,13 @@ class ImagingSession:
             by default False
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
+        max_workers : int, optional
+            passed through as `max_workers` to each resource's `FileSet.deidentify`, for
+            formats whose deidentification implementation can parallelise work *within* a
+            single resource (e.g. the per-file loop for a DICOM series) using threads.
+            Formats that don't accept/use it just ignore it. Resources themselves are
+            deidentified/copied sequentially, one at a time, to keep failures easy to
+            trace back to the resource that caused them.
 
         Returns
         -------
@@ -804,18 +867,14 @@ class ImagingSession:
 
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
+
         reid_series = []
         for scan in self.scans.values():
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
-                if not getattr(resource.fileset, "contains_phi", False):
-                    deid_resource = resource.fileset.copy(
-                        resource_dest_dir,
-                        mode=copy_mode,
-                        new_stem=resource_name,
-                        avoid_clashes=True,
-                    )
-                else:
+                contains_phi = getattr(resource.fileset, "contains_phi", False)
+                resource_spec = None
+                if contains_phi:
                     resource_spec = select_spec(resource.fileset)
                     if resource_spec is None:
                         msg = (
@@ -836,9 +895,16 @@ class ImagingSession:
                             raise KeyError(msg % msg_vars)
                         else:
                             logger.warning(msg, *msg_vars)
-                    deid_resource, reid_mdata = resource.fileset.deidentify(
-                        out_dir=resource_dest_dir, spec=resource_spec
-                    )
+                deid_resource, reid_mdata = _deidentify_or_copy_resource(
+                    resource.fileset,
+                    resource_name,
+                    resource_dest_dir,
+                    contains_phi,
+                    resource_spec,
+                    copy_mode,
+                    max_workers,
+                )
+                if reid_mdata is not None:
                     reid_series.append(reid_mdata)
                 deidentified.add_resource(
                     scan.id,

@@ -29,7 +29,16 @@ def deidentify(
     require_manifest: bool = True,
     unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
+    max_workers: int | None = None,
 ) -> list[str]:
+    """
+    Parameters
+    ----------
+    max_workers : int, optional
+        the number of threads handed to a resource's own deidentify implementation to
+        parallelise work within that resource (e.g. the per-file loop for a DICOM
+        series). Ignored by formats that don't support it.
+    """
 
     sessions: list[LocalSessionListing] = [
         LocalSessionListing(d) for d in list_session_dirs(input_dir)
@@ -77,6 +86,7 @@ def deidentify(
                 copy_mode=copy_mode,
                 avoid_clashes=avoid_clashes,
                 specs=specs,
+                max_workers=max_workers,
             )
             deidentified_session.save(output_dir / session_listing.name)
             reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
@@ -148,7 +158,8 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
 @extra_implementation(MedicalImagingData.deidentify)
 def dicom_deidentify(
     dicom: DicomImage,
+    out_dir: os.PathLike[str],
     spec: ty.Any = None,
-    out_dir: os.PathLike[str] | None = None,
-) -> tuple[DicomImage, ty.Mapping[str, ty.Any]]:
+    **kwargs: ty.Any,
+) -> DicomImage:
     raise NotImplementedError
