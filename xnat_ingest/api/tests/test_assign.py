@@ -12,8 +12,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_api import group
 from xnat_ingest.helpers.arg_types import IDSpec
-from xnat_ingest.model.session import ImagingSession
 from xnat_ingest.helpers.remotes import list_session_dirs
+from xnat_ingest.model.session import ImagingSession
 
 PROJECT_FIELD = "StudyID"
 SUBJECT_FIELD = "PatientID"
