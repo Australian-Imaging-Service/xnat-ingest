@@ -5,8 +5,8 @@ import traceback
 import typing as ty
 from pathlib import Path
 
+from ais_deid.dicom.engine import DeidEngine
 from cryptography.fernet import Fernet
-from dicom_deid.engine import DeidEngine
 from fileformats.core import FileSet, extra_implementation, from_mime
 from fileformats.medimage.base import MedicalImagingData
 from fileformats.medimage.dicom import DicomImage
