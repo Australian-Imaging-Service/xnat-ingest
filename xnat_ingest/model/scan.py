@@ -88,6 +88,7 @@ class ImagingScan:
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
     ) -> Self:
         # Ensure scan type is a valid directory name. A scan with no description set
         # (e.g. not yet resolved by 'assign') is saved as '<scan_id>.' (trailing dot,
@@ -97,7 +98,7 @@ class ImagingScan:
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
             saved_resource = resource.save(
-                scan_dir, copy_mode=copy_mode, collation_map=collation_map
+                scan_dir, copy_mode=copy_mode, collation_map=collation_map, conversion_map=conversion_map,
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource

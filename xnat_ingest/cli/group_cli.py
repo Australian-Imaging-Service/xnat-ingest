@@ -231,13 +231,26 @@ are uploaded to XNAT
         "Collation level is one of 'any', 'siblings', or 'adjacent' (default 'siblings'). "
     ),
 )
+@click.option(
+    "--convert",
+    "conversions",
+    type=MimeType.cli_type,
+    metavar="<src-mime-like> <tgt-mime-like>",
+    nargs=2,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_CONVERT",
+    help=(
+        "Convert resources of <src-mime-like> to <tgt-mime-like> during save. "
+    ),
+)
 def group_cmd(
     input_paths: list[str],
     output_dir: Path,
-    datatype: list[MimeType] | None,
     session: list[IDSpec],
     scan: list[IDSpec],
     resource: list[IDSpec],
+    datatype: list[MimeType] | None,
     path_metadata_regex: list[PathMetadataRegex],
     unlink_source: str | None,
     loggers: ty.List[LoggerConfig],
@@ -251,6 +264,7 @@ def group_cmd(
     recursive: bool,
     copy_mode: FileSet.CopyMode,
     collate_resources: tuple[CollationSpec, ...],
+    conversions: tuple[MimeType, ...],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -284,6 +298,7 @@ def group_cmd(
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
+            conversion_map={c.src: c.tgt for c in conversions},
         )
         if errors:
             logger.error(
