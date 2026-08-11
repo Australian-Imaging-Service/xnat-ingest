@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 from fileformats.application import Json
+from fileformats.application import Zip
+from fileformats.generic import Directory
 from fileformats.core.exceptions import FormatRecognitionError
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
@@ -12,6 +14,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from xnat_ingest.api.group_api import BUILD_NAME_DEFAULT, group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
+from xnat_ingest.model.resource import ImagingResource
 
 SESSION_FIELD = [IDSpec("StudyInstanceUID", "medimage/dicom-collection")]
 SCAN_FIELD = [IDSpec("SeriesNumber", "medimage/dicom-collection")]
@@ -253,3 +256,25 @@ def test_group_creates_build_dir(tmp_path: Path) -> None:
     )
 
     assert (output_dir / BUILD_NAME_DEFAULT).exists()
+
+def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+
+    errors = group(
+        input_paths=[str(dicom_dir)],
+        output_dir=output_dir,
+        datatypes=[Directory],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        conversion_map={Directory: Zip},
+    )
+
+    assert errors == []
+    # Find saved resource and check manifest datatype equals NiftiGz.mime_like
+    session_dir = next(d for d in output_dir.iterdir() if d.is_dir() and d.name.startswith(ImagingSession.PRE_ASSIGN_PREFIX))
+    scan_dir = next(d for d in session_dir.iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME).load()
+    assert manifest["datatype"] == Zip.mime_like
