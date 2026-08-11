@@ -91,7 +91,11 @@ def deidentify(
                 max_workers=max_workers,
             )
             deidentified_session.save(output_dir / session_listing.name)
-            reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
+            reid_document = {
+                "session_uid": session.uid,
+                "changed_fields": reid_mdata,
+            }
+            reid_mdata_json = json.dumps(reid_document, indent=2).encode()
             if reid_encrypt_key is not None:
                 reid_fspath = reid_dir / f"{session_listing.name}.json.enc"
                 reid_fspath.write_bytes(
@@ -162,6 +166,7 @@ def dicom_deidentify(
     dicom: DicomImage,
     out_dir: os.PathLike[str],
     spec: ty.Any = None,
+    **kwargs: ty.Any,
 ) -> DicomImage:
     """
     De-identify a single DicomImage using the dicom_deid engine.
