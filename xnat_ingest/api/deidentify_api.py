@@ -158,8 +158,7 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
 @extra_implementation(MedicalImagingData.deidentify)
 def dicom_deidentify(
     dicom: DicomImage,
-    out_dir: os.PathLike[str],
     spec: ty.Any = None,
-    **kwargs: ty.Any,
-) -> DicomImage:
+    out_dir: os.PathLike[str] | None = None,
+) -> tuple[DicomImage, ty.Mapping[str, ty.Any]]:
     raise NotImplementedError

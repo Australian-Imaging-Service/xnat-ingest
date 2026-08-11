@@ -13,6 +13,7 @@ from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_api import group
 from xnat_ingest.helpers.arg_types import IDSpec
 from xnat_ingest.model.session import ImagingSession
+from xnat_ingest.helpers.remotes import list_session_dirs
 
 PROJECT_FIELD = "StudyID"
 SUBJECT_FIELD = "PatientID"
@@ -360,8 +361,8 @@ def test_assign_end_to_end_routes_datatypes_to_separate_projects(
         == []
     )
 
-    dicom_session = ImagingSession.load(next(dicom_output.iterdir()))
-    report_session = ImagingSession.load(next(report_output.iterdir()))
+    dicom_session = ImagingSession.load(next(iter(list_session_dirs(dicom_output))))
+    report_session = ImagingSession.load(next(iter(list_session_dirs(report_output))))
     assert dicom_session.project_id == "DICOM_PROJECT"
     assert report_session.project_id == "REPORT_PROJECT"
     assert dicom_session.resources
