@@ -6,22 +6,22 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from xnat_ingest.cli.base import base_cli
+from xnat_ingest.cli.base import cli
 
-from ..api.deidentify_ import deidentify
+from ..api.deidentify_api import deidentify
 from ..helpers.arg_types import CopyModeParamType, LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
 
-@base_cli.command(
+@cli.command(
     name="deidentify",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
 INPUT_DIR is the path to the directory containing the session directories to de-identify.
-Each session directory should be named in the format <project_id>.<subject_id>.<visit_id>
+Each session directory should be named in the format <project_id>.<subject_id>.<session_id>
 and contain subdirectories for each scan, which in turn contain the resource files for
 each scan.
 
@@ -29,11 +29,14 @@ OUTPUT_DIR is the directory that the files for each session are collated to befo
 are uploaded to XNAT
 
 SPEC_DIR is the directory containing the project-specific deidentification specifications.
-Each project specification should be a JSON file named <project_id>.json that contains a mapping
-from file format identifiers (e.g. DICOM, NIfTI, etc.) to the deidentification specification to use for
-files of that format in that project. The file format identifiers should be in the form of
-MIME types (e.g. 'application/dicom') or more specific file format identifiers recognized by the
-fileformats package (e.g. 'application/dicom; transfer-syntax=1.2.840.10008.1.2.1').
+It should contain one subdirectory per project, named <project_id>, plus an optional
+"__default__" subdirectory used as a fallback for projects that don't have their own.
+Within each of these subdirectories, there is one JSON spec file per file format that
+requires deidentification in that project, named after the format's MIME-like identifier
+with '/' replaced by '@' (e.g. 'medimage/dicom-series' -> 'medimage@dicom-series.json').
+Formats without a matching spec file are only deidentified if a spec is found for a
+broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
+'medimage/dicom-series').
 
 REID_DIR is the directory to save the re-identification metadata to, which can be used to
 re-identify the de-identified data if needed. The re-identification metadata is saved in
@@ -63,12 +66,17 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     envvar="XINGEST_REID_DIR",
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
     help=(
-        "Whether to delete the session directories after they have been deidentified "
-        "or not (XINGEST_DELETE env. var)"
+        "Whether to unlink the assigned session directories after they have been "
+        "deidentified. 'all' removes the whole assigned session directory; "
+        "'keep-metadata' removes the resource data but leaves the session/scan-"
+        "level metadata behind, so a lightweight skeleton of the session survives "
+        "(e.g. for 'associate' to use later). If not set, the assigned "
+        "directories are left in place (XINGEST_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -147,7 +155,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
         "e.g. generated using `Fernet.generate_key()` from the cryptography package"
     ),
 )
-def deidentify_cli(
+def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
@@ -159,7 +167,7 @@ def deidentify_cli(
     copy_mode: FileSet.CopyMode,
     loop: int,
     avoid_clashes: bool,
-    delete: bool,
+    unlink_source: str | None,
     reid_encrypt_key: str | None = None,
 ) -> None:
 
@@ -182,7 +190,7 @@ def deidentify_cli(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = deidentify(
+        deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
             spec_dir=spec_dir,
@@ -191,15 +199,9 @@ def deidentify_cli(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             require_manifest=require_manifest,
-            delete=delete,
+            unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
         )
-        if errors:
-            logger.error(
-                f"Deidentification completed with {len(errors)} errors:\n\n{''.join(errors)}"
-            )
-        else:
-            logger.info("Deidentification completed successfully")
         if loop < 0:
             break
         end_time = datetime.datetime.now()

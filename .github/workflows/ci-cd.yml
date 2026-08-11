@@ -17,6 +17,16 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: "3.13"
+    - uses: pre-commit/action@v3.0.1
+
   test:
     services:
       orthanc:
@@ -92,7 +102,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
 
   build:
-    needs: [test]
+    needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -118,33 +128,29 @@ jobs:
         name: build
         path: ./dist
 
-  # build-docs:
-  #   runs-on: ubuntu-latest
-  #   needs: [build]
-  #   steps:
-  #   - name: Checkout repository
-  #     uses: actions/checkout@v2
-  #   - name: Unset header
-  #     # checkout@v2 adds a header that makes branch protection report errors
-  #     # because the Github action bot is not a collaborator on the repo
-  #     run: git config --local --unset http.https://github.com/.extraheader
-  #   - name: Setup Python
-  #     uses: actions/setup-python@v2
-  #     with:
-  #       python-version: 3.x
-  #   - name: Install dependencies
-  #     run: |
-  #       python3 -m pip install --break-system-packages --upgrade pip
-  #       pip install .[docs]
-  #   - name: Build documentation
-  #     run: |
-  #       cd docs
-  #       make html
-  #       cd ..
-  #   - uses: actions/upload-artifact@v4
-  #     with:
-  #       name: built-docs
-  #       path: docs/build/html
+  build-docs:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.x
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --break-system-packages --upgrade pip
+        pip install .[docs]
+    - name: Build documentation
+      run: |
+        cd docs
+        make html
+        cd ..
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: docs/build/html
 
   deploy-pypi:
     needs: [build]
@@ -214,3 +220,18 @@ jobs:
         tags: |
           ${{ steps.versions.outputs.TAG }}
           ${{ steps.versions.outputs.IMAGE }}:latest
+
+  deploy-docs:
+    if: github.event_name == 'release'
+    needs: [build-docs, deploy-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4

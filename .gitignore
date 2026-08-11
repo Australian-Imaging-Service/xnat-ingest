@@ -22,3 +22,5 @@ __pycache__
 ~*
 *.venv
 /xnat_ingest/_version.py
+/dicom data
+/associate data

@@ -8,9 +8,9 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from ..cli.base import base_cli
 from ..helpers.arg_types import LoggerConfig
 from ..helpers.logging import logger, set_logger_handling
+from .base import cli
 
 PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
 STAGED_NAME_DEFAULT = "STAGED"
@@ -36,7 +36,7 @@ class CopyModeParamType(click.ParamType):
             self.fail(f"{value!r} is not a valid copy mode", param, ctx)
 
 
-@base_cli.command(
+@cli.command(
     name="associate",
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
@@ -67,10 +67,17 @@ are uploaded to XNAT
     help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
 )
 @click.option(
-    "--delete/--dont-delete",
-    default=False,
-    envvar="XINGEST_DELETE",
-    help="Whether to delete the session directories after they have been uploaded or not (XINGEST_DELETE env. var)",
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
+    help=(
+        "Whether to unlink the source files matched by GLOB after they have been "
+        "associated. 'all' and 'keep-metadata' behave the same here (individual "
+        "source files are removed one by one), since these files live at an "
+        "arbitrary external location rather than a directory tree xnat-ingest "
+        "owns. If not set, the source files are left in place (XINGEST_UNLINK_SOURCE env. var)"
+    ),
 )
 @click.option(
     "--logger",
@@ -141,7 +148,7 @@ are uploaded to XNAT
     help=("Whether to require manifest files in the staged resources or not"),
     type=bool,
 )
-def associate_cli(
+def associate_cmd(
     input_dir: Path,
     output_dir: Path,
     datatype: str,
@@ -155,7 +162,7 @@ def associate_cli(
     loop: int,
     temp_dir: Path | None,
     copy_mode: FileSet.CopyMode,
-    delete: bool,
+    unlink_source: str | None,
     require_manifest: bool,
 ) -> None:
 
@@ -177,7 +184,7 @@ def associate_cli(
     # Loop the upload process if loop is set to a positive value, otherwise just run it once
     while True:
         start_time = datetime.datetime.now()
-        errors = associate(
+        associate(
             input_dir=input_dir,
             output_dir=output_dir,
             datatype=datatype,
@@ -188,21 +195,15 @@ def associate_cli(
             raise_errors=raise_errors,
             require_manifest=require_manifest,
             copy_mode=copy_mode,
-            delete=delete,
+            unlink_source=unlink_source,
         )
-        if errors:
-            logger.error(
-                f"Association completed with {len(errors)} errors:\n\n{''.join(errors)}"
-            )
-        else:
-            logger.info("Association completed successfully without errors")
         if loop < 0:
             break
         end_time = datetime.datetime.now()
         elapsed_seconds = (end_time - start_time).total_seconds()
         sleep_time = loop - elapsed_seconds
         logger.info(
-            "Stage took %s seconds, waiting another %s seconds before running "
+            "Associate took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
             elapsed_seconds,
             sleep_time,

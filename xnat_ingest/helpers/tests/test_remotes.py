@@ -3,8 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from xnat_ingest.api.sort_ import list_session_dirs
-from xnat_ingest.helpers.remotes import SessionOnlyListing
+from xnat_ingest.helpers.remotes import SessionOnlyListing, list_session_dirs
 
 
 def test_list_session_dirs_includes_no_dot_dirs(tmp_path: Path) -> None:

@@ -1,16 +1,18 @@
-from .associate_ import associate
-from .check_upload_ import check_upload
-from .sort_ import sort, list_session_dirs, BUILD_NAME_DEFAULT, INVALID_NAME_DEFAULT
-from .upload_ import upload
-from .deidentify_ import deidentify
+from .assign_api import INVALID_DIRNAME, assign
+from .associate_api import associate
+from .check_upload_api import check_upload
+from .deidentify_api import deidentify
+from .group_api import BUILD_NAME_DEFAULT, group, group_orthanc
+from .upload_api import upload
 
 __all__ = [
     "upload",
     "check_upload",
-    "sort",
+    "group",
+    "group_orthanc",
+    "assign",
     "deidentify",
     "associate",
-    "list_session_dirs",
     "BUILD_NAME_DEFAULT",
-    "INVALID_NAME_DEFAULT",
+    "INVALID_DIRNAME",
 ]

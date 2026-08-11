@@ -2,13 +2,13 @@ import os
 
 from click.testing import CliRunner
 
-from xnat_ingest.cli import upload
+from xnat_ingest.cli import upload_cli
 from xnat_ingest.utils import show_cli_trace
 
 runner = CliRunner()
 
 result = runner.invoke(
-    upload,
+    upload_cli,
     [],
     env={
         "XINGEST_STAGED": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING/STAGED",  # os.environ["XINGEST_STAGED"],

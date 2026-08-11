@@ -10,6 +10,7 @@ from fileformats.core import FileSet
 from typing_extensions import Self
 
 from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
+from ..helpers.metadata import Metadata
 
 logger = logging.getLogger("xnat-ingest")
 
@@ -40,6 +41,7 @@ class ImagingResource:
     fileset: FileSet
     checksums: dict[str, str] = attrs.field(eq=False, repr=False)
     scan: "ImagingScan" = attrs.field(default=None, eq=False, repr=False)
+    metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
     @checksums.default
     def calculate_checksums(self) -> dict[str, str]:
@@ -47,13 +49,13 @@ class ImagingResource:
             crypto=hashlib.md5, relative_to=self.fileset.parent
         )
 
+    @metadata.default
+    def _metadata_default(self) -> Metadata:
+        return Metadata({}, self)
+
     @property
     def datatype(self) -> ty.Type[FileSet]:
         return type(self.fileset)
-
-    @property
-    def metadata(self) -> ty.Mapping[str, ty.Any]:
-        return self.fileset.metadata  # type: ignore[no-any-return]
 
     @property
     def mime_like(self) -> str:
@@ -154,11 +156,18 @@ class ImagingResource:
                 if isinstance(self.fileset, dtype):
                     collation = coll_level
                     break
-        saved_fileset = self.fileset.copy(resource_dir, mode=copy_mode, trim=True, collation=collation)
-        saved_checksums = saved_fileset.hash_files(crypto=hashlib.md5, relative_to=resource_dir)
+        saved_fileset = self.fileset.copy(
+            resource_dir, mode=copy_mode, trim=True, collation=collation
+        )
+        saved_checksums = saved_fileset.hash_files(
+            crypto=hashlib.md5, relative_to=resource_dir
+        )
         manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
-        return type(self)(name=self.name, fileset=saved_fileset, checksums=saved_checksums)
+        self.metadata.save(resource_dir)
+        return type(self)(
+            name=self.name, fileset=saved_fileset, checksums=saved_checksums
+        )
 
     @classmethod
     def load(
@@ -172,8 +181,14 @@ class ImagingResource:
         exception is raised, if it is False, then a generic FileSet object is loaded
         from the files that were found
         """
-        manifest_file = resource_dir / cls.MANIFEST_FNAME
-        fspaths = [p for p in resource_dir.rglob("*") if p.is_file() and p.name != cls.MANIFEST_FNAME]
+        manifest_file = cls.manifest_fpath(resource_dir)
+        fspaths = [
+            p
+            for p in resource_dir.rglob("*")
+            if p.is_file()
+            and p.name
+            not in (cls.MANIFEST_FNAME, cls.OLD_MANIFEST_FNAME, Metadata.FNAME)
+        ]
         if manifest_file.exists():
             manifest = Json(manifest_file).load()
             checksums = manifest["checksums"]
@@ -197,22 +212,50 @@ class ImagingResource:
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
         if checksums is not None and check_checksums:
             resource.check_checksums()
+        if (resource_dir / Metadata.FNAME).exists():
+            resource.metadata = Metadata.load(resource_dir, resource)
         return resource
+
+    def load_metadata(self) -> dict[str, ty.Any]:
+        return self.fileset.metadata
 
     def check_checksums(self) -> None:
         calc_checksums = self.calculate_checksums()
-        assert set(self.checksums) == set(calc_checksums), "Checksum keys do not match"
         if calc_checksums != self.checksums:
-            differing = [
-                k for k in self.checksums if calc_checksums[k] != self.checksums[k]
-            ]
-            raise DifferingCheckumsException(
-                f"Checksums don't match those saved with '{self.name}' "
-                f"resource: {differing}"
-            )
+            saved_keys = set(self.checksums)
+            calc_keys = set(calc_checksums)
+            if saved_keys != calc_keys:
+                additional = calc_keys - saved_keys
+                missing = saved_keys - calc_keys
+                raise DifferingCheckumsException(
+                    f"Checksum file paths don't match those saved with '{self.name}':\n"
+                    f"Additional paths: {additional}\nMissing paths: {missing}\n"
+                )
+            else:
+                differing = [
+                    k for k in self.checksums if calc_checksums[k] != self.checksums[k]
+                ]
+                raise DifferingCheckumsException(
+                    f"Checksums don't match those saved with '{self.name}' "
+                    f"resource: {differing}"
+                )
 
-    def unlink(self) -> None:
-        """Remove all files in the file-set, the object will be unusable after this"""
+    def unlink(self, remove_dir: bool = False) -> None:
+        """Remove all files in the file-set, the object will be unusable after this
+
+        Parameters
+        ----------
+        remove_dir : bool, optional
+            if True, remove the resource's directory in its entirety, including its
+            own manifest and metadata files, rather than just the underlying data
+            files. Only safe to use on a directory that this resource exclusively
+            owns (e.g. a staged ``<scan_dir>/<resource_name>`` directory) — never on
+            a resource loaded from a shared source directory, since the whole parent
+            directory is removed, by default False
+        """
+        if remove_dir:
+            shutil.rmtree(self.fileset.parent)
+            return
         for fspath in self.fileset.fspaths:
             if fspath.is_file():
                 fspath.unlink()
@@ -225,4 +268,17 @@ class ImagingResource:
             return self.name
         return self.scan.path + ":" + self.name
 
-    MANIFEST_FNAME = "MANIFEST.json"
+    @classmethod
+    def manifest_fpath(cls, resource_dir: Path) -> Path:
+        """Return the path to the manifest file within a resource directory, falling
+        back to the legacy filename if the current one isn't present, for backwards
+        compatibility with resources saved by older versions of xnat-ingest"""
+        manifest_file = resource_dir / cls.MANIFEST_FNAME
+        if not manifest_file.exists():
+            old_manifest_file = resource_dir / cls.OLD_MANIFEST_FNAME
+            if old_manifest_file.exists():
+                return old_manifest_file
+        return manifest_file
+
+    MANIFEST_FNAME = "__MANIFEST__.json"
+    OLD_MANIFEST_FNAME = "MANIFEST.json"

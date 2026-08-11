@@ -1,24 +1,22 @@
-import os
 import json
+import os
+import tempfile
 import traceback
-from pathlib import Path
 import typing as ty
+from pathlib import Path
 
 from cryptography.fernet import Fernet
-from fileformats.core import extra_implementation, from_mime
+from dicom_deid.engine import DeidEngine
+from fileformats.core import FileSet, extra_implementation, from_mime
 from fileformats.medimage.base import MedicalImagingData
 from fileformats.medimage.dicom import DicomImage
-from fileformats.core import FileSet
 from tqdm import tqdm
 
-from xnat_ingest.helpers.remotes import LocalSessionListing
+from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
-from . import list_session_dirs
 
-from dicom_deid.engine import DeidEngine
-from dicom_deid.header_reid import build_reid_document, snapshot_from_pydicom
 DEFAULT_SPEC_DIR = "__default__"
 
 
@@ -31,9 +29,18 @@ def deidentify(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
     require_manifest: bool = True,
-    delete: bool = False,
+    unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
+    max_workers: int | None = None,
 ) -> list[str]:
+    """
+    Parameters
+    ----------
+    max_workers : int, optional
+        the number of threads handed to a resource's own deidentify implementation to
+        parallelise work within that resource (e.g. the per-file loop for a DICOM
+        series). Ignored by formats that don't support it.
+    """
 
     sessions: list[LocalSessionListing] = [
         LocalSessionListing(d) for d in list_session_dirs(input_dir)
@@ -81,6 +88,7 @@ def deidentify(
                 copy_mode=copy_mode,
                 avoid_clashes=avoid_clashes,
                 specs=specs,
+                max_workers=max_workers,
             )
             deidentified_session.save(output_dir / session_listing.name)
             reid_mdata_json = json.dumps(reid_mdata, indent=2).encode()
@@ -103,9 +111,21 @@ def deidentify(
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if delete:
-                # remove the original session directory after successful deidentification
+            if unlink_source == "all":
+                # remove the original (assigned) session directory in its entirety
                 session_listing.session_dir.rmdir()
+            elif unlink_source == "keep-metadata":
+                # remove just the resource data, leaving the session/scan-level
+                # metadata behind as a lightweight skeleton
+                session.unlink(keep_metadata=True)
+    if errors:
+        logger.error(
+            "Deidentification completed with %d errors",
+            len(errors),
+        )
+    else:
+        logger.info("Deidentification completed successfully")
+
     return errors
 
 
@@ -140,14 +160,14 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
 @extra_implementation(MedicalImagingData.deidentify)
 def dicom_deidentify(
     dicom: DicomImage,
+    out_dir: os.PathLike[str],
     spec: ty.Any = None,
-    out_dir: os.PathLike[str] | None = None,
-) -> tuple[DicomImage, ty.Mapping[str, ty.Any]]:
+) -> DicomImage:
     """
     De-identify a single DicomImage using the dicom_deid engine.
-    
+
     Returns the de-identified DicomImage and a mapping dict of metadata for aggregation by XNAT Ingest's session-level reid logic.
-    
+
     Parameters
     ----------
     dicom : DicomImage
@@ -156,15 +176,13 @@ def dicom_deidentify(
         Path to a project-specific deidentification specification file.
     out_dir : os.PathLike[str] | None, optional
         The output directory for the de-identified image. If none, a temporary directory will be used.
-    
+
     Returns
     -------
-    tuple[DicomImage, ty.Mapping[str, ty.Any]]
-        The de-identified DicomImage and a mapping dict of metadata.
+    DicomImage
+        The de-identified DicomImage.
     """
-    import tempfile
-    import pydicom
-    
+
     # Add value error when spec is none, since dicom_deid requires a spec to run.
     if spec is None:
         raise ValueError(
@@ -173,9 +191,7 @@ def dicom_deidentify(
         )
     recipe_path = Path(spec)
     if not recipe_path.exists():
-        raise FileNotFoundError(
-            f"Recipe file not found at: {recipe_path}"
-    )
+        raise FileNotFoundError(f"Recipe file not found at: {recipe_path}")
 
     # Resolve output path
     if out_dir is None:
@@ -188,16 +204,18 @@ def dicom_deidentify(
     outfile = out_dir / infile.name
 
     # Take pre-snapshot before de-identification for reid metadata
-    original_ds = pydicom.dcmread(str(infile), stop_before_pixels=True)
-    pre_snapshot = snapshot_from_pydicom(original_ds)
+    # original_ds = pydicom.dcmread(str(infile), stop_before_pixels=True)
+    # pre_snapshot = snapshot_from_pydicom(original_ds)
 
     # Configure deidentification
     # Claude suggested moving this outside the function to reduce overhead if processing many files with the same spec. It suggested creating a cache dict that maps spec paths to DeidEngine instances. Is this something we should consider?
     _engine = DeidEngine(
-        recipe_path = Path(spec),   # Tom to add guard for if spec is None (use a default recipe or raise an error)
-        capture_headers = False,  # header capture is handled by xnat-ingest's reid logic
-        strip_sequences = True,
-        remove_private = True,
+        recipe_path=Path(
+            spec
+        ),  # Tom to add guard for if spec is None (use a default recipe or raise an error)
+        capture_headers=False,  # header capture is handled by xnat-ingest's reid logic
+        strip_sequences=True,
+        remove_private=True,
     )
 
     # Run de-identification using dicom_deid
@@ -207,20 +225,20 @@ def dicom_deidentify(
         raise RuntimeError(
             f"De-identification failed for {infile.name}: {result.error}"
         )
-    
-    #Take post-snapshot after de-identification for reid metadata
-    deid_ds = pydicom.dcmread(str(outfile), stop_before_pixels=True)
-    post_snapshot = snapshot_from_pydicom(deid_ds)
 
-    #Build re-identification mapping dict
-    reid_mdata = build_reid_document(
-        pre_snapshot = pre_snapshot,
-        post_snapshot = post_snapshot,
-        uid_keys = ["SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID"],
-        source_file = str(infile),
-        format_label = "DICOM",
-    )
+    # Take post-snapshot after de-identification for reid metadata
+    # deid_ds = pydicom.dcmread(str(outfile), stop_before_pixels=True)
+    # post_snapshot = snapshot_from_pydicom(deid_ds)
+
+    # # Build re-identification mapping dict
+    # reid_mdata = build_reid_document(
+    #     pre_snapshot=pre_snapshot,
+    #     post_snapshot=post_snapshot,
+    #     uid_keys=["SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID"],
+    #     source_file=str(infile),
+    #     format_label="DICOM",
+    # )
 
     # Return the de-identified DicomImage and the re-identification metadata
     deid_dicom = DicomImage(outfile)
-    return deid_dicom, reid_mdata
+    return deid_dicom

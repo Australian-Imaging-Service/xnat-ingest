@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import typing as ty
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import attrs
@@ -23,6 +24,7 @@ from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
 from .logging import logger
+from .metadata import Metadata
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -54,12 +56,8 @@ class SessionListing(metaclass=abc.ABCMeta):
         return self.ids[1]
 
     @property
-    def visit_id(self) -> str:
-        return self.ids[2]
-
-    @property
     def session_id(self) -> str:
-        return "_".join((self.subject_id, self.visit_id))
+        return self.ids[2]
 
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
@@ -112,7 +110,7 @@ class LocalSessionListing(SessionListing):
         for item in self.fspath.iterdir():
             if item.is_dir() and "." not in item.name:
                 paths.add(item.name)
-        paths.discard(ImagingSession.METADATA_FNAME)
+        paths -= {p for p in paths if Path(p).name == Metadata.FNAME}
         return paths
 
     @property
@@ -121,22 +119,16 @@ class LocalSessionListing(SessionListing):
 
     @property
     def session_id(self) -> str:
-        from fileformats.application import Yaml
-
-        metadata_path = self.fspath / ImagingSession.METADATA_FNAME
-        if metadata_path.exists():
-            meta = Yaml(metadata_path).load() or {}
-            override = meta.get("__session_id__")
-            if override is not None:
-                return str(override)
-        return "_".join((self.subject_id, self.visit_id))
+        return self.ids[2]
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
         for relpath in sorted(self.resource_paths):
-            manifest = Json(self.cache_path / relpath / "MANIFEST.json")
-            manifests[relpath] = manifest.contents
+            resource_dir = self.cache_path / relpath
+            if resource_dir.is_dir():
+                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
+                manifests[relpath] = manifest.contents
         return manifests
 
 
@@ -165,6 +157,8 @@ class SessionOnlyListing:
 
     @property
     def resource_paths(self) -> set[str]:
+        # FIXME: This doesn't look right. It looks like it is picking out the
+        # scan level not the session level.
         return {
             item.name
             for item in self.fspath.iterdir()
@@ -201,19 +195,28 @@ class S3SessionListing(SessionListing):
     bucket: ty.Any
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
+    max_workers: ty.Optional[int] = None
 
     @property
     def cache_path(self) -> Path:
         logger.info("Downloading session '%s' from S3 bucket", self.name)
-        for relpath, obj in tqdm(
-            self.objects,
-            desc=f"Downloading scans in '{self.name}' session from S3 bucket",
-        ):
+
+        def _download(item: ty.Tuple[ty.List[str], ty.Any]) -> None:
+            relpath, obj = item
             obj_path = self._cache_path.joinpath(*relpath)
             obj_path.parent.mkdir(parents=True, exist_ok=True)
             logger.debug("Downloading %s to %s", obj, obj_path)
             with open(obj_path, "wb") as f:
                 self.bucket.download_fileobj(obj.key, f)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            list(
+                tqdm(
+                    executor.map(_download, self.objects),
+                    total=len(self.objects),
+                    desc=f"Downloading scans in '{self.name}' session from S3 bucket",
+                )
+            )
         return self._cache_path
 
     @property
@@ -230,17 +233,30 @@ class S3SessionListing(SessionListing):
             else:
                 # session resource: <resource_name> (no dot in dir name)
                 paths.add(first)
-        paths.discard(ImagingSession.METADATA_FNAME)
+        paths -= {p for p in paths if Path(p).name == Metadata.FNAME}
         return paths
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, str]]:
         manifests = {}
+        manifest_fnames_by_relpath: dict[str, str] = {}
         for path_parts, obj in self.objects:
-            if path_parts[-1] != "MANIFEST.json":
+            fname = path_parts[-1]
+            if fname not in (
+                ImagingResource.MANIFEST_FNAME,
+                ImagingResource.OLD_MANIFEST_FNAME,
+            ):
                 continue
             relpath = "/".join(path_parts[:-1])
-            manifest_path = self._cache_path / relpath / "MANIFEST.json"
+            # Prefer the current manifest filename over the legacy one if both are
+            # present in the same resource directory
+            if (
+                relpath in manifest_fnames_by_relpath
+                and fname == ImagingResource.OLD_MANIFEST_FNAME
+            ):
+                continue
+            manifest_fnames_by_relpath[relpath] = fname
+            manifest_path = self._cache_path / relpath / fname
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             with open(manifest_path, "wb") as f:
                 self.bucket.download_fileobj(obj.key, f)
@@ -518,18 +534,30 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     else:
         checksums = get_xnat_checksums(xresource)
         if checksums != resource.checksums:
-            difference = {
-                k: (v, resource.checksums[k])
-                for k, v in checksums.items()
-                if v != resource.checksums[k]
-            }
-            logger.error(
-                "'%s' resource in '%s' already exists on XNAT with "
-                "different checksums. Please delete on XNAT to overwrite:\n%s",
-                resource_name,
-                resource.scan.path,
-                pprint.pformat(difference),
-            )
+            missing_paths = set(resource.checksums) - set(checksums)
+            extra_paths = set(checksums) - set(resource.checksums)
+            if missing_paths or extra_paths:
+                logger.error(
+                    "'%s' resource in '%s' already exists on XNAT with "
+                    "different checksums.\nMissing paths: %s\nAdditional paths: %s",
+                    resource_name,
+                    resource.scan.path,
+                    missing_paths,
+                    extra_paths,
+                )
+            else:
+                difference = {
+                    k: (v, resource.checksums[k])
+                    for k, v in checksums.items()
+                    if v != resource.checksums[k]
+                }
+                logger.error(
+                    "'%s' resource in '%s' already exists on XNAT with "
+                    "different checksums. Please delete on XNAT to overwrite:\n%s",
+                    resource_name,
+                    resource.scan.path,
+                    pprint.pformat(difference),
+                )
         # Ensure that catalog is rebuilt if the file counts are 0
         if not xscan.files:
             xresource.xnat_session.post(
@@ -576,7 +604,9 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
     return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
 
 
-def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
+def calculate_checksums(
+    scan: FileSet, max_workers: ty.Optional[int] = None
+) -> ty.Dict[str, str]:
     """
     Calculates the MD5 digests associated with the files in a fileset.
 
@@ -584,14 +614,17 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
     ----------
     scan : FileSet
         the file-set to calculate the checksums for
+    max_workers : int, optional
+        the number of threads to use to hash the files concurrently. If None,
+        defaults to `concurrent.futures.ThreadPoolExecutor`'s default.
 
     Returns
     -------
     dict[str, str]
         the calculated checksums
     """
-    checksums = {}
-    for fspath in scan.fspaths:
+
+    def _hash(fspath: Path) -> ty.Tuple[str, str]:
         try:
             hsh = hashlib.md5()
             with open(fspath, "rb") as f:
@@ -600,8 +633,10 @@ def calculate_checksums(scan: FileSet) -> ty.Dict[str, str]:
             checksum = hsh.hexdigest()
         except OSError:
             raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        checksums[str(fspath.relative_to(scan.parent))] = checksum
-    return checksums
+        return str(fspath.relative_to(scan.parent)), checksum
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return dict(executor.map(_hash, scan.fspaths))
 
 
 HASH_CHUNK_SIZE = 2**20
@@ -637,3 +672,15 @@ def upload_file_to_s3(file_path: Path, bucket: str, s3_key: str) -> None:
 
     s3_client = boto3.client("s3")
     s3_client.upload_file(str(file_path), bucket, s3_key)
+
+
+def list_session_dirs(sorted_dir: Path) -> list[Path]:
+    """List the session directories in the sorted directory, excluding any directories that start with '__'.
+
+    Includes both dotted dirs (PROJ.SUBJ.VISIT) and no-dot dirs (session label only).
+    """
+    return [
+        p
+        for p in Path(sorted_dir).iterdir()
+        if p.is_dir() and not p.name.startswith("__") and not p.name.endswith("__")
+    ]

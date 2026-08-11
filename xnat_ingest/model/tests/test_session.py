@@ -1,3 +1,4 @@
+import functools
 import logging
 import typing as ty
 from pathlib import Path
@@ -28,8 +29,9 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, FieldSpec
-from xnat_ingest.model.session import ImagingScan, ImagingSession
+from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from xnat_ingest.helpers.metadata import Metadata
+from xnat_ingest.model.session import ImagingScan, ImagingSession, _metadata_diff
 from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
@@ -92,9 +94,10 @@ def imaging_session() -> ImagingSession:
         for d in dicoms
     ]
     return ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=scans,
     )
 
@@ -257,6 +260,56 @@ def test_session_save_roundtrip(
     # assert loaded_no_manifest == saved
 
 
+def test_unlink_keep_metadata(tmp_path: Path, imaging_session: ImagingSession) -> None:
+    """unlink(keep_metadata=True) should remove resource directories in their
+    entirety, while leaving the scan/session-level metadata behind so the session
+    can still be reloaded (e.g. by 'associate' to work out which scan a
+    late-arriving file belongs to) without its underlying data"""
+
+    # Force each scan's metadata to be read from its resources before saving, as
+    # 'assign' would do in production when resolving a scan description from
+    # metadata — otherwise the lazily-populated Metadata objects are still empty
+    # at save time and nothing meaningful ends up in '__METADATA__.json'
+    for scan in imaging_session.scans.values():
+        assert "SeriesDescription" in scan.metadata
+
+    saved, session_dir = imaging_session.save(tmp_path)
+
+    # Sanity check: resource directories exist with data before unlinking, and are
+    # direct children of their scan's own directory
+    resource_dirs = [
+        resource.fileset.parent
+        for scan in saved.scans.values()
+        for resource in scan.resources.values()
+    ]
+    scan_dirs = {resource_dir.parent for resource_dir in resource_dirs}
+    assert resource_dirs
+    for resource_dir in resource_dirs:
+        assert resource_dir.exists()
+        assert any(resource_dir.iterdir())
+
+    saved.unlink(keep_metadata=True)
+
+    # Resource directories should be gone entirely, scan/session metadata should remain
+    for resource_dir in resource_dirs:
+        assert not resource_dir.exists()
+    for scan_dir in scan_dirs:
+        assert (scan_dir / Metadata.FNAME).exists()
+    assert (session_dir / Metadata.FNAME).exists()
+
+    # The skeleton should still be loadable, with scan-level metadata intact but no
+    # resources
+    reloaded = ImagingSession.load(session_dir)
+    assert reloaded.uid == saved.uid
+    assert reloaded.project_id == saved.project_id
+    for scan_id, scan in reloaded.scans.items():
+        assert scan.resources == {}
+        assert (
+            scan.metadata["SeriesDescription"]
+            == imaging_session.scans[scan_id].metadata["SeriesDescription"]
+        )
+
+
 def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None:
 
     raw_data_dir = tmp_path / "raw"
@@ -283,13 +336,9 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             SyngoMi_Vr20b_ListMode,
             SyngoMi_Vr20b_CountRate,
         ],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     staging_dir = tmp_path / "staging"
@@ -298,6 +347,12 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
     staged_sessions = []
 
     for imaging_session in imaging_sessions:
+        imaging_session.assign(
+            project_field="StudyID",
+            subject_field="PatientID",
+            session_field="StudyInstanceUID",
+            scan_field="SeriesDescription",
+        )
         staged_sessions.append(
             imaging_session.save(
                 staging_dir,
@@ -319,6 +374,46 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
         )
 
 
+def test_path_metadata_regex_extracts_named_groups(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    sessions = ImagingSession.from_paths(
+        f"{raw_data_dir}/**/*",
+        datatypes=[DicomSeries],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<cohort>[^/]+)$", DicomSeries),
+        ],
+    )
+
+    assert len(sessions) == 1
+    scan = next(iter(sessions[0].scans.values()))
+    resource = next(iter(scan.resources.values()))
+    assert resource.metadata["cohort"] == "cohort-A"
+
+
+def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
+    raw_data_dir = tmp_path / "raw" / "cohort-A"
+    raw_data_dir.mkdir(parents=True)
+    get_pet_image(out_dir=raw_data_dir)
+
+    with pytest.raises(ValueError, match="Could not extract metadata"):
+        ImagingSession.from_paths(
+            f"{raw_data_dir}/**/*",
+            datatypes=[DicomSeries],
+            session_field=[IDSpec("StudyInstanceUID")],
+            scan_field=[IDSpec("SeriesNumber")],
+            resource_field=[IDSpec("ImageType[2:]")],
+            path_metadata_regex=[
+                PathMetadataRegex(r"^/nonexistent/(?P<cohort>.+)$", DicomSeries),
+            ],
+        )
+
+
 CLASH_SCAN_ID = "1"
 CLASH_SCAN_TYPE = "a-type"
 CLASH_RESOURCE_NAME = "FILE"
@@ -333,9 +428,10 @@ def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> No
     file1_cpy = file1.copy(tmp_path / "file1")
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -363,9 +459,10 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -404,9 +501,10 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     file2 = File.sample(seed=2)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
-        visit_id="SESSIONID",
+        session_id="SESSIONID",
         scans=[
             ImagingScan(
                 id=CLASH_SCAN_ID,
@@ -432,6 +530,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_GivenName",
         "PatientID": "PID001",
         "StudyDate": "20230101",
@@ -444,13 +543,14 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
 
     assert session.project_id == "PROJ"
     assert session.subject_id == "SUBJ"
-    assert session.visit_id == "VIS"
+    assert session.session_id == "VIS"
     assert session.scans == {}
-    assert session.metadata == metadata
+    assert dict(session.metadata) == metadata
 
 
 def test_associate_files_metadata_only(tmp_path: Path) -> None:
     metadata = {
+        ImagingSession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_Given_Name",
         "PatientID": "PID001",
     }
@@ -498,9 +598,10 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     pdf = File.sample(seed=42)
 
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="VIS",
+        session_id="VIS",
         scans=[],
     )
     session.add_session_resource("radiology-doc-report", pdf)
@@ -534,17 +635,90 @@ def test_id_escape(tmp_path: Path) -> None:
     sessions = ImagingSession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
-        project_field=[FieldSpec("StudyID")],
-        subject_field=[FieldSpec("PatientID")],
-        visit_field=[FieldSpec("AccessionNumber")],
-        session_uid_field=[FieldSpec("StudyInstanceUID")],
-        scan_id_field=[FieldSpec("SeriesNumber")],
-        scan_desc_field=[FieldSpec("SeriesDescription")],
-        resource_field=[FieldSpec("ImageType[2:]")],
+        session_field=[IDSpec("StudyInstanceUID")],
+        scan_field=[IDSpec("SeriesNumber")],
+        resource_field=[IDSpec("ImageType[2:]")],
     )
 
     assert len(sessions) == 1
+
+    sessions[0].assign(
+        project_field="StudyID",
+        subject_field="PatientID",
+        session_field="AccessionNumber",
+    )
     assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
+
+
+def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
+    imaging_session: ImagingSession,
+) -> None:
+    """A project/subject/session field that can't be resolved from the session's
+    metadata should produce a placeholder ID (and flag the session via
+    'invalid_ids'), rather than raising and losing the session entirely"""
+    imaging_session.assign(
+        project_field="ThisFieldDoesNotExistInTheMetadata",
+        subject_field="PatientID",
+        session_field="AccessionNumber",
+    )
+    assert imaging_session.project_id.startswith(
+        "INVALID_MISSING_THISFIELDDOESNOTEXISTINTHEMETADATA_"
+    )
+    assert imaging_session.invalid_ids
+    # the other, resolvable fields are unaffected
+    assert not imaging_session.subject_id.startswith("INVALID_MISSING_")
+
+
+# ---------------------------------------------------------------------------
+# _metadata_diff tests
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_diff_identical_returns_empty() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    assert _metadata_diff(orig, dict(orig)) == {}
+
+
+def test_metadata_diff_missing_key_included() -> None:
+    """A key present in `orig` but absent from `new` is reported (KeyError branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_changed_value_included() -> None:
+    """A key present in both but with a different value is reported (elif branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "Anonymous", "DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_unchanged_value_excluded() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "John Doe", "DOB": "19790101"}
+    assert _metadata_diff(orig, new) == {"DOB": "19800101"}
+
+
+def test_metadata_diff_nested_mapping_recurses() -> None:
+    """Nested mappings are diffed recursively rather than compared wholesale."""
+    orig = {"PatientInfo": {"Name": "John Doe", "Sex": "M"}}
+    new = {"PatientInfo": {"Name": "Anonymous", "Sex": "M"}}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
+
+
+def test_metadata_diff_nested_mapping_unchanged_excluded() -> None:
+    """A nested mapping with no internal differences is omitted entirely."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": {"Name": "John Doe"}}
+    assert _metadata_diff(orig, new) == {}
+
+
+def test_metadata_diff_mapping_replaced_by_non_mapping() -> None:
+    """When `orig`'s value is a mapping but `new`'s isn't, fall back to a plain
+    equality comparison rather than recursing."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": "stripped"}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
 
 
 # ---------------------------------------------------------------------------
@@ -554,28 +728,41 @@ def test_id_escape(tmp_path: Path) -> None:
 DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 
+def _deidentify_test_impl(
+    fileset: File,
+    out_dir: Path,
+    spec: ty.Any = None,
+    **kwargs: ty.Any,
+) -> File:
+    dest = Path(out_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    deidentified = fileset.copy(dest)
+    # session.deidentify() now reconstructs reid metadata itself by diffing
+    # `metadata` before/after calling deidentify(), so the stand-in "stripped"
+    # fileset needs to actually report different metadata to the original.
+    deidentified._explicit_metadata = {}
+    return deidentified
+
+
 def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     """Return a File instance with contains_phi=True and an injected deidentify().
 
     Setting contains_phi=True routes it through the deidentify branch in
-    session.deidentify().  The injected method is called as an unbound function
-    (instance attribute), so it receives no implicit ``self``.
+    session.deidentify(). expected_reid is set as the fileset's explicit metadata so
+    that session.deidentify()'s before/after diff reconstructs it. The injected
+    method is a functools.partial binding a module-level function (not a closure),
+    just for consistency/reuse across the fixtures in this module.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True
-
-    def _deidentify(spec: ty.Any = None, out_dir: ty.Optional[Path] = None) -> tuple:
-        dest = Path(out_dir)
-        dest.mkdir(parents=True, exist_ok=True)
-        return f.copy(dest), dict(expected_reid)
-
-    f.deidentify = _deidentify
+    f._explicit_metadata = dict(expected_reid)
+    f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
 
 
 def test_deidentify_empty_session(tmp_path: Path) -> None:
     session = ImagingSession(
-        project_id="PROJ", subject_id="SUBJ", visit_id="SESS", scans=[]
+        uid="12345", project_id="PROJ", subject_id="SUBJ", session_id="SESS", scans=[]
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
     assert deid_session.project_id == "PROJ"
@@ -587,9 +774,10 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
     """Resources without contains_phi are copied as-is; no reid metadata collected."""
     f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
@@ -605,9 +793,10 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
     """deidentify() returns reid metadata from resources that implement deidentify."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
@@ -619,9 +808,10 @@ def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
     """Empty project_spec with require_matching_spec=True raises KeyError."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
@@ -634,9 +824,10 @@ def test_deidentify_missing_spec_warns(
     """Empty project_spec with require_matching_spec=False logs a warning and proceeds."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
@@ -653,9 +844,10 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
     f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
     session = ImagingSession(
+        uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
-        visit_id="SESS",
+        session_id="SESS",
         scans=[
             ImagingScan(id="1", type="scan-a", resources={"FILE": f1}),
             ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),
