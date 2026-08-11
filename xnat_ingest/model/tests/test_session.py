@@ -31,7 +31,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from conftest import get_raw_data_files
 from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from xnat_ingest.helpers.metadata import Metadata
-from xnat_ingest.model.session import ImagingScan, ImagingSession
+from xnat_ingest.model.session import ImagingScan, ImagingSession, _metadata_diff
 from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
@@ -667,6 +667,58 @@ def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
     assert imaging_session.invalid_ids
     # the other, resolvable fields are unaffected
     assert not imaging_session.subject_id.startswith("INVALID_MISSING_")
+
+
+# ---------------------------------------------------------------------------
+# _metadata_diff tests
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_diff_identical_returns_empty() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    assert _metadata_diff(orig, dict(orig)) == {}
+
+
+def test_metadata_diff_missing_key_included() -> None:
+    """A key present in `orig` but absent from `new` is reported (KeyError branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_changed_value_included() -> None:
+    """A key present in both but with a different value is reported (elif branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "Anonymous", "DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_unchanged_value_excluded() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "John Doe", "DOB": "19790101"}
+    assert _metadata_diff(orig, new) == {"DOB": "19800101"}
+
+
+def test_metadata_diff_nested_mapping_recurses() -> None:
+    """Nested mappings are diffed recursively rather than compared wholesale."""
+    orig = {"PatientInfo": {"Name": "John Doe", "Sex": "M"}}
+    new = {"PatientInfo": {"Name": "Anonymous", "Sex": "M"}}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
+
+
+def test_metadata_diff_nested_mapping_unchanged_excluded() -> None:
+    """A nested mapping with no internal differences is omitted entirely."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": {"Name": "John Doe"}}
+    assert _metadata_diff(orig, new) == {}
+
+
+def test_metadata_diff_mapping_replaced_by_non_mapping() -> None:
+    """When `orig`'s value is a mapping but `new`'s isn't, fall back to a plain
+    equality comparison rather than recursing."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": "stripped"}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
 
 
 # ---------------------------------------------------------------------------
