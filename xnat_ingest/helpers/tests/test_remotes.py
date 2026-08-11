@@ -1,12 +1,10 @@
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from xnat_ingest.helpers.remotes import (
     SessionOnlyListing,
-    get_xnat_resource,
     list_session_dirs,
 )
 from xnat_ingest.helpers.xnat_scan_types import (
