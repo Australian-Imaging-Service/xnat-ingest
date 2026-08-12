@@ -355,7 +355,7 @@ def upload(
                                 )
                         else:
                             logger.debug(
-                                "Remote checksums were not calculted for %s "
+                                "Remote checksums were not calculated for %s "
                                 "(requires `enableChecksums` to be set site-wide), "
                                 "assuming upload was successful",
                                 xresource,
