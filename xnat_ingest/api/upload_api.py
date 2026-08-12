@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
+from fileformats.medimage import DicomCollection
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
@@ -29,6 +30,14 @@ from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
+
+
+def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
+    """Whether resources include DICOM files attached to an imaging scan."""
+    return any(
+        resource.scan is not None and isinstance(resource.fileset, DicomCollection)
+        for resource in resources
+    )
 
 
 def upload(
@@ -227,15 +236,18 @@ def upload(
                         f"{session.path} regardless of whether they are explicitly specified"
                     )
 
+                selected_resources = sorted(
+                    session.select_resources(frameset, always_include=always_include)
+                )
+                session_has_dicom = has_scan_dicom(selected_resources)
+
                 # Resolve which resources need uploading sequentially -- this can
                 # create new scans/resources on XNAT and mutates xsession's/xscan's
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
                 to_upload: list[tuple[ImagingResource, ty.Any]] = []
-                for resource in sorted(
-                    session.select_resources(frameset, always_include=always_include)
-                ):
+                for resource in selected_resources:
                     xresource = get_xnat_resource(resource, xsession)
                     if xresource is None:
                         logger.info(
@@ -394,24 +406,31 @@ def upload(
                 else:
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
                 # Extract DICOM metadata
-                logger.info("Extracting metadata from DICOMs on XNAT..")
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to extract metadata: {e}\nResponse: "
-                        f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
-                    )
-                try:
-                    xnat_repo.connection.put(
-                        f"/data/experiments/{xsession.id}?fixScanTypes=true"
-                    )
-                except XNATResponseError as e:
-                    logger.warning(
-                        f"Failed to fix scan types in '{session.name}': {e}\nResponse: "
-                        f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
+                if session_has_dicom:
+                    logger.info("Extracting metadata from DICOMs on XNAT..")
+                    try:
+                        xnat_repo.connection.put(
+                            f"/data/experiments/{xsession.id}?pullDataFromHeaders=true"
+                        )
+                    except XNATResponseError as e:
+                        logger.warning(
+                            f"Failed to extract metadata: {e}\nResponse: "
+                            f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
+                        )
+                    try:
+                        xnat_repo.connection.put(
+                            f"/data/experiments/{xsession.id}?fixScanTypes=true"
+                        )
+                    except XNATResponseError as e:
+                        logger.warning(
+                            f"Failed to fix scan types in '{session.name}': {e}\nResponse: "
+                            f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
+                        )
+                else:
+                    logger.info(
+                        "Skipping DICOM header pull / scan-type fixing for '%s' as it "
+                        "contains no DICOM data",
+                        session.name,
                     )
                 try:
                     xnat_repo.connection.put(
