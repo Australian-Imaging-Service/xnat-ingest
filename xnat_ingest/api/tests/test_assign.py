@@ -330,7 +330,7 @@ def test_assign_end_to_end_routes_datatypes_to_separate_projects(
         == []
     )
 
-    grouped_session = ImagingSession.load(next(grouped_dir.iterdir()))
+    grouped_session = ImagingSession.load(next(iter(list_session_dirs(grouped_dir))))
     grouped_session.add_session_resource("report", File.sample(seed=42))
     grouped_session.save(grouped_dir)
 
