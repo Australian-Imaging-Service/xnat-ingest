@@ -286,9 +286,7 @@ def upload_cmd(
     def _close_repo(repo: "Xnat") -> None:
         try:
             repo.connection.__exit__(None, None, None)
-        except (
-            Exception
-        ):  # noqa: BLE001 — best-effort cleanup of a possibly dead session
+        except Exception:  # noqa: BLE001 — best-effort cleanup of a possibly dead session
             pass
 
     def _is_auth_failure(error_messages: ty.List[str]) -> bool:

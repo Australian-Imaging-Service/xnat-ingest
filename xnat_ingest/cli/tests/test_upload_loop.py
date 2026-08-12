@@ -199,8 +199,8 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
 
         result = cli_runner(upload_cmd, COMMON_ARGS, env=CLEAN_ENV)
 
-    assert isinstance(
-        result.exception, requests.exceptions.ConnectionError
-    ), show_cli_trace(result)
+    assert isinstance(result.exception, requests.exceptions.ConnectionError), (
+        show_cli_trace(result)
+    )
     assert mock_xnat_cls.call_count == 1
     assert mock_upload.call_count == 1

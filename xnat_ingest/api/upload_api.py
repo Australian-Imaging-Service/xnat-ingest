@@ -101,7 +101,6 @@ def upload(
     # Note that this context manager doesn't do anything if the connection is
     # already open, so it's safe to use even if the connection is already open
     with xnat_repo.connection:
-
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
         if input_dir.startswith("s3://"):
@@ -142,7 +141,6 @@ def upload(
             total=num_sessions,
             desc=f"Processing staged sessions found in '{input_dir}'",
         ):
-
             if dry_run:
                 logger.info(
                     "Would attempt to upload '%s' if not dry run",
@@ -151,7 +149,6 @@ def upload(
                 continue
 
             try:
-
                 if session_listing.all_uploaded(xnat_repo.connection):
                     logger.info(
                         "Skipping upload of '%s' as all the resources already exist on XNAT",

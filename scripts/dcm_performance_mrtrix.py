@@ -1,9 +1,8 @@
 import timeit
 
+import xnat_ingest.dicom  # noqa
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.mri.dwi.siemens.skyra.syngo_d13c import get_image
-
-import xnat_ingest.dicom  # noqa
 
 METADATA_KEYS = [
     "SeriesNumber",

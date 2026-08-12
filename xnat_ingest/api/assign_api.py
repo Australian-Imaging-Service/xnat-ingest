@@ -133,7 +133,6 @@ def assign(
         total=num_sessions,
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
-
         try:
             session = ImagingSession.load(
                 session_listing.cache_path,
