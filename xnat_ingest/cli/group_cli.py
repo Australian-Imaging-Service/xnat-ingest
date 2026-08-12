@@ -15,6 +15,7 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
+    Convert,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -234,7 +235,7 @@ are uploaded to XNAT
 @click.option(
     "--convert",
     "conversions",
-    type=MimeType.cli_type,
+    type=Convert.cli_type,
     metavar="<src-mime-like> <tgt-mime-like>",
     nargs=2,
     multiple=True,

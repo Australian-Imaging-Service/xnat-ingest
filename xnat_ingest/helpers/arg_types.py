@@ -149,6 +149,13 @@ class LoggerConfig(MultiCliTyped):
 
 
 @attrs.define
+class Convert(MultiCliTyped):
+
+    source: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+    target: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+
+
+@attrs.define
 class PathMetadataRegex(MultiCliTyped):
 
     regex: str
