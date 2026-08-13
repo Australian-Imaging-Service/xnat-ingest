@@ -232,7 +232,7 @@ def save_sessions_to_dir(
     output_dir: Path,
     wait_period: int = 0,
     collation_map=None,
-    conversion_map: FileSet | None = None,
+    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     unlink_source: str | None = None,
     raise_errors: bool = False,
 ) -> list[str]:

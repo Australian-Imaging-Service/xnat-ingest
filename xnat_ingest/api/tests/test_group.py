@@ -264,6 +264,7 @@ def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
     shutil.copytree(dicom_dir, dicom0_dir)
 
     errors = group(
+        # input_paths=[str(dicom_dir)],
         input_paths=[str(directory_dir)],
         output_dir=output_dir,
         datatypes=[DicomDir],
