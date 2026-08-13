@@ -175,7 +175,7 @@ class ImagingResource:
                     )
                     # Call the target format's convert() method with the saved fileset
                     # The convert implementation is expected to return a FileSet for the converted data.
-                    fileset = tgt_type.convert(src_type)
+                    fileset = tgt_type.convert(fileset)
                     break
         saved_fileset = fileset.copy(
             resource_dir, mode=copy_mode, trim=True, collation=collation

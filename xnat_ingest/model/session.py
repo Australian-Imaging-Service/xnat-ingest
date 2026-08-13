@@ -1228,7 +1228,10 @@ class ImagingSession:
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(self.scans.values(), f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(
-                session_dir, copy_mode=copy_mode, collation_map=collation_map
+                session_dir,
+                copy_mode=copy_mode,
+                collation_map=collation_map,
+                conversion_map=conversion_map,
             )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
