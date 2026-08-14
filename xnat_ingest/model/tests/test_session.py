@@ -1,3 +1,4 @@
+import functools
 import logging
 import typing as ty
 from pathlib import Path
@@ -30,7 +31,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from conftest import get_raw_data_files
 from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from xnat_ingest.helpers.metadata import Metadata
-from xnat_ingest.model.session import ImagingScan, ImagingSession
+from xnat_ingest.model.session import ImagingScan, ImagingSession, _metadata_diff
 from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
@@ -618,6 +619,33 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     )
 
 
+def test_session_save_filters_scan_and_session_resources(
+    tmp_path: Path, imaging_session: ImagingSession
+) -> None:
+    imaging_session.add_session_resource("report", File.sample(seed=42))
+
+    dicom_saved, _ = imaging_session.save(tmp_path / "dicom", include=[DicomSeries])
+    report_saved, _ = imaging_session.save(tmp_path / "report", include=[File])
+
+    assert dicom_saved.scans
+    assert dicom_saved.session_resources == {}
+    assert all(
+        isinstance(resource.fileset, DicomSeries) for resource in dicom_saved.resources
+    )
+    assert report_saved.scans == {}
+    assert set(report_saved.session_resources) == {"report"}
+    assert isinstance(report_saved.session_resources["report"].fileset, File)
+
+
+def test_session_save_include_requires_a_matching_resource(
+    tmp_path: Path, imaging_session: ImagingSession
+) -> None:
+    with pytest.raises(ValueError, match="No resources .* match"):
+        imaging_session.save(tmp_path, include=[SyngoMi_Vr20b_ListMode])
+
+    assert not (tmp_path / imaging_session.name).exists()
+
+
 def test_id_escape(tmp_path: Path) -> None:
     raw_data_dir = tmp_path / "raw"
     raw_data_dir.mkdir()
@@ -669,28 +697,93 @@ def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(
 
 
 # ---------------------------------------------------------------------------
+# _metadata_diff tests
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_diff_identical_returns_empty() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    assert _metadata_diff(orig, dict(orig)) == {}
+
+
+def test_metadata_diff_missing_key_included() -> None:
+    """A key present in `orig` but absent from `new` is reported (KeyError branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_changed_value_included() -> None:
+    """A key present in both but with a different value is reported (elif branch)."""
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "Anonymous", "DOB": "19800101"}
+    assert _metadata_diff(orig, new) == {"PatientName": "John Doe"}
+
+
+def test_metadata_diff_unchanged_value_excluded() -> None:
+    orig = {"PatientName": "John Doe", "DOB": "19800101"}
+    new = {"PatientName": "John Doe", "DOB": "19790101"}
+    assert _metadata_diff(orig, new) == {"DOB": "19800101"}
+
+
+def test_metadata_diff_nested_mapping_recurses() -> None:
+    """Nested mappings are diffed recursively rather than compared wholesale."""
+    orig = {"PatientInfo": {"Name": "John Doe", "Sex": "M"}}
+    new = {"PatientInfo": {"Name": "Anonymous", "Sex": "M"}}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
+
+
+def test_metadata_diff_nested_mapping_unchanged_excluded() -> None:
+    """A nested mapping with no internal differences is omitted entirely."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": {"Name": "John Doe"}}
+    assert _metadata_diff(orig, new) == {}
+
+
+def test_metadata_diff_mapping_replaced_by_non_mapping() -> None:
+    """When `orig`'s value is a mapping but `new`'s isn't, fall back to a plain
+    equality comparison rather than recursing."""
+    orig = {"PatientInfo": {"Name": "John Doe"}}
+    new = {"PatientInfo": "stripped"}
+    assert _metadata_diff(orig, new) == {"PatientInfo": {"Name": "John Doe"}}
+
+
+# ---------------------------------------------------------------------------
 # ImagingSession.deidentify tests
 # ---------------------------------------------------------------------------
 
 DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 
+def _deidentify_test_impl(
+    fileset: File,
+    out_dir: Path,
+    spec: ty.Any = None,
+    **kwargs: ty.Any,
+) -> File:
+    dest = Path(out_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    deidentified = fileset.copy(dest)
+    # session.deidentify() now reconstructs reid metadata itself by diffing
+    # `metadata` before/after calling deidentify(), so the stand-in "stripped"
+    # fileset needs to actually report different metadata to the original.
+    deidentified._explicit_metadata = {}
+    return deidentified
+
+
 def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     """Return a File instance with contains_phi=True and an injected deidentify().
 
     Setting contains_phi=True routes it through the deidentify branch in
-    session.deidentify().  The injected method is called as an unbound function
-    (instance attribute), so it receives no implicit ``self``.
+    session.deidentify(). expected_reid is set as the fileset's explicit metadata so
+    that session.deidentify()'s before/after diff reconstructs it. The injected
+    method is a functools.partial binding a module-level function (not a closure),
+    just for consistency/reuse across the fixtures in this module.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True
-
-    def _deidentify(spec: ty.Any = None, out_dir: ty.Optional[Path] = None) -> tuple:
-        dest = Path(out_dir)
-        dest.mkdir(parents=True, exist_ok=True)
-        return f.copy(dest), dict(expected_reid)
-
-    f.deidentify = _deidentify
+    f._explicit_metadata = dict(expected_reid)
+    f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
 
 

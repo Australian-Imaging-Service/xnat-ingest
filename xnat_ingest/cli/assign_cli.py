@@ -9,7 +9,7 @@ from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 
 from ..api.assign_api import assign
-from ..helpers.arg_types import CopyModeParamType, LoggerConfig
+from ..helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
 from ..helpers.logging import logger, set_logger_handling
 
 
@@ -93,6 +93,19 @@ manually reviewed/reprocessed rather than silently lost.
     help=("Fix the project ID as a constant for all data matched by this command"),
 )
 @click.option(
+    "--include",
+    "include_types",
+    type=MimeType.cli_type,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_INCLUDE",
+    metavar="<mime-type>",
+    help=(
+        "Only assign resources matching this fileformats MIME-like datatype. May "
+        "be repeated to include multiple datatypes (XINGEST_INCLUDE env. var)"
+    ),
+)
+@click.option(
     "--loop",
     type=int,
     default=-1,
@@ -159,6 +172,7 @@ def assign_cmd(
     subject_field: str,
     session_field: str,
     constant_project_id: str | None,
+    include_types: tuple[MimeType, ...],
     scan_field: str | None,
     unlink_source: str | None,
     loggers: ty.List[LoggerConfig],
@@ -193,6 +207,7 @@ def assign_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
+            include=[include_type.datatype for include_type in include_types],
         )
         if loop < 0:
             break
