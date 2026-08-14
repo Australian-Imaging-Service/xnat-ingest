@@ -18,6 +18,7 @@ import paramiko
 import xnat
 from fileformats.application import Json
 from fileformats.core import FileSet
+from fileformats.medimage import DicomCollection
 from tqdm import tqdm
 
 from ..model.resource import ImagingResource
@@ -25,6 +26,7 @@ from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata
+from .xnat_scan_types import xnat_scan_type_from_sop_class
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -476,48 +478,37 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        if isinstance(xsession, xclasses.MrSessionData):
-            default_scan_modality = "MR"
-        elif isinstance(xsession, xclasses.PetSessionData):
-            default_scan_modality = "PT"
+        image_type = resource.metadata.get("ImageType")
+        is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
+        if is_secondary:
+            resource_name = "secondary"
+        if isinstance(resource.fileset, DicomCollection):
+            scan_type = xnat_scan_type_from_sop_class(
+                resource.metadata.get("SOPClassUID")
+            )
+            ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
-            default_scan_modality = "CT"
-        if resource.metadata:
-            image_type = resource.metadata.get("ImageType")
-            if image_type and image_type[:2] == [
-                "DERIVED",
-                "SECONDARY",
-            ]:
-                modality = "SC"
-                resource_name = "secondary"
+            if isinstance(xsession, xclasses.MrSessionData):
+                default_scan_modality = "MR"
+            elif isinstance(xsession, xclasses.PetSessionData):
+                default_scan_modality = "PT"
             else:
-                modality = resource.metadata.get("Modality", default_scan_modality)
-        else:
-            modality = default_scan_modality
-        if modality == "SC":
-            ScanClass = xclasses.ScScanData
-        elif modality == "MR":
-            ScanClass = xclasses.MrScanData
-        elif modality == "PT":
-            ScanClass = xclasses.PetScanData
-        elif modality == "CT":
-            ScanClass = xclasses.CtScanData
-        else:
-            SessionClass = type(xsession)
-            if SessionClass is xclasses.PetSessionData:
+                default_scan_modality = "CT"
+            modality = (
+                "SC"
+                if is_secondary
+                else resource.metadata.get("Modality", default_scan_modality)
+            )
+            if modality == "SC":
+                ScanClass = xclasses.ScScanData
+            elif modality == "MR":
+                ScanClass = xclasses.MrScanData
+            elif modality == "PT":
                 ScanClass = xclasses.PetScanData
-            elif SessionClass is xclasses.CtSessionData:
+            elif modality == "CT":
                 ScanClass = xclasses.CtScanData
             else:
-                ScanClass = xclasses.MrScanData
-            logger.info(
-                "Can't determine modality of %s-%s scan, defaulting to the "
-                "default for %s sessions, %s",
-                resource.scan.id,
-                resource.scan.type,
-                SessionClass,
-                ScanClass,
-            )
+                ScanClass = xclasses.OtherDicomScanData
         logger.debug(
             "Creating scan %s in %s", resource.scan.id, resource.scan.session.path
         )

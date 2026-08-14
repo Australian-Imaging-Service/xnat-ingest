@@ -218,6 +218,25 @@ there are two meaningfully different modes:
 
 Leave it unset (the default) to keep the grouped directory untouched.
 
+Routing datatypes through separate assignment pathways
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use repeatable ``--include`` options when different datatypes from one grouped
+session need different IDs or projects. Each assign process reads the same grouped
+source and writes only matching resources:
+
+.. code-block:: console
+
+    $ xnat-ingest assign /data/staging/grouped /data/staging/dicom-assigned \
+        --include medimage/dicom-series --constant-project-id DICOM_PROJECT
+
+    $ xnat-ingest assign /data/staging/grouped /data/staging/report-assigned \
+        --include application/pdf --constant-project-id REPORT_PROJECT
+
+Multiple ``--include`` options use OR semantics. Datatype filtering cannot be
+combined with ``--unlink-source``, because the grouped data must remain available
+to every assignment pathway.
+
 
 3. Upload to XNAT
 --------------------

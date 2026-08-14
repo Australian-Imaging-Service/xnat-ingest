@@ -89,14 +89,23 @@ class ImagingScan:
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
         conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
+        include: ty.Sequence[ty.Type[FileSet]] = (),
     ) -> Self:
         # Ensure scan type is a valid directory name. A scan with no description set
         # (e.g. not yet resolved by 'assign') is saved as '<scan_id>.' (trailing dot,
         # no description) to still distinguish it from session-level resource dirs
+        if include and not any(
+            resource.matches_datatypes(include) for resource in self.resources.values()
+        ):
+            raise ValueError(
+                f"No resources in scan {self.id!r} match the included datatypes"
+            )
         saved = self.new_empty()
         scan_dir = dest_dir / f"{self.id}.{self.type if self.type is not None else ''}"
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
+            if not resource.matches_datatypes(include):
+                continue
             saved_resource = resource.save(
                 scan_dir, copy_mode=copy_mode, collation_map=collation_map, conversion_map=conversion_map,
             )
