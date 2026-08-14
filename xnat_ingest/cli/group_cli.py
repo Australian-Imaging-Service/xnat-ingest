@@ -11,11 +11,11 @@ from xnat_ingest.cli.base import cli
 from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
     CollationSpec,
+    Convert,
     CopyModeParamType,
     IDSpec,
     LoggerConfig,
     MimeType,
-    Convert,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -241,9 +241,7 @@ are uploaded to XNAT
     multiple=True,
     default=(),
     envvar="XINGEST_CONVERT",
-    help=(
-        "Convert resources of <src-mime-like> to <tgt-mime-like> during save. "
-    ),
+    help=("Convert resources of <src-mime-like> to <tgt-mime-like> during save. "),
 )
 def group_cmd(
     input_paths: list[str],

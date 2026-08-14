@@ -98,7 +98,10 @@ class ImagingScan:
         scan_dir.mkdir(parents=True, exist_ok=True)
         for resource in self.resources.values():
             saved_resource = resource.save(
-                scan_dir, copy_mode=copy_mode, collation_map=collation_map, conversion_map=conversion_map,
+                scan_dir,
+                copy_mode=copy_mode,
+                collation_map=collation_map,
+                conversion_map=conversion_map,
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
