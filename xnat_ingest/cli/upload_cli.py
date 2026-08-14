@@ -20,6 +20,24 @@ from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
 from ..helpers.logging import logger, set_logger_handling
 
 
+def _connect_with_basic_auth(
+    server: str, user: str, password: str, verify_ssl: bool
+) -> ty.Any:
+    """Force xnatpy's existing Basic-auth fallback without creating a JSESSION."""
+    create_jsession = xnat._create_jsession
+    try:
+        xnat._create_jsession = lambda *args, **kwargs: None
+        return xnat.connect(
+            server,
+            user=user,
+            password=password,
+            verify=verify_ssl,
+            logger=logging.getLogger("xnat"),
+        )
+    finally:
+        xnat._create_jsession = create_jsession
+
+
 @cli.command(
     name="upload",
     help="""uploads all sessions found in the staging directory (as prepared by the
@@ -142,6 +160,17 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     ),
 )
 @click.option(
+    "--use-basic-auth/--dont-use-basic-auth",
+    type=bool,
+    default=False,
+    envvar="XINGEST_USE_BASIC_AUTH",
+    help=(
+        "Use HTTP Basic authentication for every XNAT request instead of creating "
+        "a JSESSION. Intended for XNAT alias tokens used through a direct Tomcat "
+        "port-forward (XINGEST_USE_BASIC_AUTH env. var)."
+    ),
+)
+@click.option(
     "--method",
     "methods",
     type=UploadMethod.cli_type,
@@ -221,6 +250,7 @@ def upload_cmd(
     require_manifest: bool,
     verify_ssl: bool,
     use_curl_jsession: bool,
+    use_basic_auth: bool,
     methods: ty.Sequence[UploadMethod],
     wait_period: int,
     loop: int,
@@ -233,6 +263,10 @@ def upload_cmd(
         raise ValueError(
             "Cannot use --raise-errors and --loop together as the loop will "
             "continue to run even if an error occurs"
+        )
+    if use_basic_auth and use_curl_jsession:
+        raise click.UsageError(
+            "--use-basic-auth and --use-curl-jsession cannot be used together"
         )
 
     set_logger_handling(
@@ -265,6 +299,12 @@ def upload_cmd(
             cache_dir=Path(tempfile.mkdtemp()),
             verify_ssl=verify_ssl,
         )
+        if use_basic_auth:
+            repo.connection.session = _connect_with_basic_auth(
+                server, user, password, verify_ssl
+            )
+            repo.connection.depth = 1
+            return repo
         if use_curl_jsession:
             jsession = sp.check_output(
                 [
