@@ -284,3 +284,4 @@ def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
     manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME).load()
     assert manifest["datatype"] == Zip.mime_like
+    assert (resource_dir / f"{dicom0_dir.name}.zip").exists()
