@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, PathMetadataRegex
+from ..helpers.arg_types import IDSpec, OnResourceClash, PathMetadataRegex
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -28,7 +28,7 @@ def group(
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
-    avoid_clashes: bool = True,
+    on_resource_clash: OnResourceClash = "avoid",
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
@@ -78,9 +78,11 @@ def group(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    avoid_clashes: bool
-        If True, if a session with the same name already exists in the staging directory, a suffix will be added to the session
-        name to avoid overwriting the existing session. If False, existing sessions with the same name will be overwritten.
+    on_resource_clash: OnResourceClash = "avoid"
+        If "avoid", if a session with the same name already exists in the staging directory, a suffix will be added to the session
+        name to avoid overwriting the existing session.
+        If "merge", existing sessions with the same name will be merged.
+        If "error", an error will be raised if a session with the same name already exists in the staging directory.
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
@@ -101,7 +103,7 @@ def group(
         scan_field=scan,
         resource_field=resource,
         recursive=recursive,
-        avoid_clashes=avoid_clashes,
+        on_resource_clash=on_resource_clash,
         ignore_paths=ignore_paths,
         ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,

@@ -518,12 +518,48 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        avoid_clashes=True,
+        on_resource_clash="avoid",
     )
     assert "to avoid clash with existing resources" in caplog.text
     assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
         CLASH_RESOURCE_NAME,
         CLASH_RESOURCE_NAME + "__2",
+    ]
+
+
+def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
+
+    logger = logging.getLogger("xnat-ingest")
+    logger.setLevel(logging.DEBUG)
+
+    file1 = File.sample(seed=1)
+    file2 = File.sample(seed=2)
+
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: file1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=file2,
+        on_resource_clash="merge",
+    )
+    assert "Merging resource" in caplog.text
+    assert session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset == [
+        file1,
+        file2,
     ]
 
 

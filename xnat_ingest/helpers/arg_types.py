@@ -34,6 +34,9 @@ if ty.TYPE_CHECKING:
 
 logger = logging.getLogger("xnat-ingest")
 
+# Define a type for the --on-resource-clash option, which can be one of "avoid", "merge", or "error"
+OnResourceClash = ty.Literal["avoid", "merge", "error"]
+
 
 def datatype_converter(
     datatype_str: ty.Union[str, ty.Type[DataType]],

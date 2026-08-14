@@ -15,6 +15,7 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
+    OnResourceClash,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -107,12 +108,14 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--avoid-clashes/--allow-clashes",
-    type=bool,
-    default=True,
+    "--on-resource-clash",
+    type=click.Choice([e.value for e in OnResourceClash]),
+    default="avoid",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "Whether to avoid clashes in resource names by appending _1, _2 etc. to the name until a "
-        "unique name is found (default: True)"
+        "Determines the behavior when a resource with the same name already exists in the scan. "
+        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "Default: 'avoid'"
     ),
 )
 @click.option(
@@ -243,7 +246,7 @@ def group_cmd(
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
-    avoid_clashes: bool,
+    on_resource_clash: OnResourceClash,
     ignore_paths: list[str] | None,
     ignore_types: list[MimeType] | None,
     loop: int,
@@ -279,7 +282,7 @@ def group_cmd(
             copy_mode=copy_mode,
             ignore_paths=ignore_paths,
             ignore_types=[dt.datatype for dt in ignore_types],
-            avoid_clashes=avoid_clashes,
+            on_resource_clash=on_resource_clash,
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,
