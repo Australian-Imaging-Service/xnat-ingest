@@ -1250,6 +1250,7 @@ class ImagingSession:
         available_projects: list[str] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
         include: ty.Sequence[type[FileSet]] = (),
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
@@ -1322,6 +1323,7 @@ class ImagingSession:
                 session_dir,
                 copy_mode=copy_mode,
                 collation_map=collation_map,
+                conversion_map=conversion_map,
                 include=include,
             )
             saved_scan.session = saved

@@ -16,6 +16,7 @@
 .pytest_cache/
 /.history
 .env
+.idea
 __pycache__
 .vscode
 *.egg-info

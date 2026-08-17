@@ -2,15 +2,16 @@ import shutil
 from pathlib import Path
 
 import pytest
-from fileformats.application import Json
+from fileformats.application import Json, Zip
 from fileformats.core.exceptions import FormatRecognitionError
-from fileformats.medimage import DicomSeries
+from fileformats.medimage import DicomDir, DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,  # type: ignore[import-untyped]
 )
 
 from xnat_ingest.api.group_api import BUILD_NAME_DEFAULT, group
 from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.model.resource import ImagingResource
 from xnat_ingest.model.session import ImagingSession
 
 SESSION_FIELD = [IDSpec("StudyInstanceUID", "medimage/dicom-collection")]
@@ -253,3 +254,34 @@ def test_group_creates_build_dir(tmp_path: Path) -> None:
     )
 
     assert (output_dir / BUILD_NAME_DEFAULT).exists()
+
+
+def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    directory_dir = tmp_path / "directory"
+    dicom0_dir = directory_dir / "dicom0"
+    shutil.copytree(dicom_dir, dicom0_dir)
+
+    errors = group(
+        # input_paths=[str(dicom_dir)],
+        input_paths=[str(directory_dir)],
+        output_dir=output_dir,
+        datatypes=[DicomDir],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        conversion_map={DicomDir: Zip},
+    )
+
+    assert errors == []
+    session_dir = next(
+        d
+        for d in output_dir.iterdir()
+        if d.is_dir() and d.name.startswith(ImagingSession.PRE_ASSIGN_PREFIX)
+    )
+    scan_dir = next(d for d in session_dir.iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME).load()
+    assert manifest["datatype"] == Zip.mime_like
+    assert (resource_dir / f"{dicom0_dir.name}.zip").exists()
