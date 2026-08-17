@@ -49,7 +49,10 @@ def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
     assert errors == []
     reid_file = reid_dir / f"{SESSION_NAME}.json"
     assert reid_file.exists()
-    assert json.loads(reid_file.read_bytes()) == REID_MDATA
+    assert json.loads(reid_file.read_bytes()) == {
+        "session_uid": SESSION_NAME,
+        "changed_fields": REID_MDATA,
+    }
 
 
 def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
@@ -70,7 +73,10 @@ def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
     assert enc_file.exists()
     assert not (reid_dir / f"{SESSION_NAME}.json").exists()
     decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
-    assert decrypted == REID_MDATA
+    assert decrypted == {
+        "session_uid": SESSION_NAME,
+        "changed_fields": REID_MDATA,
+    }
 
 
 def test_deidentify_wrong_key_fails(dirs: tuple[Path, Path, Path, Path]):
@@ -151,7 +157,9 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
 
     assert errors == []
     for name in session_names:
-        assert (reid_dir / f"{name}.json").exists()
+        reid_file = reid_dir / f"{name}.json"
+        assert reid_file.exists()
+        assert json.loads(reid_file.read_bytes())["session_uid"] == name
 
 
 def test_deidentify_missing_spec_collected(dirs):
