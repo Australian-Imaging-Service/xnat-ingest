@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, OnResourceClash, PathMetadataRegex
+from ..helpers.arg_types import IDSpec, OnResourceClashValue, PathMetadataRegex
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -29,7 +29,7 @@ def group(
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
-    on_resource_clash: OnResourceClash = "avoid",
+    on_resource_clash: OnResourceClashValue = "avoid",
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the

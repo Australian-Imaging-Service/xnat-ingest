@@ -9,7 +9,12 @@ from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 
 from ..api.deidentify_api import deidentify
-from ..helpers.arg_types import CopyModeParamType, LoggerConfig, OnResourceClash
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    CopyModeParamType,
+    LoggerConfig,
+    OnResourceClashValue,
+)
 from ..helpers.logging import logger, set_logger_handling
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
@@ -136,7 +141,7 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
 )
 @click.option(
     "--on-resource-clash",
-    type=click.Choice([e.value for e in OnResourceClash]),
+    type=click.Choice(ON_RESOURCE_CLASH),
     default="error",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
@@ -167,7 +172,7 @@ def deidentify_cmd(
     raise_errors: bool,
     copy_mode: FileSet.CopyMode,
     loop: int,
-    on_resource_clash: OnResourceClash,
+    on_resource_clash: OnResourceClashValue,
     unlink_source: str | None,
     reid_encrypt_key: str | None = None,
 ) -> None:

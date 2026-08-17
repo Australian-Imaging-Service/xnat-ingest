@@ -10,13 +10,14 @@ from xnat_ingest.cli.base import cli
 
 from ..api.group_api import group, group_orthanc
 from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
     CollationSpec,
     Convert,
     CopyModeParamType,
     IDSpec,
     LoggerConfig,
     MimeType,
-    OnResourceClash,
+    OnResourceClashValue,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -110,7 +111,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--on-resource-clash",
-    type=click.Choice([e.value for e in OnResourceClash]),
+    type=click.Choice(ON_RESOURCE_CLASH),
     default="avoid",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
@@ -258,7 +259,7 @@ def group_cmd(
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
-    on_resource_clash: OnResourceClash,
+    on_resource_clash: OnResourceClashValue,
     ignore_paths: list[str] | None,
     ignore_types: list[MimeType] | None,
     loop: int,

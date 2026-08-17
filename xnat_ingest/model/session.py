@@ -31,7 +31,7 @@ from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import (
     AssociatedFiles,
     IDSpec,
-    OnResourceClash,
+    OnResourceClashValue,
     PathMetadataRegex,
 )
 from ..helpers.metadata import Metadata
@@ -362,7 +362,7 @@ class ImagingSession:
         scan_field: list[IDSpec],
         resource_field: list[IDSpec],
         recursive: bool = False,
-        on_resource_clash: OnResourceClash = "avoid",
+        on_resource_clash: OnResourceClashValue = "avoid",
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
@@ -809,7 +809,7 @@ class ImagingSession:
         dest_dir: Path,
         specs: dict[type[FileSet], ty.Any] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        on_resource_clash: OnResourceClash = "avoid",
+        on_resource_clash: OnResourceClashValue = "avoid",
         require_matching_spec: bool = True,
         max_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
@@ -925,7 +925,7 @@ class ImagingSession:
         self,
         patterns: list[AssociatedFiles],
         spaces_to_underscores: bool = True,
-        on_resource_clash: OnResourceClash = "avoid",
+        on_resource_clash: OnResourceClashValue = "avoid",
     ) -> list[FileSet]:
         """Adds files associated with the primary files to the session
 
@@ -1004,7 +1004,7 @@ class ImagingSession:
         fileset: FileSet,
         overwrite: bool = False,
         associated: AssociatedFiles | None = None,
-        on_resource_clash: OnResourceClash = "avoid",
+        on_resource_clash: OnResourceClashValue = "avoid",
         metadata: dict[str, ty.Any] | None = None,
     ) -> None:
         """Adds a resource to the imaging session

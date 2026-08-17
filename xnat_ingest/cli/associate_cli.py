@@ -8,7 +8,11 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from ..helpers.arg_types import LoggerConfig, OnResourceClash
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    LoggerConfig,
+    OnResourceClashValue,
+)
 from ..helpers.logging import logger, set_logger_handling
 from .base import cli
 
@@ -127,7 +131,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--on-resource-clash",
-    type=click.Choice([e.value for e in OnResourceClash]),
+    type=click.Choice(ON_RESOURCE_CLASH),
     default="error",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
@@ -160,7 +164,7 @@ def associate_cmd(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     spaces_to_underscores: bool,
-    on_resource_clash: OnResourceClash,
+    on_resource_clash: OnResourceClashValue,
     loop: int,
     temp_dir: Path | None,
     copy_mode: FileSet.CopyMode,

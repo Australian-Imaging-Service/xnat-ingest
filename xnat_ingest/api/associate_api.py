@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
-from ..helpers.arg_types import AssociatedFiles, OnResourceClash
+from ..helpers.arg_types import AssociatedFiles, OnResourceClashValue
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -19,7 +19,7 @@ def associate(
     glob: str,
     identity_pattern: str,
     spaces_to_underscores: bool = False,
-    on_resource_clash: OnResourceClash = "error",
+    on_resource_clash: OnResourceClashValue = "error",
     raise_errors: bool = False,
     require_manifest: bool = True,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
