@@ -29,7 +29,7 @@ def group(
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
-    on_resource_clash: OnResourceClashValue = "avoid",
+    on_resource_clash: OnResourceClashValue = "error",
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the

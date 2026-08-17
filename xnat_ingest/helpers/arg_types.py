@@ -38,7 +38,7 @@ logger = logging.getLogger("xnat-ingest")
 # The tuple is the single source of truth: it doubles as the click.Choice() options, while the
 # Literal (derived from it) is used for type-checking the parameter/argument annotations.
 ON_RESOURCE_CLASH = ("avoid", "merge", "error")
-OnResourceClashValue = ty.Literal[ON_RESOURCE_CLASH]
+OnResourceClashValue = ty.Literal["avoid", "merge", "error"]
 
 
 def datatype_converter(
