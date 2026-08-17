@@ -9,7 +9,12 @@ from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 
 from ..api.deidentify_api import deidentify
-from ..helpers.arg_types import CopyModeParamType, LoggerConfig
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    CopyModeParamType,
+    LoggerConfig,
+    OnResourceClash,
+)
 from ..helpers.logging import logger, set_logger_handling
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
@@ -135,13 +140,14 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--avoid-clashes/--dont-avoid-clashes",
-    default=False,
-    envvar="XINGEST_AVOID_CLASHES",
+    "--on-resource-clash",
+    type=click.Choice(ON_RESOURCE_CLASH),
+    default="error",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is found "
-        "(XINGEST_AVOID_CLASHES env. var)"
+        "Determines the behavior when a resource with the same name already exists in the scan. "
+        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "Default: 'error'"
     ),
 )
 @click.option(
@@ -166,7 +172,7 @@ def deidentify_cmd(
     raise_errors: bool,
     copy_mode: FileSet.CopyMode,
     loop: int,
-    avoid_clashes: bool,
+    on_resource_clash: OnResourceClash,
     unlink_source: str | None,
     reid_encrypt_key: str | None = None,
 ) -> None:
@@ -195,7 +201,7 @@ def deidentify_cmd(
             output_dir=output_dir,
             spec_dir=spec_dir,
             reid_dir=reid_dir,
-            avoid_clashes=avoid_clashes,
+            on_resource_clash=on_resource_clash,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             require_manifest=require_manifest,

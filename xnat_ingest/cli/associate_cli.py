@@ -8,7 +8,11 @@ import click
 from fileformats.core import FileSet
 
 from ..api import associate
-from ..helpers.arg_types import LoggerConfig
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    LoggerConfig,
+    OnResourceClash,
+)
 from ..helpers.logging import logger, set_logger_handling
 from .base import cli
 
@@ -126,12 +130,14 @@ are uploaded to XNAT
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--avoid-clashes/--dont-avoid-clashes",
-    default=False,
-    envvar="XINGEST_AVOID_CLASHES",
+    "--on-resource-clash",
+    type=click.Choice(ON_RESOURCE_CLASH),
+    default="error",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is found (XINGEST_AVOID_CLASHES env. var)"
+        "Determines the behavior when a resource with the same name already exists in the scan. "
+        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)"
+        "Default: 'error'"
     ),
 )
 @click.option(
@@ -158,7 +164,7 @@ def associate_cmd(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     spaces_to_underscores: bool,
-    avoid_clashes: bool,
+    on_resource_clash: OnResourceClash,
     loop: int,
     temp_dir: Path | None,
     copy_mode: FileSet.CopyMode,
@@ -191,7 +197,7 @@ def associate_cmd(
             glob=glob,
             identity_pattern=id_pattern,
             spaces_to_underscores=spaces_to_underscores,
-            avoid_clashes=avoid_clashes,
+            on_resource_clash=on_resource_clash,
             raise_errors=raise_errors,
             require_manifest=require_manifest,
             copy_mode=copy_mode,

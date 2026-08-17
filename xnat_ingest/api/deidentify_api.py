@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
+from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -25,7 +26,7 @@ def deidentify(
     output_dir: Path,
     spec_dir: Path,
     reid_dir: Path,
-    avoid_clashes: bool = False,
+    on_resource_clash: OnResourceClash = "error",
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
     require_manifest: bool = True,
@@ -86,7 +87,7 @@ def deidentify(
             deidentified_session, reid_mdata = session.deidentify(
                 output_dir,
                 copy_mode=copy_mode,
-                avoid_clashes=avoid_clashes,
+                on_resource_clash=on_resource_clash,
                 specs=specs,
                 max_workers=max_workers,
             )
