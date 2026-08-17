@@ -487,7 +487,7 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        overwrite=True,
+        on_clash="overwrite",
     )
     assert "Overwriting existing resource" in caplog.text
 
@@ -519,7 +519,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        on_resource_clash="avoid",
+        on_clash="avoid",
     )
     assert "to avoid clash with existing resources" in caplog.text
     assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
@@ -555,7 +555,7 @@ def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        on_resource_clash="merge",
+        on_clash="merge",
     )
     assert "Merging resource" in caplog.text
     assert session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset == [

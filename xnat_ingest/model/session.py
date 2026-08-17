@@ -29,6 +29,7 @@ from tqdm import tqdm
 
 from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
     AssociatedFiles,
     IDSpec,
     OnResourceClash,
@@ -559,7 +560,7 @@ class ImagingSession:
                 None,
                 resource_label,
                 fileset,
-                on_resource_clash=on_resource_clash,
+                on_clash=on_resource_clash,
                 metadata=metadata,
             )
         return list(sessions.values())
@@ -919,7 +920,7 @@ class ImagingSession:
                     scan.type,
                     resource_name,
                     deid_resource,
-                    on_resource_clash=on_resource_clash,
+                    on_clash=on_resource_clash,
                 )
         return deidentified, collate_metadata_series(reid_series)
 
@@ -993,7 +994,7 @@ class ImagingSession:
                     resource_name,
                     fspaths[0],
                     associated=associated_files,
-                    on_resource_clash=on_resource_clash,
+                    on_clash=on_resource_clash,
                 )
                 all_associated.extend(fspaths)
         return all_associated
@@ -1005,7 +1006,7 @@ class ImagingSession:
         resource_name: str,
         fileset: FileSet,
         associated: AssociatedFiles | None = None,
-        on_resource_clash: OnResourceClash = "error",
+        on_clash: OnResourceClash = "error",
         metadata: dict[str, ty.Any] | None = None,
     ) -> None:
         """Adds a resource to the imaging session
@@ -1022,7 +1023,7 @@ class ImagingSession:
             the fileset to add as the resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
-        on_resource_clash : OnResourceClash, optional
+        on_clash : OnResourceClash, optional
             if "avoid", if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
             if "merge", existing sessions with the same name will be merged.
@@ -1030,18 +1031,7 @@ class ImagingSession:
             if "overwrite", an existing resource with the same name will be overwritten.
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
-
-        Raises
-        ------
-        KeyError
-            if a resource with the same name already exists in the scan and
-            `on_resource_clash="error"` and `overwrite` are both False
         """
-        if on_resource_clash == "overwrite" and on_resource_clash == "error":
-            raise ValueError(
-                "Cannot set 'on_resource_clash' to both 'overwrite' and 'error' when adding a "
-                "resource"
-            )
         try:
             scan = self.scans[scan_id]
         except KeyError:
@@ -1077,7 +1067,7 @@ class ImagingSession:
                     existing,
                 )
                 return
-            elif on_resource_clash == "overwrite":
+            elif on_clash == "overwrite":
                 logger.warning(
                     "Overwriting existing resource '%s' in %s scan in %s session",
                     resource_name,
@@ -1085,7 +1075,7 @@ class ImagingSession:
                     self.name,
                 )
                 del scan.resources[resource_name]
-            elif on_resource_clash == "merge":
+            elif on_clash == "merge":
                 logger.info(
                     "Merging resource '%s' with existing resource in %s scan in %s session",
                     resource_name,
@@ -1096,7 +1086,7 @@ class ImagingSession:
                     resource.fileset = existing.fileset.append(fileset)
                 else:
                     resource.fileset = [existing.fileset, fileset]
-            elif on_resource_clash == "avoid":
+            elif on_clash == "avoid":
                 match = re.match(r"^(.*)__(\d+)$", resource_name)
                 if match:
                     base_name, num = match.groups()
@@ -1114,7 +1104,7 @@ class ImagingSession:
                 resource = ImagingResource(
                     name=resource_name, fileset=fileset, scan=scan
                 )
-            elif on_resource_clash == "error":
+            elif on_clash == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
                     f"{self.name} session. Use 'on_resource_clash=\"overwrite\"' to overwrite the existing resource, "
@@ -1123,9 +1113,9 @@ class ImagingSession:
                     "'on_resource_clash=\"error\"' to raise an error.",
                 )
             else:
-                raise KeyError(
-                    f"Unforeseen clash between resource names ('{resource_name}') for {scan_id} scan in {self.name} session.",
-                )
+                assert (
+                    False
+                ), f"Invalid value for on_resource_clash: {on_clash} (should be one of {ON_RESOURCE_CLASH})"
         scan.resources[resource_name] = resource
 
     def add_session_resource(
