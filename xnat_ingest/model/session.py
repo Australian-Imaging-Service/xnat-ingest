@@ -31,7 +31,7 @@ from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import (
     AssociatedFiles,
     IDSpec,
-    OnResourceClashValue,
+    OnResourceClash,
     PathMetadataRegex,
 )
 from ..helpers.metadata import Metadata
@@ -362,7 +362,7 @@ class ImagingSession:
         scan_field: list[IDSpec],
         resource_field: list[IDSpec],
         recursive: bool = False,
-        on_resource_clash: OnResourceClashValue = "error",
+        on_resource_clash: OnResourceClash = "error",
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
@@ -392,6 +392,7 @@ class ImagingSession:
             resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
             if "merge", existing sessions with the same name will be merged.
             if "error", an error will be raised if a session with the same name already exists in the staging directory.
+            if "overwrite", an existing resource with the same name will be overwritten.
         ignore_paths : list[str] or None, optional
             regular expressions to match paths that should be ignored
         ignore_types : list[type[FileSet]] or None, optional
@@ -809,7 +810,7 @@ class ImagingSession:
         dest_dir: Path,
         specs: dict[type[FileSet], ty.Any] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        on_resource_clash: OnResourceClashValue = "error",
+        on_resource_clash: OnResourceClash = "error",
         require_matching_spec: bool = True,
         max_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
@@ -832,6 +833,7 @@ class ImagingSession:
             resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
             if "merge", existing sessions with the same name will be merged.
             if "error", an error will be raised if a session with the same name already exists in the staging directory.
+            if "overwrite", an existing resource with the same name will be overwritten.
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
         max_workers : int, optional
@@ -925,7 +927,7 @@ class ImagingSession:
         self,
         patterns: list[AssociatedFiles],
         spaces_to_underscores: bool = True,
-        on_resource_clash: OnResourceClashValue = "error",
+        on_resource_clash: OnResourceClash = "error",
     ) -> list[FileSet]:
         """Adds files associated with the primary files to the session
 
@@ -1002,9 +1004,8 @@ class ImagingSession:
         scan_type: str | None,
         resource_name: str,
         fileset: FileSet,
-        overwrite: bool = False,
         associated: AssociatedFiles | None = None,
-        on_resource_clash: OnResourceClashValue = "error",
+        on_resource_clash: OnResourceClash = "error",
         metadata: dict[str, ty.Any] | None = None,
     ) -> None:
         """Adds a resource to the imaging session
@@ -1019,8 +1020,6 @@ class ImagingSession:
             the name of the resource to add
         fileset : FileSet
             the fileset to add as the resource
-        overwrite : bool
-            whether to overwrite existing resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
         on_resource_clash : OnResourceClash, optional
@@ -1028,6 +1027,7 @@ class ImagingSession:
             resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
             if "merge", existing sessions with the same name will be merged.
             if "error", an error will be raised if a resource with the same name already exists in the scan.
+            if "overwrite", an existing resource with the same name will be overwritten.
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
 
@@ -1037,9 +1037,9 @@ class ImagingSession:
             if a resource with the same name already exists in the scan and
             `on_resource_clash="error"` and `overwrite` are both False
         """
-        if overwrite and on_resource_clash:
+        if on_resource_clash == "overwrite" and on_resource_clash == "error":
             raise ValueError(
-                "Cannot set both 'overwrite' to True and 'on_resource_clash=\"error\"' when adding a "
+                "Cannot set 'on_resource_clash' to both 'overwrite' and 'error' when adding a "
                 "resource"
             )
         try:
@@ -1077,7 +1077,7 @@ class ImagingSession:
                     existing,
                 )
                 return
-            elif overwrite:
+            elif on_resource_clash == "overwrite":
                 logger.warning(
                     "Overwriting existing resource '%s' in %s scan in %s session",
                     resource_name,
@@ -1117,7 +1117,7 @@ class ImagingSession:
             elif on_resource_clash == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                    f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource, "
+                    f"{self.name} session. Use 'on_resource_clash=\"overwrite\"' to overwrite the existing resource, "
                     "'on_resource_clash=\"avoid\"' to increment the resource name, "
                     "'on_resource_clash=\"merge\"' to merge with the existing resource, or "
                     "'on_resource_clash=\"error\"' to raise an error.",

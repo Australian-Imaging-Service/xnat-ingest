@@ -13,7 +13,7 @@ from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     CopyModeParamType,
     LoggerConfig,
-    OnResourceClashValue,
+    OnResourceClash,
 )
 from ..helpers.logging import logger, set_logger_handling
 
@@ -172,7 +172,7 @@ def deidentify_cmd(
     raise_errors: bool,
     copy_mode: FileSet.CopyMode,
     loop: int,
-    on_resource_clash: OnResourceClashValue,
+    on_resource_clash: OnResourceClash,
     unlink_source: str | None,
     reid_encrypt_key: str | None = None,
 ) -> None:

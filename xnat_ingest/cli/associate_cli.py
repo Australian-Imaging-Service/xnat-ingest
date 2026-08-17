@@ -11,7 +11,7 @@ from ..api import associate
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     LoggerConfig,
-    OnResourceClashValue,
+    OnResourceClash,
 )
 from ..helpers.logging import logger, set_logger_handling
 from .base import cli
@@ -164,7 +164,7 @@ def associate_cmd(
     additional_loggers: ty.List[str],
     raise_errors: bool,
     spaces_to_underscores: bool,
-    on_resource_clash: OnResourceClashValue,
+    on_resource_clash: OnResourceClash,
     loop: int,
     temp_dir: Path | None,
     copy_mode: FileSet.CopyMode,

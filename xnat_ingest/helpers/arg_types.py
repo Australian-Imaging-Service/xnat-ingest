@@ -37,8 +37,8 @@ logger = logging.getLogger("xnat-ingest")
 # Define a type for the --on-resource-clash option, which can be one of "avoid", "merge", or "error".
 # The tuple is the single source of truth: it doubles as the click.Choice() options, while the
 # Literal (derived from it) is used for type-checking the parameter/argument annotations.
-ON_RESOURCE_CLASH = ("avoid", "merge", "error")
-OnResourceClashValue = ty.Literal["avoid", "merge", "error"]
+ON_RESOURCE_CLASH = ("error", "avoid", "merge", "overwrite")
+OnResourceClash = ty.Literal["error", "avoid", "merge", "overwrite"]
 
 
 def datatype_converter(

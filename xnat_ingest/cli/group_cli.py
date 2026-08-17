@@ -17,7 +17,7 @@ from ..helpers.arg_types import (
     IDSpec,
     LoggerConfig,
     MimeType,
-    OnResourceClashValue,
+    OnResourceClash,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -259,7 +259,7 @@ def group_cmd(
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,
-    on_resource_clash: OnResourceClashValue,
+    on_resource_clash: OnResourceClash,
     ignore_paths: list[str] | None,
     ignore_types: list[MimeType] | None,
     loop: int,
