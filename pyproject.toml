@@ -8,6 +8,7 @@ description = "Uploads exported DICOM and raw data to XNAT, parsing metadata fro
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "ais-deid >= 0.1.2",
     "click >=8.3",
     "discord",
     "fileformats-medimage >=0.10.1",
@@ -51,7 +52,14 @@ classifiers = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = ["black", "pre-commit", "codespell", "flake8", "flake8-pyproject", "isort"]
+dev = [
+    "black",
+    "pre-commit",
+    "codespell",
+    "flake8",
+    "flake8-pyproject",
+    "isort",
+]
 test = [
     "pytest >=6.2.5",
     "pytest-env>=0.6.2",

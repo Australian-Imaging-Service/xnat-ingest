@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
-import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json
 from fileformats.core import SampleFileGenerator, extra_implementation
@@ -1621,12 +1620,6 @@ def test_check_upload_checksum_fail(
     assert "CHECKSUM FAIL" in logs
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
-        "test the full deidentification pipeline once that is done"
-    ),
-)
 def test_deidentify_cli_dicom(
     cli_runner: ty.Any,
     tmp_path: Path,
@@ -1642,8 +1635,13 @@ def test_deidentify_cli_dicom(
     STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
 
     DICOM_DEID_SPEC = """
-# Specification for de-identifying DICOM files for project PROJ goes here
-"""
+    FORMAT dicom
+
+    %header
+
+    ADD PatientIdentityRemoved YES
+    REPLACE PatientName var:anon_patient_name
+    """
 
     # 1. Generate DICOM test data for multiple scan types in subdirectories
     dicoms_dir = tmp_path / "dicoms"
@@ -1724,8 +1722,10 @@ def test_deidentify_cli_dicom(
     reid_file = reid_dir / f"{session_name}.json"
     assert reid_file.exists(), f"Reid file missing: {reid_file}"
     reid = json.loads(reid_file.read_bytes())
-    assert reid.get("PatientID") == PATIENT_ID
-    assert reid.get("PatientName") != ""
+    assert reid.get("session_uid") == STUDY_UID.replace(".", "_")
+    changed_fields = reid.get("changed_fields", {})
+    #    assert changed_fields.get("PatientID") == PATIENT_ID
+    assert changed_fields.get("PatientName")
 
     # 7. Deidentified session directory contains files
     deid_session_root = output_dir / session_name
@@ -1816,7 +1816,11 @@ def test_deidentify_cli_dicom_encrypted_reid(
     assert not (reid_dir / f"{session_name}.json").exists()
 
     decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
-    assert decrypted.get("PatientID") == PATIENT_ID
+    # session.uid is derived from StudyInstanceUID (dots -> underscores) once a
+    # session has been through real staging/assignment, not the project.subject.
+    # session directory name used for the mocked deidentify() fixtures elsewhere.
+    assert decrypted.get("session_uid") == STUDY_UID.replace(".", "_")
+    assert decrypted.get("changed_fields", {}).get("PatientID") == PATIENT_ID
 
 
 def transfer_to_source(

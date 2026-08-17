@@ -25,6 +25,7 @@ def group(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
+    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     wait_period: int = 0,
@@ -69,6 +70,8 @@ def group(
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
         A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
         sessions. If None, the default collation behavior for each FileSet type will be used.
+    conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
+        A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
     ignore_paths: list[str] | None
         Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
         To ignore all paths by default, use ".*" as the value for this parameter.
@@ -119,6 +122,7 @@ def group(
         unlink_source=unlink_source,
         raise_errors=raise_errors,
         collation_map=collation_map,
+        conversion_map=conversion_map,
     )
     if errors:
         logger.error("Grouping completed with %s errors", len(errors))
@@ -230,6 +234,7 @@ def save_sessions_to_dir(
     output_dir: Path,
     wait_period: int = 0,
     collation_map=None,
+    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     unlink_source: str | None = None,
     raise_errors: bool = False,
 ) -> list[str]:
@@ -257,6 +262,7 @@ def save_sessions_to_dir(
                 build_dir,
                 copy_mode=copy_mode,
                 collation_map=collation_map,
+                conversion_map=conversion_map,
             )
             logger.info(
                 "Successfully grouped session '%s' to '%s'",
