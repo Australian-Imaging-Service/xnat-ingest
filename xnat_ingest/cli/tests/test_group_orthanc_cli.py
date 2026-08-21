@@ -45,6 +45,8 @@ def test_group_orthanc_cli_runs_and_passes_labels_through(
                 "ready-for-xnat",
                 "--processed-label",
                 "sent-to-xnat",
+                "--wait-period",
+                "300",
             ],
         )
 
@@ -53,6 +55,7 @@ def test_group_orthanc_cli_runs_and_passes_labels_through(
     _, kwargs = mock_from_orthanc.call_args
     assert kwargs["to_process_label"] == "ready-for-xnat"
     assert kwargs["processed_label"] == "sent-to-xnat"
+    assert kwargs["wait_period"] == 300
 
 
 def test_group_orthanc_cli_defaults_to_no_to_process_label(

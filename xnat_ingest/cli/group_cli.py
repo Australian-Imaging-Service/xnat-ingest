@@ -150,7 +150,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--wait-period",
-    type=int,
+    type=click.IntRange(min=0),
     default=0,
     envvar="XINGEST_WAIT_PERIOD",
     help=(
@@ -466,6 +466,7 @@ def group_orthanc_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
+            wait_period=wait_period,
         )
         if loop < 0:
             break

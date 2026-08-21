@@ -17,6 +17,7 @@ from typing import Self
 import attrs
 import requests
 import yaml
+from dateutil.parser import isoparse
 from fileformats.application import Yaml
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
 from fileformats.core.utils import collate_metadata_series
@@ -633,6 +634,7 @@ class ImagingSession:
         to_process_label: str | None = None,
         processed_label: str = "xnat-sorted",
         max_workers: int | None = None,
+        wait_period: int = 0,
     ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
@@ -657,6 +659,9 @@ class ImagingSession:
             the number of threads to use to fetch per-instance attachment info from
             Orthanc concurrently. If None, defaults to
             `concurrent.futures.ThreadPoolExecutor`'s default.
+        wait_period : int, optional
+            Minimum number of seconds since Orthanc last updated a study before it is
+            staged, by default 0.
 
         Returns
         -------
@@ -713,6 +718,25 @@ class ImagingSession:
         staged: list[ImagingSession] = []
         for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
             study = get_json(f"/studies/{study_id}")
+            if wait_period:
+                try:
+                    last_update = isoparse(study["LastUpdate"])
+                except (KeyError, TypeError, ValueError) as e:
+                    raise ValueError(
+                        f"Could not parse LastUpdate for Orthanc study '{study_id}'"
+                    ) from e
+                if last_update.tzinfo is None:
+                    last_update = last_update.replace(tzinfo=UTC)
+                age = (datetime.now(UTC) - last_update).total_seconds()
+                if age < wait_period:
+                    logger.info(
+                        "Skipping Orthanc study '%s' because it was updated %.0f "
+                        "seconds ago (wait period: %d seconds)",
+                        study_id,
+                        age,
+                        wait_period,
+                    )
+                    continue
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
