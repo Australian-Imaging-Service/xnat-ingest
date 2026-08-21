@@ -88,6 +88,7 @@ class ImagingScan:
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
         include: ty.Sequence[ty.Type[FileSet]] = (),
     ) -> Self:
         # Ensure scan type is a valid directory name. A scan with no description set
@@ -106,7 +107,10 @@ class ImagingScan:
             if not resource.matches_datatypes(include):
                 continue
             saved_resource = resource.save(
-                scan_dir, copy_mode=copy_mode, collation_map=collation_map
+                scan_dir,
+                copy_mode=copy_mode,
+                collation_map=collation_map,
+                conversion_map=conversion_map,
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource

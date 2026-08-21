@@ -6,7 +6,7 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, PathMetadataRegex
+from ..helpers.arg_types import IDSpec, OnResourceClash, PathMetadataRegex
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -26,9 +26,11 @@ def group(
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     wait_period: int = 0,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
+    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
-    avoid_clashes: bool = True,
+    wait_period: int = 0,
+    on_resource_clash: OnResourceClash = "error",
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
@@ -69,6 +71,8 @@ def group(
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
         A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
         sessions. If None, the default collation behavior for each FileSet type will be used.
+    conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
+        A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
     ignore_paths: list[str] | None
         Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
         To ignore all paths by default, use ".*" as the value for this parameter.
@@ -78,9 +82,11 @@ def group(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    avoid_clashes: bool
-        If True, if a session with the same name already exists in the staging directory, a suffix will be added to the session
-        name to avoid overwriting the existing session. If False, existing sessions with the same name will be overwritten.
+    on_resource_clash: OnResourceClash = "avoid"
+        If "avoid", if a session with the same name already exists in the staging directory, a suffix will be added to the session
+        name to avoid overwriting the existing session.
+        If "merge", existing sessions with the same name will be merged.
+        If "error", an error will be raised if a session with the same name already exists in the staging directory.
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
@@ -101,7 +107,7 @@ def group(
         scan_field=scan,
         resource_field=resource,
         recursive=recursive,
-        avoid_clashes=avoid_clashes,
+        on_resource_clash=on_resource_clash,
         ignore_paths=ignore_paths,
         ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,
@@ -117,6 +123,7 @@ def group(
         unlink_source=unlink_source,
         raise_errors=raise_errors,
         collation_map=collation_map,
+        conversion_map=conversion_map,
     )
     if errors:
         logger.error("Grouping completed with %s errors", len(errors))
@@ -230,6 +237,7 @@ def save_sessions_to_dir(
     output_dir: Path,
     wait_period: int = 0,
     collation_map=None,
+    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     unlink_source: str | None = None,
     raise_errors: bool = False,
 ) -> list[str]:
@@ -257,6 +265,7 @@ def save_sessions_to_dir(
                 build_dir,
                 copy_mode=copy_mode,
                 collation_map=collation_map,
+                conversion_map=conversion_map,
             )
             logger.info(
                 "Successfully grouped session '%s' to '%s'",

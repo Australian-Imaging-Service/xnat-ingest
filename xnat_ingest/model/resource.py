@@ -92,6 +92,7 @@ class ImagingResource:
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
     ) -> Self:
@@ -103,6 +104,11 @@ class ImagingResource:
             The directory to save the resource
         copy_mode: FileSet.CopyMode
             The method to copy the files
+        collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
+            A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
+            sessions. If None, the default collation behavior for each FileSet type will be used.
+        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
+            A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
         calculate_checksums: bool
             Whether to calculate the checksums of the files
         overwrite: bool
@@ -122,6 +128,7 @@ class ImagingResource:
             If the resource already exists and overwrite is False or None and the files
             are not newer
         """
+        fileset = self.fileset
         resource_dir = dest_dir / self.name
         checksums = (
             self.calculate_checksums() if calculate_checksums else self.checksums
@@ -159,16 +166,30 @@ class ImagingResource:
         collation = FileSet.CopyCollation.any
         if collation_map:
             for dtype, coll_level in collation_map.items():
-                if isinstance(self.fileset, dtype):
+                if isinstance(fileset, dtype):
                     collation = coll_level
                     break
-        saved_fileset = self.fileset.copy(
+        # If a conversion is requested for this resource's type, run it now
+        if conversion_map:
+            for src_type, tgt_type in conversion_map.items():
+                if isinstance(fileset, src_type):
+                    logger.info(
+                        "Converting resource '%s' from %s to %s",
+                        self.name,
+                        src_type.mime_like,
+                        tgt_type.mime_like,
+                    )
+                    # Call the target format's convert() method with the saved fileset
+                    # The convert implementation is expected to return a FileSet for the converted data.
+                    fileset = tgt_type.convert(fileset)
+                    break
+        saved_fileset = fileset.copy(
             resource_dir, mode=copy_mode, trim=True, collation=collation
         )
         saved_checksums = saved_fileset.hash_files(
             crypto=hashlib.md5, relative_to=resource_dir
         )
-        manifest = {"datatype": self.fileset.mime_like, "checksums": saved_checksums}
+        manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
         Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
         self.metadata.save(resource_dir)
         return type(self)(

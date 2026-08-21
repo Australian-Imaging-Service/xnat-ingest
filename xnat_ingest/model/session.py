@@ -29,7 +29,13 @@ from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    AssociatedFiles,
+    IDSpec,
+    OnResourceClash,
+    PathMetadataRegex,
+)
 from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
@@ -358,7 +364,7 @@ class ImagingSession:
         scan_field: list[IDSpec],
         resource_field: list[IDSpec],
         recursive: bool = False,
-        avoid_clashes: bool = True,
+        on_resource_clash: OnResourceClash = "error",
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
@@ -383,10 +389,12 @@ class ImagingSession:
         recursive : bool, optional
             recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
             by default False
-        avoid_clashes : bool, optional
-            if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
+        on_resource_clash : OnResourceClash, optional
+            if "avoid", if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
+            if "merge", existing sessions with the same name will be merged.
+            if "error", an error will be raised if a session with the same name already exists in the staging directory.
+            if "overwrite", an existing resource with the same name will be overwritten.
         ignore_paths : list[str] or None, optional
             regular expressions to match paths that should be ignored
         ignore_types : list[type[FileSet]] or None, optional
@@ -553,7 +561,7 @@ class ImagingSession:
                 None,
                 resource_label,
                 fileset,
-                avoid_clashes=avoid_clashes,
+                on_clash=on_resource_clash,
                 metadata=metadata,
             )
         return list(sessions.values())
@@ -827,7 +835,7 @@ class ImagingSession:
         dest_dir: Path,
         specs: dict[type[FileSet], ty.Any] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        avoid_clashes: bool = False,
+        on_resource_clash: OnResourceClash = "error",
         require_matching_spec: bool = True,
         max_workers: int | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
@@ -845,11 +853,12 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
-        avoid_clashes : bool, optional
-            when copying a file that doesn't need to be deidentified, if a resource
-            with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
+        on_resource_clash : OnResourceClash, optional
+            when copying a file that doesn't need to be deidentified, if "avoid", if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
+            if "merge", existing sessions with the same name will be merged.
+            if "error", an error will be raised if a session with the same name already exists in the staging directory.
+            if "overwrite", an existing resource with the same name will be overwritten.
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
         max_workers : int, optional
@@ -935,7 +944,7 @@ class ImagingSession:
                     scan.type,
                     resource_name,
                     deid_resource,
-                    avoid_clashes=avoid_clashes,
+                    on_clash=on_resource_clash,
                 )
         return deidentified, collate_metadata_series(reid_series)
 
@@ -943,7 +952,7 @@ class ImagingSession:
         self,
         patterns: list[AssociatedFiles],
         spaces_to_underscores: bool = True,
-        avoid_clashes: bool = False,
+        on_resource_clash: OnResourceClash = "error",
     ) -> list[FileSet]:
         """Adds files associated with the primary files to the session
 
@@ -1009,7 +1018,7 @@ class ImagingSession:
                     resource_name,
                     fspaths[0],
                     associated=associated_files,
-                    avoid_clashes=avoid_clashes,
+                    on_clash=on_resource_clash,
                 )
                 all_associated.extend(fspaths)
         return all_associated
@@ -1020,9 +1029,8 @@ class ImagingSession:
         scan_type: str | None,
         resource_name: str,
         fileset: FileSet,
-        overwrite: bool = False,
         associated: AssociatedFiles | None = None,
-        avoid_clashes: bool = False,
+        on_clash: OnResourceClash = "error",
         metadata: dict[str, ty.Any] | None = None,
     ) -> None:
         """Adds a resource to the imaging session
@@ -1037,28 +1045,17 @@ class ImagingSession:
             the name of the resource to add
         fileset : FileSet
             the fileset to add as the resource
-        overwrite : bool
-            whether to overwrite existing resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
-        avoid_clashes : bool, optional
-            if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
+        on_clash : OnResourceClash, optional
+            if "avoid", if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
+            if "merge", existing sessions with the same name will be merged.
+            if "error", an error will be raised if a resource with the same name already exists in the scan.
+            if "overwrite", an existing resource with the same name will be overwritten.
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
-
-        Raises
-        ------
-        KeyError
-            if a resource with the same name already exists in the scan and
-            `avoid_clashes` and `overwrite` are both False
         """
-        if overwrite and avoid_clashes:
-            raise ValueError(
-                "Cannot set both 'overwrite' and 'avoid_clashes' to True when adding a "
-                "resource"
-            )
         try:
             scan = self.scans[scan_id]
         except KeyError:
@@ -1094,7 +1091,7 @@ class ImagingSession:
                     existing,
                 )
                 return
-            elif overwrite:
+            elif on_clash == "overwrite":
                 logger.warning(
                     "Overwriting existing resource '%s' in %s scan in %s session",
                     resource_name,
@@ -1102,7 +1099,18 @@ class ImagingSession:
                     self.name,
                 )
                 del scan.resources[resource_name]
-            elif avoid_clashes:
+            elif on_clash == "merge":
+                logger.info(
+                    "Merging resource '%s' with existing resource in %s scan in %s session",
+                    resource_name,
+                    scan_id,
+                    self.name,
+                )
+                if isinstance(existing.fileset, list):
+                    resource.fileset = existing.fileset.append(fileset)
+                else:
+                    resource.fileset = [existing.fileset, fileset]
+            elif on_clash == "avoid":
                 match = re.match(r"^(.*)__(\d+)$", resource_name)
                 if match:
                     base_name, num = match.groups()
@@ -1120,12 +1128,18 @@ class ImagingSession:
                 resource = ImagingResource(
                     name=resource_name, fileset=fileset, scan=scan
                 )
-            else:
+            elif on_clash == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                    f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource or "
-                    "'avoid_clashes=True' to increment the resource name",
+                    f"{self.name} session. Use 'on_resource_clash=\"overwrite\"' to overwrite the existing resource, "
+                    "'on_resource_clash=\"avoid\"' to increment the resource name, "
+                    "'on_resource_clash=\"merge\"' to merge with the existing resource, or "
+                    "'on_resource_clash=\"error\"' to raise an error.",
                 )
+            else:
+                assert (
+                    False
+                ), f"Invalid value for on_resource_clash: {on_clash} (should be one of {ON_RESOURCE_CLASH})"
         scan.resources[resource_name] = resource
 
     def add_session_resource(
@@ -1274,6 +1288,7 @@ class ImagingSession:
         available_projects: list[str] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
         include: ty.Sequence[type[FileSet]] = (),
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
@@ -1346,6 +1361,7 @@ class ImagingSession:
                 session_dir,
                 copy_mode=copy_mode,
                 collation_map=collation_map,
+                conversion_map=conversion_map,
                 include=include,
             )
             saved_scan.session = saved

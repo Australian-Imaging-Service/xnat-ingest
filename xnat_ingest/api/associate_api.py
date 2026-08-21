@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
-from ..helpers.arg_types import AssociatedFiles
+from ..helpers.arg_types import AssociatedFiles, OnResourceClash
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -19,7 +19,7 @@ def associate(
     glob: str,
     identity_pattern: str,
     spaces_to_underscores: bool = False,
-    avoid_clashes: bool = False,
+    on_resource_clash: OnResourceClash = "error",
     raise_errors: bool = False,
     require_manifest: bool = True,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
@@ -78,7 +78,7 @@ def associate(
             associated = session.associate_files(
                 [AssociatedFiles(datatype, glob, identity_pattern)],
                 spaces_to_underscores=spaces_to_underscores,
-                avoid_clashes=avoid_clashes,
+                on_resource_clash=on_resource_clash,
             )
             session.save(output_dir, copy_mode=copy_mode)
         except Exception as e:
@@ -109,7 +109,7 @@ def associate(
             associated = session.associate_files(
                 [AssociatedFiles(datatype, glob, identity_pattern)],
                 spaces_to_underscores=spaces_to_underscores,
-                avoid_clashes=avoid_clashes,
+                on_resource_clash=on_resource_clash,
             )
             session.save(output_dir, copy_mode=copy_mode)
         except Exception as e:
