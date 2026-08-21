@@ -743,15 +743,13 @@ class ImagingSession:
                     instance: ty.Mapping[str, ty.Any],
                     resource_dir: Path = resource_dir,
                     series_id: str = series_id,
-                ) -> tuple[str, str] | None:
+                ) -> tuple[str, str]:
                     instance_id = instance["ID"]
                     sop_uid = instance["MainDicomTags"].get(
                         "SOPInstanceUID", instance_id
                     )
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
-                    if dest_path.exists():
-                        return None
                     attachment = get_json(
                         f"/instances/{instance_id}/attachments/dicom/info"
                     )
@@ -763,15 +761,29 @@ class ImagingSession:
                         )
                     uuid = attachment["Uuid"]
                     src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
-                    os.link(src_path, dest_path)
+                    if not dest_path.exists():
+                        os.link(src_path, dest_path)
                     return fname, attachment["UncompressedMD5"]
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     linked = executor.map(_link_instance, instances)
-                checksums: dict[str, str] = dict(r for r in linked if r is not None)
+                manifest_path = resource_dir / ImagingResource.MANIFEST_FNAME
+                if manifest_path.exists():
+                    with open(manifest_path) as f:
+                        manifest = json.load(f)
+                    checksums = manifest["checksums"]
+                else:
+                    checksums = {}
+                for fname, checksum in linked:
+                    previous = checksums.get(fname)
+                    if previous is not None and previous != checksum:
+                        raise ValueError(
+                            f"Conflicting checksums for '{fname}' in '{resource_dir}'"
+                        )
+                    checksums[fname] = checksum
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
-                with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
+                with open(manifest_path, "w") as f:
                     json.dump(manifest, f, indent=4)
 
             metadata_path = session_dir / Metadata.FNAME
@@ -786,6 +798,8 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
+            loaded = cls.load(session_dir)
+
             if processed_label:
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
@@ -794,7 +808,7 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
-            staged.append(cls.load(session_dir))
+            staged.append(loaded)
 
         return staged
 

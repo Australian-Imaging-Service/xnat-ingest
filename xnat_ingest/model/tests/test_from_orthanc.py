@@ -88,6 +88,32 @@ class FakeOrthanc:
             sid for sid, s in self.studies.items() if set(labels) <= s["labels"]
         )
 
+    def add_series(
+        self,
+        study_id: str,
+        dcm_path: Path,
+        series_tags: ty.Dict[str, str],
+    ) -> None:
+        series_number = len(self.studies[study_id]["series"]) + 1
+        series_id = f"{study_id}-series{series_number}"
+        instance_id = f"{study_id}-instance{series_number}"
+        sop_uid = series_tags.pop(
+            "SOPInstanceUID", f"{study_id}-sop-uid-{series_number}"
+        )
+        content = dcm_path.read_bytes()
+        uuid = f"{instance_id}-uuid"
+        dest = self.store_dir / uuid[0:2] / uuid[2:4] / uuid
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        self.instances[instance_id] = {
+            "sop_uid": sop_uid,
+            "uuid": uuid,
+            "md5": hashlib.md5(content).hexdigest(),
+            "size": len(content),
+        }
+        self.series[series_id] = {"tags": series_tags, "instances": [instance_id]}
+        self.studies[study_id]["series"].append(series_id)
+
     def get(self, path: str) -> ty.Any:
         parts = path.strip("/").split("/")
         if parts[0] == "studies" and len(parts) == 2:
@@ -268,3 +294,35 @@ def test_from_orthanc_stages_nothing_when_no_study_has_the_label(
 
     assert staged == []
     assert fake.labelled == []
+
+
+def test_from_orthanc_merges_series_with_same_resource_path(tmp_path: Path) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    dcm_dir = tmp_path / "colliding-series"
+    get_topogram_image(
+        dcm_dir,
+        StudyInstanceUID="1.2.3.0",
+        SeriesInstanceUID="1.2.3.0.2",
+        AccessionNumber="ACC-READY",
+        PatientID="subject1",
+    )
+    fake.add_series(
+        "study-ready",
+        next(dcm_dir.iterdir()),
+        series_tags={"SeriesNumber": "1", "SeriesDescription": "Topogram"},
+    )
+
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=tmp_path / "staged",
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            password=ORTHANC_PASSWORD,
+            to_process_label="ready",
+            processed_label="done",
+        )
+
+    resource = staged[0].scans["1"].resources["DICOM"]
+    assert len(resource.fileset.fspaths) == 2
+    assert len(resource.checksums) == 2
