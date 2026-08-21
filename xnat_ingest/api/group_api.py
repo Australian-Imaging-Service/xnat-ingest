@@ -29,7 +29,6 @@ def group(
     conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
-    wait_period: int = 0,
     on_resource_clash: OnResourceClash = "error",
     recursive: bool = False,
 ) -> list[str]:
