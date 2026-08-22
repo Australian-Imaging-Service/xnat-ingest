@@ -242,7 +242,6 @@ def save_sessions_to_dir(
 ) -> list[str]:
     errors = []
     for session in tqdm(sessions, msg):
-
         if wait_period:
             last_mod = session.last_modified()
             if (time.time_ns() - last_mod) < wait_period * 1e9:
@@ -256,7 +255,6 @@ def save_sessions_to_dir(
                 continue
 
         try:
-
             # We save the session into a temporary "pre-stage" directory first before
             # moving them into the final "staged" directory. This is to prevent the
             # files being transferred/deleted until the saved session is in a final state.

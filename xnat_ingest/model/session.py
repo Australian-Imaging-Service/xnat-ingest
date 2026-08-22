@@ -716,7 +716,7 @@ class ImagingSession:
 
         study_ids = sorted(candidates)
         logger.info(
-            "Found %d studies in Orthanc at '%s' " "(label=%r, skip label=%r)",
+            "Found %d studies in Orthanc at '%s' (label=%r, skip label=%r)",
             len(study_ids),
             url,
             to_process_label,

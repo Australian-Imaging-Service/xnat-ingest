@@ -25,7 +25,12 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: "3.13"
-    - uses: pre-commit/action@v3.0.1
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v9.0.0
+      with:
+        enable-cache: true
+    - name: Run pre-commit
+      run: uv tool run pre-commit run --all-files --show-diff-on-failure
 
   test:
     services:
@@ -62,6 +67,12 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Set up uv
+      uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d
+
+      with:
+        enable-cache: true
+
     # - name: Install other dependencies
     #   run: |
     #     sudo apt-get update
@@ -80,11 +91,10 @@ jobs:
     #     conda install -c mrtrix3 mrtrix3
     #     mrconvert --version
 
-    - name: Update build tools
-      run: python3 -m pip install --upgrade pip
-
     - name: Install Xnat-Ingest
-      run: python3 -m pip install .[test]
+      run: |
+        uv venv --python python3
+        uv pip install ".[test]"
 
     - name: Save XNAT username/password in ~/.netrc
       run: |
@@ -93,7 +103,7 @@ jobs:
         echo "password admin" >> $HOME/.netrc
 
     - name: Pytest
-      run: pytest -vvs --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
+      run: uv run --no-sync pytest -vvs --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2

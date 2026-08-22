@@ -52,14 +52,12 @@ one.
 Code style
 --------------
 
-Formatting and linting are enforced via ``pre-commit`` — `black
-<https://black.readthedocs.io/>`_ (88-column lines), `isort
-<https://pycqa.github.io/isort/>`_, `flake8 <https://flake8.pycqa.org/>`_ and
-``codespell`` all run automatically against the files you've changed whenever you
+Formatting and linting are enforced via ``pre-commit`` — `Ruff
+<https://docs.astral.sh/ruff/>`_ (88-column formatting, import sorting and
+linting) and ``codespell`` run automatically against the files you've changed whenever you
 ``git commit``, once ``pre-commit install`` (above) has been run once in your clone.
-CI itself only runs the test suite, not a separate lint step, so this is the only
-real enforcement of style in this project — please make sure it's installed and
-passing before opening a pull request.
+CI runs the same hooks across the full repository, so please make sure they pass
+before opening a pull request.
 
 To check your whole working tree rather than just what's staged (useful after
 installing ``pre-commit`` for the first time, or before a big PR):
