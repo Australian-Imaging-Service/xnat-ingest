@@ -19,6 +19,7 @@ bytes are copied into the fake store_dir so checksums are genuine).
 
 import hashlib
 import typing as ty
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -96,6 +97,7 @@ class FakeOrthanc:
                 "MainDicomTags": s["tags"],
                 "PatientMainDicomTags": s["patient_tags"],
                 "Series": s["series"],
+                "LastUpdate": s.get("last_update", "20000101T000000"),
             }
         if parts[0] == "series" and len(parts) == 3 and parts[2] == "instances":
             return [
@@ -268,3 +270,25 @@ def test_from_orthanc_stages_nothing_when_no_study_has_the_label(
 
     assert staged == []
     assert fake.labelled == []
+
+
+def test_from_orthanc_waits_for_recent_studies(tmp_path: Path) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    fake.studies["study-ready"]["last_update"] = datetime.now(UTC).strftime(
+        "%Y%m%dT%H%M%S"
+    )
+
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=tmp_path / "staged",
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            password=ORTHANC_PASSWORD,
+            to_process_label="ready",
+            processed_label="done",
+            wait_period=300,
+        )
+
+    assert staged == []
+    assert ("study-ready", "done") not in fake.labelled
