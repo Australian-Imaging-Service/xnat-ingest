@@ -160,7 +160,7 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
     if not spec_dir.exists():
         return None
     return {
-        from_mime(p.name.replace("@", "/")): p
+        from_mime(p.stem.replace("@", "/")): p
         for p in spec_dir.iterdir()
         if "@" in p.name
     }
