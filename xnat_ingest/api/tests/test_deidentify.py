@@ -4,10 +4,12 @@ from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
+from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
 from xnat_ingest.api.deidentify_api import DEFAULT_SPEC_DIR, deidentify, load_specs
+from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
 
 PROJECT_ID = "PROJ"
@@ -285,3 +287,69 @@ def test_deidentify_uses_project_spec_over_default(
     assert len(received_specs) == 1
     # The spec passed in should map DicomSeries to the project file, not the default
     assert received_specs[0].get(DicomSeries) == project_spec_file
+
+
+# ── end-to-end test (no mocking of ImagingSession.deidentify) ───────────────
+
+
+def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
+    """Runs deidentify() against a real session directory (written by
+    ImagingSession.save()) without mocking ImagingSession.deidentify, and checks
+    that the output directory structure is a single, correctly-named session
+    directory that can be reloaded with ImagingSession.load().
+
+    Regression test for a bug where deidentify_api.deidentify() passed
+    `output_dir` directly (rather than a scratch directory) as the `dest_dir`
+    for `session.deidentify()`, and then called
+    `deidentified_session.save(output_dir / session_listing.name)` on top of
+    that, resulting in files written twice: once as stray `<scan_id>/<resource>`
+    directories directly under `output_dir`, and again correctly nested under
+    `output_dir/<session_name>`.
+    """
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    spec_dir = tmp_path / "spec"
+    reid_dir = tmp_path / "reid"
+    for d in (input_dir, output_dir, spec_dir, reid_dir):
+        d.mkdir()
+    (spec_dir / PROJECT_ID).mkdir()
+
+    scan_id = "1"
+    resource_name = "RESOURCE"
+    # A generic File has no `contains_phi` attribute, so it takes the plain-copy
+    # path in ImagingSession.deidentify() and doesn't require a real deid spec.
+    session = ImagingSession(
+        uid=SESSION_NAME,
+        project_id=PROJECT_ID,
+        subject_id=SUBJECT_ID,
+        session_id=VISIT_ID,
+        scans=[
+            ImagingScan(
+                id=scan_id,
+                type="SomeScanType",
+                resources={resource_name: File.sample(seed=1)},
+            )
+        ],
+    )
+    session.save(input_dir)
+
+    errors = deidentify(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        spec_dir=spec_dir,
+        reid_dir=reid_dir,
+    )
+
+    assert errors == []
+
+    session_out_dir = output_dir / SESSION_NAME
+    assert session_out_dir.is_dir()
+    # The deidentified session must not be nested inside another directory of
+    # the same name
+    assert not (session_out_dir / SESSION_NAME).exists()
+    # No stray scan directories should be written directly under output_dir
+    assert not (output_dir / scan_id).exists()
+
+    reloaded = ImagingSession.load(session_out_dir)
+    assert reloaded.name == SESSION_NAME
+    assert reloaded.scans[scan_id].resources[resource_name].fileset.fspath.exists()
