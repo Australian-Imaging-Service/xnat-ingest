@@ -61,7 +61,7 @@ match.
     spec file is what matters (it tells ``deidentify`` a format is handled for that
     project), while the actual fields removed from DICOM are currently a fixed,
     built-in list regardless of what the spec file contains. Until the content is
-    read, an empty JSON object (``{}``) is a reasonable placeholder for each spec
+    read, the path to an empty JSON object is a reasonable placeholder for each spec
     file.
 
 
