@@ -63,7 +63,6 @@ def deidentify(
         total=num_sessions,
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
-
         try:
             session = ImagingSession.load(
                 session_listing.cache_path,
@@ -100,8 +99,16 @@ def deidentify(
                 if scratch_dir.exists():
                     shutil.rmtree(scratch_dir)
                 # List dcm files in the output directory to ensure that the deidentification process produced output
-                output_files = [str(file) for file in output_dir.rglob("*") if file.is_file() and str(file).endswith('.dcm')]
-                input_files = [str(file) for file in input_dir.rglob("*") if file.is_file() and str(file).endswith('.dcm')]
+                output_files = [
+                    str(file)
+                    for file in output_dir.rglob("*")
+                    if file.is_file() and str(file).endswith(".dcm")
+                ]
+                input_files = [
+                    str(file)
+                    for file in input_dir.rglob("*")
+                    if file.is_file() and str(file).endswith(".dcm")
+                ]
                 if len(output_files) != len(input_files):
                     logger.warning(
                         "Deidentification of session '%s' produced %d output files, but %d input files were found. "
@@ -109,7 +116,7 @@ def deidentify(
                         session_listing.session_id,
                         len(output_files),
                         len(input_files),
-                    ) 
+                    )
             reid_document = {
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
