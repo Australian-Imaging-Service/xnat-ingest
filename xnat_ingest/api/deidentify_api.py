@@ -1,4 +1,5 @@
 import json
+import shutil
 import traceback
 import typing as ty
 from pathlib import Path
@@ -80,14 +81,24 @@ def deidentify(
                     )
                 specs = default_spec
 
-            deidentified_session, reid_mdata = session.deidentify(
-                output_dir,
-                copy_mode=copy_mode,
-                on_resource_clash=on_resource_clash,
-                specs=specs,
-                max_workers=max_workers,
-            )
-            deidentified_session.save(output_dir / session_listing.name)
+            # Create a scratch directory for temporary files during deidentification
+            # The scratch directory is created within the output directory to ensure that
+            # it is on the same filesystem, which is important for efficient file operations
+            # The scratch dir is removed after the deidentification process is complete, regardless of success or failure
+            scratch_dir = output_dir / f".deid_scratch_{session_listing.name}"
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                deidentified_session, reid_mdata = session.deidentify(
+                    scratch_dir,
+                    copy_mode=copy_mode,
+                    on_resource_clash=on_resource_clash,
+                    specs=specs,
+                    max_workers=max_workers,
+                )
+                deidentified_session.save(output_dir)
+            finally:
+                if scratch_dir.exists():
+                    shutil.rmtree(scratch_dir)
             reid_document = {
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
