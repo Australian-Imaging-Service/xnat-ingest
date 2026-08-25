@@ -49,6 +49,7 @@ def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
         )
 
     assert errors == []
+    assert (output_dir / SESSION_NAME).exists()
     reid_file = reid_dir / f"{SESSION_NAME}.json"
     assert reid_file.exists()
     assert json.loads(reid_file.read_bytes()) == {
@@ -159,6 +160,7 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
 
     assert errors == []
     for name in session_names:
+        assert (output_dir / name).exists()
         reid_file = reid_dir / f"{name}.json"
         assert reid_file.exists()
         assert json.loads(reid_file.read_bytes())["session_uid"] == name
@@ -255,6 +257,7 @@ def test_deidentify_falls_back_to_default_when_no_project_spec(
         )
 
     assert errors == []
+    assert (output_dir / SESSION_NAME).exists()
     assert (reid_dir / f"{SESSION_NAME}.json").exists()
 
 

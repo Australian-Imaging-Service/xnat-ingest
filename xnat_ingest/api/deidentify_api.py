@@ -91,7 +91,7 @@ def deidentify(
                 specs=specs,
                 max_workers=max_workers,
             )
-            deidentified_session.save(output_dir / session_listing.name)
+            deidentified_session.save(output_dir)
             reid_document = {
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
