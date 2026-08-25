@@ -24,11 +24,11 @@ def group(
     unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    wait_period: int = 0,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
-    wait_period: int = 0,
     on_resource_clash: OnResourceClash = "error",
     recursive: bool = False,
 ) -> list[str]:
@@ -142,6 +142,7 @@ def group_orthanc(
     unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    wait_period: int = 0,
 ) -> list[str]:
     """Groups the input files into sessions and stages them into the staging directory.
 
@@ -150,7 +151,7 @@ def group_orthanc(
     url: str
         Orthanc server to retrieve the DICOM resources from.
     output_dir: Path
-        Path to the staging directory where the grouped sessions will be saved. This should be
+        Path to the staging directory where the grouped sessions will be saved. This should be the final location for the grouped sessions.
     user: str
         Orthanc user to login with
     password: str
@@ -160,11 +161,11 @@ def group_orthanc(
     to_process_label: str | None
         The label externally applied to  sessions in Orthanc to signify that should be processed. If None,
         all sessions will be processed.
-    session_id: list[FieldSpec] | None
-        List of field specifications to use for extracting the session ID from the input files. If None, the
+    session_id: list[IDSpec] | None
+        List of ID specifications to use for extracting the session ID from the input files. If None, the
         session ID will be generated from the subject and visit IDs.
-    scan_id: list[FieldSpec]
-        List of field specifications to use for extracting the scan ID from the input files.
+    scan_id: list[IDSpec]
+        List of ID specifications to use for extracting the scan ID from the input files.
     unlink_source: str | None
         If "all" or "keep-metadata", the source studies in Orthanc will be unlinked after staging. Not yet
         implemented. If None, the source studies will be left in place.
@@ -204,6 +205,7 @@ def group_orthanc(
         password=password,
         to_process_label=to_process_label,
         processed_label=processed_label,
+        wait_period=wait_period,
     )
 
     # Should from_orthanc() not actually move the data, just reference it in place like from_paths()

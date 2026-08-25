@@ -6,8 +6,8 @@
 [![PyPI](https://img.shields.io/pypi/v/xnat-ingest.svg)](https://pypi.python.org/pypi/xnat-ingest/)
 [![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://australian-imaging-service.github.io/xnat-ingest/)
 
-XNAT-Ingest is a toolkit used for sorting data into project/subject/sessions, de-identifying images before
-uploading them to an XNAT instance. Support for various file formats is provided through
+XNAT-Ingest is a collection of tools to sort, label, de-identify data and
+upload them to an XNAT repository. Support for various file types is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
 (e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/), [FileFormats Siemens](https://arcanaframework.github.io/fileformats-vendor-siemens/),...).
 
