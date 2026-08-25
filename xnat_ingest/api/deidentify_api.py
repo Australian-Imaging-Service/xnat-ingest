@@ -99,6 +99,17 @@ def deidentify(
             finally:
                 if scratch_dir.exists():
                     shutil.rmtree(scratch_dir)
+                # List dcm files in the output directory to ensure that the deidentification process produced output
+                output_files = [str(file) for file in output_dir.rglob("*") if file.is_file() and str(file).endswith('.dcm')]
+                input_files = [str(file) for file in input_dir.rglob("*") if file.is_file() and str(file).endswith('.dcm')]
+                if len(output_files) != len(input_files):
+                    logger.warning(
+                        "Deidentification of session '%s' produced %d output files, but %d input files were found. "
+                        "This may indicate that some files were not processed correctly.",
+                        session_listing.session_id,
+                        len(output_files),
+                        len(input_files),
+                    ) 
             reid_document = {
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
