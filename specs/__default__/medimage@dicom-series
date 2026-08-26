@@ -6,11 +6,6 @@ FORMAT dicom
 # DICOM PS 3.15 Annex E requires this tag to be set to YES
 ADD PatientIdentityRemoved YES
 
-# ── Linkage UIDs — explicitly preserved for re-identification mapping ────────
-KEEP StudyInstanceUID
-KEEP SeriesInstanceUID
-KEEP SOPInstanceUID
-
 # ── Patient identity ─────────────────────────────────────────────────────────
 # Values are computed in dicom.py variable builders and injected via var:
 REPLACE PatientID var:anon_patient_id
@@ -25,84 +20,36 @@ REMOVE BranchOfService
 REMOVE PatientReligiousPreference
 REMOVE MedicalRecordLocator
 REMOVE ReferencedPatientPhotoSequence
+KEEP ReferringPhysicianName
+BLANK OtherPatientIDs
+BLANK AdditionalPatientHistory
+BLANK Occupation
+BLANK OtherPatientNames
 
 # ── Study / accession ────────────────────────────────────────────────────────
-KEEP AccessionNumber # REPLACE AccessionNumber var:anon_accession_number # Use if there is a method for keeping salt confidential.
-KEEP StudyID # REPLACE StudyID var:anon_study_id # Use if there is a method for keeping salt confidential.
+BLANK AccessionNumber # REPLACE AccessionNumber var:anon_accession_number # Use if there is a method for keeping salt confidential.
 
 # ── Dates — jitter by var:date_jitter days ───────────────────────────────────
 # date_jitter is an integer (days) set via DEID_DATE_JITTER env var (default 0)
-JITTER StudyDate var:date_jitter
-JITTER SeriesDate var:date_jitter
-JITTER AcquisitionDate var:date_jitter
-JITTER ContentDate var:date_jitter
-JITTER InstanceCreationDate var:date_jitter
 # PatientBirthDate is handled by REPLACE above (year + 0101)
 JITTER endswith:Date var:date_jitter
 
 # ── Times — zero out (preserve relative ordering within a study) ──────────────
-BLANK StudyTime
-BLANK SeriesTime
-BLANK AcquisitionTime
-BLANK ContentTime
-
-# ── Physician / operator / institution ───────────────────────────────────────
-KEEP ReferringPhysicianName
-REMOVE ReferringPhysicianAddress
-REMOVE ReferringPhysicianTelephoneNumbers
-REMOVE ReferringPhysicianIdentificationSequence
-REMOVE PerformingPhysicianName
-REMOVE PerformingPhysicianIdentificationSequence
-REMOVE NameOfPhysiciansReadingStudy
-REMOVE PhysiciansReadingStudyIdentificationSequence
-REMOVE OperatorsName
-REMOVE OperatorIdentificationSequence
-REMOVE InstitutionName
-REMOVE InstitutionAddress
-REMOVE InstitutionalDepartmentName
-REMOVE IssuerOfPatientID
-REMOVE contains:PhysicianName
-
-# ── Device / station ─────────────────────────────────────────────────────────
-REMOVE StationName
-REMOVE DeviceSerialNumber
-REMOVE PlateID
-
-# ── Request / order ──────────────────────────────────────────────────────────
-REMOVE RequestingPhysician
-REMOVE RequestingService
-REMOVE RequestedProcedureDescription
-REMOVE RequestedProcedureID
-REMOVE RequestedProcedureComments
-REMOVE ReasonForTheRequestedProcedure
+BLANK PatientBirthTime
 
 # ── Protocol / description (may contain free text PHI) ───────────────────────
 # Comment these out if your downstream analysis needs protocol descriptions.
-BLANK ProtocolName
-BLANK StudyDescription
-BLANK SeriesDescription
-
-# ── UIDs — strip all secondary UIDs except those required for DICOM validity ──
-# SOPInstanceUID, StudyInstanceUID, SeriesInstanceUID are left intact so the
-# DICOM hierarchy is preserved. Remove the BLANK lines below if you want to
-# generate fresh UIDs instead (requires generating them in engine.py).
-REMOVE RequestedSOPInstanceUID
-REMOVE StorageMediaFileSetUID
-REMOVE UID
-
-# ── Sequences / curves / overlays ────────────────────────────────────────────
-# These are handled by strip_sequences=True in the engine; recipe entries here
-# are belt-and-suspenders for sequence tags that may appear as top-level tags.
-REMOVE ReferencedStudySequence
-REMOVE ReferencedPatientSequence
-REMOVE OtherPatientIDs
-REMOVE OtherPatientIDsSequence
-REMOVE OtherPatientNames
+BLANK AdmittingDiagnosisDescription
+BLANK OperatorName
+BLANK PerformingPhysicianName
+BLANK PhysicianOfRecord
 
 # ── Comments ───────────────────────────────────────────────────────────────────
 # PatientComments carries structured field mapping (Project/Subject/Session)
 REPLACE PatientComments var:patient_comments
 BLANK ImageComments
-BLANK VisitComments
 BLANK AdmissionID
 BLANK AdmittingDiagnosesDescription
+BLANK NameOfPhysicianReadingStudy
+BLANK ReferringPhysicianAddress
+BLANK ReferringPhysicianPhoneNumbers
