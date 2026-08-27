@@ -11,20 +11,12 @@ ADD PatientIdentityRemoved YES
 REPLACE PatientID var:anon_patient_id
 REPLACE PatientName var:anon_patient_name
 REPLACE PatientBirthDate var:anon_birth_date
-REMOVE PatientAddress
-REMOVE PatientMotherBirthName
-REMOVE PatientTelephoneNumbers
-REMOVE PatientInsurancePlanCodeSequence
-REMOVE MilitaryRank
-REMOVE BranchOfService
-REMOVE PatientReligiousPreference
-REMOVE MedicalRecordLocator
-REMOVE ReferencedPatientPhotoSequence
 KEEP ReferringPhysicianName
 BLANK OtherPatientIDs
 BLANK AdditionalPatientHistory
 BLANK Occupation
 BLANK OtherPatientNames
+BLANK MedicalRecordLocator
 
 # ── Study / accession ────────────────────────────────────────────────────────
 BLANK AccessionNumber # REPLACE AccessionNumber var:anon_accession_number # Use if there is a method for keeping salt confidential.
