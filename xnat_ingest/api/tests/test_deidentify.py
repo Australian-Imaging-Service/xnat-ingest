@@ -8,7 +8,7 @@ from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
-import specs as _specs_pkg
+import xnat_ingest.specs as _specs_pkg
 from xnat_ingest.api.deidentify_api import DEFAULT_SPEC_DIR, deidentify, load_specs
 from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession

@@ -95,7 +95,7 @@ source = "vcs"
 version-file = "xnat_ingest/_version.py"
 
 [tool.hatch.build]
-packages = ["xnat_ingest", "specs"]
+packages = ["xnat_ingest"]
 exclude = ["/tests"]
 
 [tool.black]
