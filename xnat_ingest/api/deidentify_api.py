@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import shutil
 import traceback
@@ -13,9 +14,10 @@ from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
-from ..model.session import ImagingSession
+from ..model.session import ImagingSession, Transform
 
 DEFAULT_SPEC_DIR = "__default__"
+TRANSFORMS_SUFFIX = ".transforms.py"
 
 
 def deidentify(
@@ -56,7 +58,7 @@ def deidentify(
 
     errors: list[str] = []
 
-    default_spec = load_specs(spec_dir / DEFAULT_SPEC_DIR)
+    default_loaded = load_specs(spec_dir / DEFAULT_SPEC_DIR)
 
     for session_listing in tqdm(
         sessions,
@@ -71,14 +73,15 @@ def deidentify(
             )
             # Get the project-specific deidentification specs for this session
             # for each file type
-            specs = load_specs(spec_dir / session.project_id)
-            if specs is None:
-                if default_spec is None:
+            loaded = load_specs(spec_dir / session.project_id)
+            if loaded is None or not any(loaded):
+                if default_loaded is None or not any(default_loaded):
                     raise ValueError(
                         f"No deidentification specs found for project '{session.project_id}' "
                         "and no default specs provided."
                     )
-                specs = default_spec
+                loaded = default_loaded
+            specs, transforms = loaded
 
             # Create a scratch directory for temporary files during deidentification
             # The scratch directory is created within the output directory to ensure that
@@ -92,6 +95,7 @@ def deidentify(
                     copy_mode=copy_mode,
                     on_resource_clash=on_resource_clash,
                     specs=specs,
+                    transforms=transforms,
                     max_workers=max_workers,
                 )
                 deidentified_session.save(output_dir)
@@ -163,12 +167,30 @@ def deidentify(
     return errors
 
 
-def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] | None:
+def load_specs(
+    spec_dir: Path,
+) -> (
+    tuple[
+        ty.Mapping[type[MedicalImagingData], Path],
+        ty.Mapping[type[MedicalImagingData], dict[str, Transform]],
+    ]
+    | None
+):
     """Loads the deidentification specifications from the given directory,
-    returning a mapping of file-formats to their corresponding spec file paths.
-    The spec files should be named in the format '{mime_type}.json', where
-    the mime type is transformed by replacing '/' with '@' to be filesystem-friendly.
-    If the spec directory does not exist, returns None
+    returning a mapping of file-formats to their corresponding spec file paths
+    and a mapping of file-formats to their transforms.
+
+    The directory structure mirrors the MIME-like hierarchy of the file formats::
+
+        spec_dir/
+        └── <category>/          # e.g. "medimage"
+            ├── <format>         # e.g. "dicom-series" (any extension or none)
+            └── <format>.transforms.py   # optional transforms
+
+    Transforms files must define a ``TRANSFORMS`` dict mapping transform
+    names to callables that accept a dataset/mapping and return a value.
+
+    If the spec directory does not exist, returns None.
 
     Parameters
     ----------
@@ -177,15 +199,84 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
 
     Returns
     -------
-    dict or None
-        A mapping of file-format types to their corresponding spec file paths,
-        or None if the spec directory does not exist.
-
+    tuple or None
+        A 2-tuple of (specs, transforms) where *specs* maps file-format
+        types to their corresponding spec file paths and *transforms*
+        maps file-format types to their transform dicts.  Returns None if the
+        spec directory does not exist.
     """
     if not spec_dir.exists():
         return None
-    return {
-        from_mime(p.stem.replace("@", "/")): p
-        for p in spec_dir.iterdir()
-        if "@" in p.name
-    }
+    specs: dict[type[MedicalImagingData], Path] = {}
+    transforms: dict[type[MedicalImagingData], dict[str, Transform]] = {}
+    for category_dir in spec_dir.iterdir():
+        if not category_dir.is_dir() or category_dir.name.startswith((".", "_")):
+            continue
+        for p in category_dir.iterdir():
+            if p.is_dir() or p.name.startswith("."):
+                continue
+            if p.name.endswith(TRANSFORMS_SUFFIX):
+                # e.g. medimage/dicom-series.transforms.py
+                format_name = p.name[: -len(TRANSFORMS_SUFFIX)]
+                filetype = _resolve_mime_type(category_dir.name, format_name)
+                if filetype is None:
+                    continue
+                loaded = _load_transforms(p)
+                if loaded:
+                    transforms[filetype] = loaded
+            else:
+                # Spec file — use full name first, then stem (strip extension)
+                filetype = _resolve_mime_type(
+                    category_dir.name, p.name
+                ) or _resolve_mime_type(category_dir.name, p.stem)
+                if filetype is not None:
+                    specs[filetype] = p
+    return specs, transforms
+
+
+def _resolve_mime_type(
+    category: str,
+    format_name: str,
+) -> type[MedicalImagingData] | None:
+    """Convert a category and format name to a file-format type.
+
+    E.g. ``_resolve_mime_type("medimage", "dicom-series")`` returns
+    ``DicomSeries``.  Returns None if the MIME-like string is not recognised.
+    """
+    mime_like = f"{category}/{format_name}"
+    try:
+        return from_mime(mime_like)
+    except Exception:
+        return None
+
+
+def _load_transforms(
+    transforms_path: Path,
+) -> dict[str, Transform] | None:
+    """Load a TRANSFORMS dict from a Python file.
+
+    Parameters
+    ----------
+    transforms_path : Path
+        path to a ``.transforms.py`` file that defines ``TRANSFORMS``
+
+    Returns
+    -------
+    dict or None
+        the transforms dict, or None if the file does not define one
+    """
+    spec = importlib.util.spec_from_file_location(
+        f"xnat_ingest._deid_transforms.{transforms_path.stem}", transforms_path
+    )
+    if spec is None or spec.loader is None:
+        logger.warning("Could not load transforms from '%s'", transforms_path)
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    loaded = getattr(module, "TRANSFORMS", None)
+    if loaded is None:
+        logger.warning(
+            "Transforms file '%s' does not define TRANSFORMS",
+            transforms_path,
+        )
+    return loaded

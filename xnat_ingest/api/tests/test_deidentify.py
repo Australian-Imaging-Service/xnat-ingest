@@ -186,51 +186,57 @@ def test_load_specs_nonexistent_dir_returns_none(tmp_path: Path) -> None:
     assert load_specs(tmp_path / "nonexistent") is None
 
 
+def _write_spec(spec_dir: Path, mime_like: str, content: str = "{}") -> Path:
+    """Helper to create a spec file at spec_dir/<category>/<format>."""
+    category, format_name = mime_like.split("/", 1)
+    (spec_dir / category).mkdir(parents=True, exist_ok=True)
+    spec_file = spec_dir / category / format_name
+    spec_file.write_text(content)
+    return spec_file
+
+
 def test_load_specs_empty_dir_returns_empty_dict(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
-    assert load_specs(spec_dir) == {}
+    assert load_specs(spec_dir) == ({}, {})
 
 
-def test_load_specs_ignores_files_without_at(tmp_path: Path) -> None:
+def test_load_specs_ignores_non_category_files(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
     (spec_dir / "README").write_text("docs")
     (spec_dir / "config.json").write_text("{}")
-    assert load_specs(spec_dir) == {}
+    assert load_specs(spec_dir) == ({}, {})
 
 
 def test_load_specs_single_mime_like(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
-    # Spec files are named as mime-like with '/' replaced by '@', no extension
-    spec_file = spec_dir / "medimage@dicom-series"
-    spec_file.write_text("{}")
-    result = load_specs(spec_dir)
-    assert result == {DicomSeries: spec_file}
+    spec_file = _write_spec(spec_dir, "medimage/dicom-series")
+    specs, transforms = load_specs(spec_dir)
+    assert specs == {DicomSeries: spec_file}
+    assert transforms == {}
 
 
 def test_load_specs_multiple_mime_likes(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
-    dcm_file = spec_dir / "medimage@dicom-series"
-    dcm_file.write_text("{}")
-    mf_file = spec_dir / "testing@my-format"
-    mf_file.write_text("{}")
-    mfgz_file = spec_dir / "testing@my-format-gz"
-    mfgz_file.write_text("{}")
-    result = load_specs(spec_dir)
-    assert result == {DicomSeries: dcm_file, MyFormat: mf_file, MyFormatGz: mfgz_file}
+    dcm_file = _write_spec(spec_dir, "medimage/dicom-series")
+    mf_file = _write_spec(spec_dir, "testing/my-format")
+    mfgz_file = _write_spec(spec_dir, "testing/my-format-gz")
+    specs, transforms = load_specs(spec_dir)
+    assert specs == {DicomSeries: dcm_file, MyFormat: mf_file, MyFormatGz: mfgz_file}
+    assert transforms == {}
 
 
-def test_load_specs_mixed_files_only_picks_at_names(tmp_path: Path) -> None:
+def test_load_specs_mixed_files_only_picks_mime_names(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
-    spec_file = spec_dir / "medimage@dicom-series"
-    spec_file.write_text("{}")
+    spec_file = _write_spec(spec_dir, "medimage/dicom-series")
     (spec_dir / "README").write_text("docs")
-    result = load_specs(spec_dir)
-    assert result == {DicomSeries: spec_file}
+    specs, transforms = load_specs(spec_dir)
+    assert specs == {DicomSeries: spec_file}
+    assert transforms == {}
 
 
 # ── deidentify fallback / error tests ────────────────────────────────────────
@@ -244,7 +250,7 @@ def test_deidentify_falls_back_to_default_when_no_project_spec(
     (spec_dir / PROJECT_ID).rmdir()
     default_dir = spec_dir / DEFAULT_SPEC_DIR
     default_dir.mkdir()
-    (default_dir / "medimage@dicom-series").write_text("{}")
+    _write_spec(default_dir, "medimage/dicom-series")
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
@@ -265,9 +271,10 @@ def test_deidentify_uses_project_spec_over_default(
     # Both project and default specs exist; project spec should be used
     default_dir = spec_dir / DEFAULT_SPEC_DIR
     default_dir.mkdir()
-    (default_dir / "medimage@dicom-series").write_text('{"default": true}')
-    project_spec_file = spec_dir / PROJECT_ID / "medimage@dicom-series"
-    project_spec_file.write_text('{"project": true}')
+    _write_spec(default_dir, "medimage/dicom-series", '{"default": true}')
+    project_spec_file = _write_spec(
+        spec_dir / PROJECT_ID, "medimage/dicom-series", '{"project": true}'
+    )
 
     received_specs: list = []
 

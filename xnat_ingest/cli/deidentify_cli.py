@@ -36,9 +36,12 @@ are uploaded to XNAT
 SPEC_DIR is the directory containing the project-specific deidentification specifications.
 It should contain one subdirectory per project, named <project_id>, plus an optional
 "__default__" subdirectory used as a fallback for projects that don't have their own.
-Within each of these subdirectories, there is one JSON spec file per file format that
-requires deidentification in that project, named after the format's MIME-like identifier
-with '/' replaced by '@' (e.g. 'medimage/dicom-series' -> 'medimage@dicom-series.json').
+Within each of these subdirectories, the directory structure mirrors the MIME-like
+hierarchy: a subdirectory per category containing one spec file per format
+(e.g. 'medimage/dicom-series'). Any file extension (or none) is accepted.
+Optionally, a transforms file named '<format>.transforms.py' (e.g.
+'medimage/dicom-series.transforms.py') can sit alongside the spec to define
+callable transforms for computed replacement values.
 Formats without a matching spec file are only deidentified if a spec is found for a
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').
