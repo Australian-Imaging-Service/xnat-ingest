@@ -8,9 +8,12 @@ from fileformats.generic import File
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
+import specs as _specs_pkg
 from xnat_ingest.api.deidentify_api import DEFAULT_SPEC_DIR, deidentify, load_specs
 from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
+
+SHIPPED_SPECS_DIR = Path(_specs_pkg.__path__[0])
 
 PROJECT_ID = "PROJ"
 SUBJECT_ID = "SUBJ"
@@ -24,13 +27,11 @@ REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101", "PatientID": "PID001
 def dirs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    spec_dir = tmp_path / "spec"
     reid_dir = tmp_path / "reid"
-    for d in [input_dir, output_dir, spec_dir, reid_dir]:
+    for d in [input_dir, output_dir, reid_dir]:
         d.mkdir(parents=True)
     (input_dir / SESSION_NAME).mkdir()
-    (spec_dir / PROJECT_ID).mkdir()
-    return input_dir, output_dir, spec_dir, reid_dir
+    return input_dir, output_dir, SHIPPED_SPECS_DIR, reid_dir
 
 
 def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
@@ -139,21 +140,19 @@ def test_deidentify_raise_errors(dirs: tuple[Path, Path, Path, Path]):
 def test_deidentify_multiple_sessions(tmp_path: Path):
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    spec_dir = tmp_path / "spec"
     reid_dir = tmp_path / "reid"
-    for d in [input_dir, output_dir, spec_dir, reid_dir]:
+    for d in [input_dir, output_dir, reid_dir]:
         d.mkdir()
 
     session_names = [f"PROJ.SUBJ{i}.SESS{i}" for i in range(3)]
     for name in session_names:
         (input_dir / name).mkdir()
-    (spec_dir / "PROJ").mkdir()
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            spec_dir=SHIPPED_SPECS_DIR,
             reid_dir=reid_dir,
         )
 
@@ -164,15 +163,16 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
         assert json.loads(reid_file.read_bytes())["session_uid"] == name
 
 
-def test_deidentify_missing_spec_collected(dirs):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    (spec_dir / PROJECT_ID).rmdir()
+def test_deidentify_missing_spec_collected(dirs, tmp_path):
+    input_dir, output_dir, _, reid_dir = dirs
+    empty_spec_dir = tmp_path / "empty_specs"
+    empty_spec_dir.mkdir()
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            spec_dir=empty_spec_dir,
             reid_dir=reid_dir,
         )
 
@@ -244,10 +244,12 @@ def test_load_specs_mixed_files_only_picks_mime_names(tmp_path: Path) -> None:
 
 def test_deidentify_falls_back_to_default_when_no_project_spec(
     dirs: tuple[Path, Path, Path, Path],
+    tmp_path: Path,
 ) -> None:
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    # Remove the project-specific spec dir but provide a default
-    (spec_dir / PROJECT_ID).rmdir()
+    input_dir, output_dir, _, reid_dir = dirs
+    # Provide only a default spec, no project-specific one
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
     default_dir = spec_dir / DEFAULT_SPEC_DIR
     default_dir.mkdir()
     _write_spec(default_dir, "medimage/dicom-series")
@@ -266,14 +268,19 @@ def test_deidentify_falls_back_to_default_when_no_project_spec(
 
 def test_deidentify_uses_project_spec_over_default(
     dirs: tuple[Path, Path, Path, Path],
+    tmp_path: Path,
 ) -> None:
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, _, reid_dir = dirs
     # Both project and default specs exist; project spec should be used
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
     default_dir = spec_dir / DEFAULT_SPEC_DIR
     default_dir.mkdir()
     _write_spec(default_dir, "medimage/dicom-series", '{"default": true}')
+    project_dir = spec_dir / PROJECT_ID
+    project_dir.mkdir()
     project_spec_file = _write_spec(
-        spec_dir / PROJECT_ID, "medimage/dicom-series", '{"project": true}'
+        project_dir, "medimage/dicom-series", '{"project": true}'
     )
 
     received_specs: list = []
@@ -315,11 +322,9 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     """
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    spec_dir = tmp_path / "spec"
     reid_dir = tmp_path / "reid"
-    for d in (input_dir, output_dir, spec_dir, reid_dir):
+    for d in (input_dir, output_dir, reid_dir):
         d.mkdir()
-    (spec_dir / PROJECT_ID).mkdir()
 
     scan_id = "1"
     resource_name = "RESOURCE"
@@ -343,7 +348,7 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     errors = deidentify(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_dir=spec_dir,
+        spec_dir=SHIPPED_SPECS_DIR,
         reid_dir=reid_dir,
     )
 
