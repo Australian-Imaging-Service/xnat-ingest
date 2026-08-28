@@ -22,9 +22,13 @@ BLANK MedicalRecordLocator
 BLANK AccessionNumber # REPLACE AccessionNumber var:anon_accession_number # Use if there is a method for keeping salt confidential.
 
 # ── Dates — jitter by var:date_jitter days ───────────────────────────────────
-# date_jitter is an integer (days) set via DEID_DATE_JITTER env var (default 0)
+# date_jitter is an integer (days) set via DEID_DATE_JITTER env var (default 10)
 # PatientBirthDate is handled by REPLACE above (year + 0101)
-JITTER endswith:Date var:date_jitter
+JITTER StudyDate var:date_jitter
+JITTER SeriesDate var:date_jitter
+JITTER AcquisitionDate var:date_jitter
+JITTER ContentDate var:date_jitter
+JITTER InstanceCreationDate var:date_jitter
 
 # ── Times — zero out (preserve relative ordering within a study) ──────────────
 BLANK PatientBirthTime
