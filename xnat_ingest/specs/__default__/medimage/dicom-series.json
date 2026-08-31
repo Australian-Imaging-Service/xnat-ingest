@@ -1,0 +1,47 @@
+FORMAT dicom
+
+%header
+
+# ── Mark as de-identified ────────────────────────────────────────────────────
+# DICOM PS 3.15 Annex E requires this tag to be set to YES
+ADD PatientIdentityRemoved YES
+
+# ── Patient identity ─────────────────────────────────────────────────────────
+# Values are computed in dicom.py variable builders and injected via var:
+REPLACE PatientID var:anon_patient_id
+REPLACE PatientName var:anon_patient_name
+REPLACE PatientBirthDate var:anon_birth_date
+KEEP ReferringPhysicianName
+BLANK OtherPatientIDs
+BLANK AdditionalPatientHistory
+BLANK Occupation
+BLANK OtherPatientNames
+BLANK MedicalRecordLocator
+
+# ── Study / accession ────────────────────────────────────────────────────────
+BLANK AccessionNumber # REPLACE AccessionNumber var:anon_accession_number # Use if there is a method for keeping salt confidential.
+
+# ── Dates — jitter by var:date_jitter days ───────────────────────────────────
+# date_jitter is an integer (days) set via DEID_DATE_JITTER env var (default 0)
+# PatientBirthDate is handled by REPLACE above (year + 0101)
+JITTER endswith:Date var:date_jitter
+
+# ── Times — zero out (preserve relative ordering within a study) ──────────────
+BLANK PatientBirthTime
+
+# ── Protocol / description (may contain free text PHI) ───────────────────────
+# Comment these out if your downstream analysis needs protocol descriptions.
+BLANK AdmittingDiagnosisDescription
+BLANK OperatorName
+BLANK PerformingPhysicianName
+BLANK PhysicianOfRecord
+
+# ── Comments ───────────────────────────────────────────────────────────────────
+# PatientComments carries structured field mapping (Project/Subject/Session)
+REPLACE PatientComments var:patient_comments
+BLANK ImageComments
+BLANK AdmissionID
+BLANK AdmittingDiagnosesDescription
+BLANK NameOfPhysicianReadingStudy
+BLANK ReferringPhysicianAddress
+BLANK ReferringPhysicianPhoneNumbers

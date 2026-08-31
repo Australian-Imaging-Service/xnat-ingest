@@ -1694,7 +1694,9 @@ def test_deidentify_cli_dicom(
     spec_dir = tmp_path / "spec"
     project_spec_dir = spec_dir / PROJECT_ID
     project_spec_dir.mkdir(parents=True)
-    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
 
     # 4. Run deidentify_cli with the mock deidentify implementation
     output_dir = tmp_path / "deidentified"
@@ -1784,7 +1786,9 @@ def test_deidentify_cli_dicom_encrypted_reid(
     spec_dir = tmp_path / "spec"
     project_spec_dir = spec_dir / PROJECT_ID
     project_spec_dir.mkdir(parents=True)
-    (project_spec_dir / "medimage@dicom-series").write_text("Dummy spec")
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text("Dummy spec")
 
     output_dir = tmp_path / "deidentified"
     reid_dir = tmp_path / "reid"

@@ -1,24 +1,23 @@
+import importlib.util
 import json
-import os
-import tempfile
+import shutil
 import traceback
 import typing as ty
 from pathlib import Path
 
-from ais_deid.dicom.engine import DeidEngine
 from cryptography.fernet import Fernet
-from fileformats.core import FileSet, extra_implementation, from_mime
+from fileformats.core import FileSet, from_mime
 from fileformats.medimage.base import MedicalImagingData
-from fileformats.medimage.dicom import DicomImage
 from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
-from ..model.session import ImagingSession
+from ..model.session import ImagingSession, Transform
 
 DEFAULT_SPEC_DIR = "__default__"
+TRANSFORMS_SUFFIX = ".transforms.py"
 
 
 def deidentify(
@@ -59,14 +58,13 @@ def deidentify(
 
     errors: list[str] = []
 
-    default_spec = load_specs(spec_dir / DEFAULT_SPEC_DIR)
+    default_loaded = load_specs(spec_dir / DEFAULT_SPEC_DIR)
 
     for session_listing in tqdm(
         sessions,
         total=num_sessions,
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
-
         try:
             session = ImagingSession.load(
                 session_listing.cache_path,
@@ -75,23 +73,54 @@ def deidentify(
             )
             # Get the project-specific deidentification specs for this session
             # for each file type
-            specs = load_specs(spec_dir / session.project_id)
-            if specs is None:
-                if default_spec is None:
+            loaded = load_specs(spec_dir / session.project_id)
+            if loaded is None or not any(loaded):
+                if default_loaded is None or not any(default_loaded):
                     raise ValueError(
                         f"No deidentification specs found for project '{session.project_id}' "
                         "and no default specs provided."
                     )
-                specs = default_spec
+                loaded = default_loaded
+            specs, transforms = loaded
 
-            deidentified_session, reid_mdata = session.deidentify(
-                output_dir,
-                copy_mode=copy_mode,
-                on_resource_clash=on_resource_clash,
-                specs=specs,
-                max_workers=max_workers,
-            )
-            deidentified_session.save(output_dir / session_listing.name)
+            # Create a scratch directory for temporary files during deidentification
+            # The scratch directory is created within the output directory to ensure that
+            # it is on the same filesystem, which is important for efficient file operations
+            # The scratch dir is removed after the deidentification process is complete, regardless of success or failure
+            scratch_dir = output_dir / f".deid_scratch_{session_listing.name}"
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                deidentified_session, reid_mdata = session.deidentify(
+                    scratch_dir,
+                    copy_mode=copy_mode,
+                    on_resource_clash=on_resource_clash,
+                    specs=specs,
+                    transforms=transforms,
+                    max_workers=max_workers,
+                )
+                deidentified_session.save(output_dir)
+            finally:
+                if scratch_dir.exists():
+                    shutil.rmtree(scratch_dir)
+                # List dcm files in the output directory to ensure that the deidentification process produced output
+                output_files = [
+                    str(file)
+                    for file in output_dir.rglob("*")
+                    if file.is_file() and str(file).endswith(".dcm")
+                ]
+                input_files = [
+                    str(file)
+                    for file in input_dir.rglob("*")
+                    if file.is_file() and str(file).endswith(".dcm")
+                ]
+                if len(output_files) != len(input_files):
+                    logger.warning(
+                        "Deidentification of session '%s' produced %d output files, but %d input files were found. "
+                        "This may indicate that some files were not processed correctly.",
+                        session_listing.session_id,
+                        len(output_files),
+                        len(input_files),
+                    )
             reid_document = {
                 "session_uid": session.uid,
                 "changed_fields": reid_mdata,
@@ -138,12 +167,30 @@ def deidentify(
     return errors
 
 
-def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] | None:
+def load_specs(
+    spec_dir: Path,
+) -> (
+    tuple[
+        ty.Mapping[type[MedicalImagingData], Path],
+        ty.Mapping[type[MedicalImagingData], dict[str, Transform]],
+    ]
+    | None
+):
     """Loads the deidentification specifications from the given directory,
-    returning a mapping of file-formats to their corresponding spec file paths.
-    The spec files should be named in the format '{mime_type}.json', where
-    the mime type is transformed by replacing '/' with '@' to be filesystem-friendly.
-    If the spec directory does not exist, returns None
+    returning a mapping of file-formats to their corresponding spec file paths
+    and a mapping of file-formats to their transforms.
+
+    The directory structure mirrors the MIME-like hierarchy of the file formats::
+
+        spec_dir/
+        └── <category>/          # e.g. "medimage"
+            ├── <format>         # e.g. "dicom-series" (any extension or none)
+            └── <format>.transforms.py   # optional transforms
+
+    Transforms files must define a ``TRANSFORMS`` dict mapping transform
+    names to callables that accept a dataset/mapping and return a value.
+
+    If the spec directory does not exist, returns None.
 
     Parameters
     ----------
@@ -152,103 +199,84 @@ def load_specs(spec_dir: Path) -> ty.Mapping[ty.Type[MedicalImagingData], Path] 
 
     Returns
     -------
-    dict or None
-        A mapping of file-format types to their corresponding spec file paths,
-        or None if the spec directory does not exist.
-
+    tuple or None
+        A 2-tuple of (specs, transforms) where *specs* maps file-format
+        types to their corresponding spec file paths and *transforms*
+        maps file-format types to their transform dicts.  Returns None if the
+        spec directory does not exist.
     """
     if not spec_dir.exists():
         return None
-    return {
-        from_mime(p.stem.replace("@", "/")): p
-        for p in spec_dir.iterdir()
-        if "@" in p.name
-    }
+    specs: dict[type[MedicalImagingData], Path] = {}
+    transforms: dict[type[MedicalImagingData], dict[str, Transform]] = {}
+    for category_dir in spec_dir.iterdir():
+        if not category_dir.is_dir() or category_dir.name.startswith((".", "_")):
+            continue
+        for p in category_dir.iterdir():
+            if p.is_dir() or p.name.startswith("."):
+                continue
+            if p.name.endswith(TRANSFORMS_SUFFIX):
+                # e.g. medimage/dicom-series.transforms.py
+                format_name = p.name[: -len(TRANSFORMS_SUFFIX)]
+                filetype = _resolve_mime_type(category_dir.name, format_name)
+                if filetype is None:
+                    continue
+                loaded = _load_transforms(p)
+                if loaded:
+                    transforms[filetype] = loaded
+            else:
+                # Spec file — use full name first, then stem (strip extension)
+                filetype = _resolve_mime_type(
+                    category_dir.name, p.name
+                ) or _resolve_mime_type(category_dir.name, p.stem)
+                if filetype is not None:
+                    specs[filetype] = p
+    return specs, transforms
 
 
-@extra_implementation(MedicalImagingData.deidentify)
-def dicom_deidentify(
-    dicom: DicomImage,
-    out_dir: os.PathLike[str],
-    spec: ty.Any = None,
-    **kwargs: ty.Any,
-) -> DicomImage:
+def _resolve_mime_type(
+    category: str,
+    format_name: str,
+) -> type[MedicalImagingData] | None:
+    """Convert a category and format name to a file-format type.
+
+    E.g. ``_resolve_mime_type("medimage", "dicom-series")`` returns
+    ``DicomSeries``.  Returns None if the MIME-like string is not recognised.
     """
-    De-identify a single DicomImage using the dicom_deid engine.
+    mime_like = f"{category}/{format_name}"
+    try:
+        return from_mime(mime_like)
+    except Exception:
+        return None
 
-    Returns the de-identified DicomImage and a mapping dict of metadata for aggregation by XNAT Ingest's session-level reid logic.
+
+def _load_transforms(
+    transforms_path: Path,
+) -> dict[str, Transform] | None:
+    """Load a TRANSFORMS dict from a Python file.
 
     Parameters
     ----------
-    dicom : DicomImage
-        The DicomImage to de-identify.
-    spec : ty.Any, optional
-        Path to a project-specific deidentification specification file.
-    out_dir : os.PathLike[str] | None, optional
-        The output directory for the de-identified image. If none, a temporary directory will be used.
+    transforms_path : Path
+        path to a ``.transforms.py`` file that defines ``TRANSFORMS``
 
     Returns
     -------
-    DicomImage
-        The de-identified DicomImage.
+    dict or None
+        the transforms dict, or None if the file does not define one
     """
-
-    # Add value error when spec is none, since dicom_deid requires a spec to run.
-    if spec is None:
-        raise ValueError(
-            "No deidentification spec provided to dicom_deidentify(). "
-            "Ensure a project-specific recipe file exists in spec_dir for this project and is named using the mime-type convention (e.g. 'medimage@dicom-image')."
-        )
-    recipe_path = Path(spec)
-    if not recipe_path.exists():
-        raise FileNotFoundError(f"Recipe file not found at: {recipe_path}")
-
-    # Resolve output path
-    if out_dir is None:
-        out_dir = Path(tempfile.mkdtemp())
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Resolve input file path from DicomImage object
-    infile = Path(dicom.fspath)
-    outfile = out_dir / infile.name
-
-    # Take pre-snapshot before de-identification for reid metadata
-    # original_ds = pydicom.dcmread(str(infile), stop_before_pixels=True)
-    # pre_snapshot = snapshot_from_pydicom(original_ds)
-
-    # Configure deidentification
-    # Claude suggested moving this outside the function to reduce overhead if processing many files with the same spec. It suggested creating a cache dict that maps spec paths to DeidEngine instances. Is this something we should consider?
-    _engine = DeidEngine(
-        recipe_path=Path(
-            spec
-        ),  # Tom to add guard for if spec is None (use a default recipe or raise an error)
-        capture_headers=False,  # header capture is handled by xnat-ingest's reid logic
-        strip_sequences=True,
-        remove_private=True,
+    spec = importlib.util.spec_from_file_location(
+        f"xnat_ingest._deid_transforms.{transforms_path.stem}", transforms_path
     )
-
-    # Run de-identification using dicom_deid
-    result = _engine.process_file(infile, outfile)
-
-    if not result.success:
-        raise RuntimeError(
-            f"De-identification failed for {infile.name}: {result.error}"
+    if spec is None or spec.loader is None:
+        logger.warning("Could not load transforms from '%s'", transforms_path)
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    loaded = getattr(module, "TRANSFORMS", None)
+    if loaded is None:
+        logger.warning(
+            "Transforms file '%s' does not define TRANSFORMS",
+            transforms_path,
         )
-
-    # Take post-snapshot after de-identification for reid metadata
-    # deid_ds = pydicom.dcmread(str(outfile), stop_before_pixels=True)
-    # post_snapshot = snapshot_from_pydicom(deid_ds)
-
-    # # Build re-identification mapping dict
-    # reid_mdata = build_reid_document(
-    #     pre_snapshot=pre_snapshot,
-    #     post_snapshot=post_snapshot,
-    #     uid_keys=["SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID"],
-    #     source_file=str(infile),
-    #     format_label="DICOM",
-    # )
-
-    # Return the de-identified DicomImage and the re-identification metadata
-    deid_dicom = DicomImage(outfile)
-    return deid_dicom
+    return loaded

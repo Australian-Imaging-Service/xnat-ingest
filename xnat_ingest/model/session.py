@@ -42,6 +42,8 @@ from .scan import ImagingScan
 
 logger = logging.getLogger("xnat-ingest")
 
+Transform = ty.Callable[[ty.Mapping[str, ty.Any]], ty.Any]
+
 _DATE_FORMATS = ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d", "%Y%m%d", "%m/%d/%y", "%m/%d/%Y"]
 _TIME_FORMATS = ["%H.%M.%S", "%H:%M:%S", "%H%M%S"]
 
@@ -118,6 +120,7 @@ def _deidentify_or_copy_resource(
     spec: ty.Any,
     copy_mode: FileSet.CopyMode,
     max_workers: int | None,
+    transforms: dict[str, Transform] | None = None,
 ) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
     """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
     resource.
@@ -134,7 +137,10 @@ def _deidentify_or_copy_resource(
         )
     orig_metadata = dict(fileset.metadata)
     deid_resource = fileset.deidentify(
-        resource_dest_dir, spec=spec, max_workers=max_workers
+        resource_dest_dir,
+        spec=spec,
+        max_workers=max_workers,
+        transforms=transforms,
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
@@ -838,6 +844,7 @@ class ImagingSession:
         on_resource_clash: OnResourceClash = "error",
         require_matching_spec: bool = True,
         max_workers: int | None = None,
+        transforms: dict[type[FileSet], dict[str, Transform]] | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -868,6 +875,11 @@ class ImagingSession:
             Formats that don't accept/use it just ignore it. Resources themselves are
             deidentified/copied sequentially, one at a time, to keep failures easy to
             trace back to the resource that caused them.
+        transforms : dict[type[FileSet], dict[str, Transform]], optional
+            per-format transforms that compute de-identification replacement values.
+            Keys are file-format types; values are dicts mapping transform names to
+            callables that accept a dataset/mapping and return a replacement value.
+            Passed through as ``variable_builders`` to ``FileSet.deidentify()``.
 
         Returns
         -------
@@ -879,6 +891,8 @@ class ImagingSession:
         """
         if specs is None:
             specs = {}
+        if transforms is None:
+            transforms = {}
 
         def select_spec(fileset: FileSet) -> ty.Any:
             """Select the appropriate deidentification specification for the
@@ -898,6 +912,25 @@ class ImagingSession:
                 )
             return next(iter(matching_specs.values()))
 
+        def select_transforms(
+            fileset: FileSet,
+        ) -> dict[str, Transform] | None:
+            """Select the transforms that match this fileset's type."""
+            matching = {k: v for k, v in transforms.items() if isinstance(fileset, k)}
+            if not matching:
+                return None
+            if len(matching) == 1:
+                return next(iter(matching.values()))
+            # Prefer the most specific type
+            for k in matching:
+                if all(issubclass(k, other_k) for other_k in matching):
+                    return matching[k]
+            # Fall back to merging all matching transforms
+            merged: dict[str, Transform] = {}
+            for v in matching.values():
+                merged.update(v)
+            return merged
+
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
 
@@ -907,8 +940,10 @@ class ImagingSession:
                 resource_dest_dir = dest_dir / scan.id / resource_name
                 contains_phi = getattr(resource.fileset, "contains_phi", False)
                 resource_spec = None
+                resource_transforms = None
                 if contains_phi:
                     resource_spec = select_spec(resource.fileset)
+                    resource_transforms = select_transforms(resource.fileset)
                     if resource_spec is None:
                         msg = (
                             "No deidentification specification found for %s fileset in %s/%s resource. "
@@ -936,6 +971,7 @@ class ImagingSession:
                     resource_spec,
                     copy_mode,
                     max_workers,
+                    transforms=resource_transforms,
                 )
                 if reid_mdata is not None:
                     reid_series.append(reid_mdata)
