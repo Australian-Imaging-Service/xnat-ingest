@@ -673,13 +673,13 @@ class MetadataTable(MultiCliTyped):
         targets: list[ImagingSession | ImagingScan | ImagingResource | FileSet],
     ) -> None:
         """
-        Inject metadata from a list of metadata tables into the target object.
+        Inject metadata from a list of metadata tables into the target objects.
 
         Parameters
         ----------
         tables : list[MetadataTable]
             The list of metadata tables to inject metadata from.
-        targets : list[ImagingSession | ImagingScan | Resource | FileSet]
+        targets : list[ImagingSession | ImagingScan | ImagingResource | FileSet]
             The list of target objects to inject metadata into.
         """
         for table in tables:
