@@ -1697,6 +1697,9 @@ def test_deidentify_cli_dicom(
     medimage_dir = project_spec_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
+    (medimage_dir / "dicom-series.transforms.py").write_text(
+        'TRANSFORMS = {"anon_patient_name": lambda ds: str(ds.get("PatientID", ""))}\n'
+    )
 
     # 4. Run deidentify_cli with the mock deidentify implementation
     output_dir = tmp_path / "deidentified"
@@ -1735,6 +1738,80 @@ def test_deidentify_cli_dicom(
     assert any(
         p.is_file() for p in deid_session_root.rglob("*")
     ), f"No files found under {deid_session_root}"
+
+
+def test_deidentify_cli_dicom_missing_transform(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify fails when recipe references a var without a matching transform."""
+
+    PROJECT_ID = "TESTMISSINGTRANSFORM"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.2"
+
+    SPEC_WITH_MISSING_VAR = """
+    FORMAT dicom
+
+    %header
+
+    REPLACE PatientName var:anon_patient_name
+    """
+
+    # 1. Generate DICOM test data
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    # 2. Stage
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        group_cmd,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 3. Assign
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
+    result = cli_runner(
+        assign_cmd,
+        [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 4. Spec with var:anon_patient_name but NO transforms file
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir(parents=True)
+    (medimage_dir / "dicom-series").write_text(SPEC_WITH_MISSING_VAR)
+
+    # 5. Run deidentify — should fail due to missing transform
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    result = cli_runner(
+        deidentify_cmd,
+        [
+            str(assigned_dir),
+            str(output_dir),
+            str(spec_dir),
+            str(reid_dir),
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code != 0, show_cli_trace(result)
+    assert "anon_patient_name" in result.output or "anon_patient_name" in str(
+        result.exception
+    ), f"Expected error about missing 'anon_patient_name' transform: {show_cli_trace(result)}"
 
 
 def test_deidentify_cli_dicom_encrypted_reid(
