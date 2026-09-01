@@ -19,7 +19,6 @@ from fileformats.text import Csv, Tsv
 from fileformats.vendor.openxmlformats_officedocument.application import (
     Spreadsheetml_Sheet,
 )
-from referencing import Resource
 
 from ..exceptions import ImagingSessionParseError
 
@@ -609,7 +608,9 @@ class MetadataTable(MultiCliTyped):
 
     DEFAULT_FILE_TYPES = (Csv, Tsv, Spreadsheetml_Sheet)
 
-    def inject(self, target: ImagingSession | ImagingScan | Resource | FileSet) -> None:
+    def inject(
+        self, target: ImagingSession | ImagingScan | ImagingResource | FileSet
+    ) -> None:
         """
         Inject metadata from this table into the target object.
 
@@ -618,10 +619,16 @@ class MetadataTable(MultiCliTyped):
         target : ImagingSession | ImagingScan | Resource | FileSet
             The target object to inject metadata into.
         """
+        from ..model.resource import ImagingResource
+        from ..model.scan import ImagingScan
+        from ..model.session import ImagingSession
+
         if (
             (isinstance(target, ImagingSession) and self.row_frequency == "session")
             or (isinstance(target, ImagingScan) and self.row_frequency == "scan")
-            or (isinstance(target, Resource) and self.row_frequency == "resource")
+            or (
+                isinstance(target, ImagingResource) and self.row_frequency == "resource"
+            )
             or (
                 isinstance(target, FileSet)
                 and (
@@ -663,7 +670,7 @@ class MetadataTable(MultiCliTyped):
     def inject_list(
         cls,
         tables: list[MetadataTable],
-        targets: list[ImagingSession | ImagingScan | Resource | FileSet],
+        targets: list[ImagingSession | ImagingScan | ImagingResource | FileSet],
     ) -> None:
         """
         Inject metadata from a list of metadata tables into the target object.
