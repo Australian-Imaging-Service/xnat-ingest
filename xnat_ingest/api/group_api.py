@@ -6,7 +6,12 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, OnResourceClash, PathMetadataRegex
+from ..helpers.arg_types import (
+    IDSpec,
+    MetadataTable,
+    OnResourceClash,
+    PathMetadataRegex,
+)
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -30,6 +35,7 @@ def group(
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     on_resource_clash: OnResourceClash = "error",
+    metadata_tables: list[MetadataTable] | None = None,
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
@@ -42,8 +48,8 @@ def group(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
-    datatypes: list[MimeType]
-        List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
+    datatypes: list[FileSet]
+        List of FileSet types to look for in the input files. Only files with these datatypes will be considered for staging.
     session: list[IDSpec] | None
         List of field specifications to use for extracting the session UIDs from the input files to group them into
         separate sessions
@@ -89,6 +95,36 @@ def group(
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
+    metadata_tables: list[MetadataTable] | None
+        Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var).
+        The 'path' arg specifies the location of the metadata table file.
+        By default it will attempt to match the datatype to csv, tsv and openxml spreadsheet (i.e. '.xlsx') formats.
+        However, the format can be explicitly specified by placing its mime-type in square brackets after the
+        file path, e.g., 'path/to/file.csv[text/csv]'.
+        The "row frequency" arg specifies what each row in the
+        metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource',
+        'fileset', 'fileset[<mime-type>]'. If provided, the mime-type(s) explicitly specified in square brackets
+        after the 'fileset' define the file-types to match.
+        The 'join-exprs' arg specifies the expressions used to join the metadata table to the input files.
+        Each join expression should be in the format '<column-name>=<cell-value-to-match>'. The cell value to match
+        can either be the name of an existing metadata field or a Python string template built from one or more existing
+        metadata fields, e.g., '{PatientID}_{SessionID}'.
+        A complex real-world example is shown below, where the relative path of a PNG file is extracted using the
+        `--path-metadata-regex` option and then used to join the metadata table and inject the rows values based on
+        a hyperlink in the 'ImagePath' column.
+
+            group(
+                ...,
+                metadata_table=MetadataTable(
+                    table_file='path/to/file.csv[text/csv]',
+                    row_frequency='fileset[image/png]',
+                    join_exprs='ImagePath="Hyperlink(\\'{relpath}\\')"
+                ),
+                path_metadata_regex=PathMetadataRegex(
+                    pattern='.*(?<relpath>[\\w\\-]+/[\\w\\-]+.(?:png|jpg))'),
+                    datatypes='image/png|image/jpg'
+                )
+            )
     """
 
     errors = []
@@ -110,6 +146,7 @@ def group(
         ignore_paths=ignore_paths,
         ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,
+        metadata_tables=metadata_tables,
     )
 
     errors = save_sessions_to_dir(

@@ -33,6 +33,7 @@ from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AssociatedFiles,
     IDSpec,
+    MetadataTable,
     OnResourceClash,
     PathMetadataRegex,
 )
@@ -374,6 +375,7 @@ class ImagingSession:
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
+        metadata_tables: list[MetadataTable] | None = None,
     ) -> list[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -409,6 +411,9 @@ class ImagingSession:
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
             the corresponding metadata fields to complement the metadata read from the file headers.
+        metadata_tables : list[MetadataTable] or None, optional
+            a list of MetadataTable objects that define how to extract metadata from input files (e.g. CSV files and spreadsheets)
+            and join them with the sessions. If None, no metadata tables will be used.
 
 
         Returns
@@ -436,7 +441,7 @@ class ImagingSession:
             if Directory in datatypes or FileSet in datatypes:
                 raise ValueError(
                     "Cannot use `generic/directory` or `generic/file-set` datatypes with the `recursive` option. Please "
-                    "define a more specific directory datatype (datatypes={datatypes})"
+                    f"define a more specific directory datatype (datatypes={datatypes})"
                 )
             ignore_types.append(Directory)
 
@@ -514,6 +519,8 @@ class ImagingSession:
             filesets = [
                 f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
             ]
+
+        MetadataTable.inject_list(metadata_tables, filesets)
 
         sessions: dict[tuple[str, str, str] | str, Self] = {}
 

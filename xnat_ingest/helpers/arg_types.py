@@ -13,7 +13,13 @@ from pathlib import Path
 import attrs
 import click.types
 from dateutil import parser as dateutil_parser
-from fileformats.core import DataType, FileSet, from_mime
+from fileformats.core import DataType, FileSet, from_mime, from_paths
+from fileformats.core.exceptions import FormatRecognitionError
+from fileformats.text import Csv, Tsv
+from fileformats.vendor.openxmlformats_officedocument.application import (
+    Spreadsheetml_Sheet,
+)
+from referencing import Resource
 
 from ..exceptions import ImagingSessionParseError
 
@@ -499,3 +505,176 @@ class CopyModeParamType(click.ParamType):
             return FileSet.CopyMode[value.lower()]
         except KeyError:
             self.fail(f"{value!r} is not a valid copy mode", param, ctx)
+
+
+def parse_join_exprs(exprs: str | list[str] | list[JoinExpr]) -> list[JoinExpr]:
+    if isinstance(exprs, str):
+        exprs = [e.replace(r"\,", ",") for e in re.split(r"(?<!\\),", exprs)]
+    parsed = []
+    for expr in exprs:
+        if isinstance(expr, JoinExpr):
+            parsed.append(expr)
+        else:
+            try:
+                column_name, value_expr = expr.split("=", 1)
+                parsed.append(
+                    JoinExpr(
+                        column_name=column_name.strip(), value_expr=value_expr.strip()
+                    )
+                )
+            except ValueError:
+                raise ValueError(
+                    f"Invalid join expression format: '{expr}'. Expected 'column_name=value_expr'."
+                )
+    return parsed
+
+
+def table_file_converter(value: str | Path | FileSet) -> FileSet:
+    if isinstance(value, FileSet):
+        return value
+    if isinstance(value, (str, Path)):
+        if match := re.match(r"([^\[+])\[(.*)\]", str(value)):
+            return from_mime(match.group(2))(match.group(1))
+        return from_paths([value], *MetadataTable.DEFAULT_FILE_TYPES)
+    raise TypeError(
+        f"Invalid type for table_file: {type(value).__name__}. Expected str, Path, or FileSet."
+    )
+
+
+def row_frequency_converter(
+    value: str | set[type[FileSet]],
+) -> str | set[type[FileSet]]:
+    if isinstance(value, str):
+        value = value.lower()
+    elif isinstance(value, ty.Iterable):
+        parsed = []
+        for v in value:
+            if issubclass(v, FileSet):
+                parsed.append(v)
+            elif isinstance(v, str):
+                parsed.append(from_mime(v.lower()))
+            else:
+                raise TypeError(
+                    f"Invalid type in row_frequency list: {type(v).__name__}. Expected str or subclass of FileSet."
+                )
+        return set(parsed)
+    if value in {"session", "scan", "resource", "fileset"}:
+        return value
+    if not (value.startswith("fileset[") and value.endswith("]")):
+        raise ValueError(
+            f"Invalid frequency '{value}'. Must be one of 'session', 'scan', "
+            "'resource', 'fileset', 'fileset[<mime-type>]'."
+        )
+    mime_like = value[len("fileset[") : -1]
+    try:
+        return set(from_mime(mime_like))
+    except FormatRecognitionError as e:
+        raise ValueError(
+            f"Invalid row_frequency '{value}'. Could not recognize mime type"
+        ) from e
+
+
+@attrs.define
+class JoinExpr(MultiCliTyped):
+
+    column_name: str
+    value_expr: str
+
+    def value(self, context: dict[str, ty.Any]) -> str:
+        if "{" in self.value_expr:
+            value = self.value_expr.format(**context)
+        else:
+            value = str(context[self.value_expr])
+        return value
+
+
+@attrs.define
+class MetadataTable(MultiCliTyped):
+    """Represents a metadata table to extract and join metadata from input files.
+    Metadata table path, datatype, row frequency, and join expression.
+
+    Parameters:
+        path: Path to the metadata table file.
+        datatype: The datatype (or mime-like thereof) of the metadata table file (used to appropriately load the table).
+        row_frequency: The frequency at which rows are defined (e.g., 'session', 'scan', 'resource', 'fileset', 'fileset[<mime-type>]').
+        join_expr: List of join expressions to extract and join metadata from input files.
+    """
+
+    table_file: FileSet = attrs.field(converter=table_file_converter)
+    row_frequency: str | set[type[FileSet]] = attrs.field(
+        converter=row_frequency_converter
+    )
+    join_exprs: list[JoinExpr] = attrs.field(converter=parse_join_exprs)
+    _table: ty.Any = attrs.field(default=None, init=False, eq=False, repr=False)
+
+    DEFAULT_FILE_TYPES = (Csv, Tsv, Spreadsheetml_Sheet)
+
+    def inject(self, target: ImagingSession | ImagingScan | Resource | FileSet) -> None:
+        """
+        Inject metadata from this table into the target object.
+
+        Parameters
+        ----------
+        target : ImagingSession | ImagingScan | Resource | FileSet
+            The target object to inject metadata into.
+        """
+        if (
+            (isinstance(target, ImagingSession) and self.row_frequency == "session")
+            or (isinstance(target, ImagingScan) and self.row_frequency == "scan")
+            or (isinstance(target, Resource) and self.row_frequency == "resource")
+            or (
+                isinstance(target, FileSet)
+                and (
+                    self.row_frequency == "fileset"
+                    or (
+                        isinstance(self.row_frequency, set)
+                        and any(isinstance(target, t) for t in self.row_frequency)
+                    )
+                )
+            )
+        ):
+            row_ids: set[int] | None = None
+            for expr in self.join_exprs:
+                column = self.table[expr.column_name]
+                value = expr.value(context=target.metadata)
+                col_row_ids = [i for i, v in enumerate(column) if v == value]
+                if row_ids is None:
+                    row_ids = set(col_row_ids)
+                else:
+                    row_ids &= set(col_row_ids)
+            if len(row_ids) > 1:
+                natural_row_ids = [i + 1 for i in row_ids]
+                raise ValueError(
+                    f"Multiple rows match the join expressions for target {target} (rows {natural_row_ids})"
+                )
+            elif row_ids:
+                row_id = next(iter(row_ids))
+                row = [self.table[expr.column_name][row_id] for expr in self.join_exprs]
+                target.metadata.update(row)
+        # Pass and don't inject metadata if the row frequency doesn't match the target type
+
+    @property
+    def table(self) -> ty.Mapping[str, ty.Any]:
+        if self._table is None:
+            self._table = self.table_file.load()
+        return self._table
+
+    @classmethod
+    def inject_list(
+        cls,
+        tables: list[MetadataTable],
+        targets: list[ImagingSession | ImagingScan | Resource | FileSet],
+    ) -> None:
+        """
+        Inject metadata from a list of metadata tables into the target object.
+
+        Parameters
+        ----------
+        tables : list[MetadataTable]
+            The list of metadata tables to inject metadata from.
+        targets : list[ImagingSession | ImagingScan | Resource | FileSet]
+            The list of target objects to inject metadata into.
+        """
+        for table in tables:
+            for target in targets:
+                table.inject(target)

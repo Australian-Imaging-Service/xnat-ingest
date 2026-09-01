@@ -4,6 +4,7 @@ import typing as ty
 from pathlib import Path
 
 import click
+from dateutil import tz
 from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import cli
@@ -16,6 +17,7 @@ from ..helpers.arg_types import (
     CopyModeParamType,
     IDSpec,
     LoggerConfig,
+    MetadataTable,
     MimeType,
     OnResourceClash,
     PathMetadataRegex,
@@ -247,6 +249,37 @@ are uploaded to XNAT
     envvar="XINGEST_CONVERT",
     help=("Convert resources of <src-mime-like> to <tgt-mime-like> during save. "),
 )
+@click.option(
+    "--metadata-table",
+    "metadata_tables",
+    multiple=True,
+    type=MetadataTable.cli_type,
+    envvar="XINGEST_METADATA_TABLES",
+    nargs=3,
+    default=(),
+    metavar="<path> <row-frequency> <join-exprs>",
+    help=(
+        "Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var). "
+        "The 'path' arg specifies the location of the metadata table file. "
+        "By default it will attempt to match the datatype to csv, tsv and openxml spreadsheet (i.e. '.xlsx') formats. "
+        "However, the format can be explicitly specified by placing its mime-type in square brackets after the "
+        "file path, e.g., 'path/to/file.csv[text/csv]'. "
+        'The "row frequency" arg specifies what each row in the '
+        "metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource', "
+        "'fileset', 'fileset[<mime-type>]'. If provided, the mime-type(s) explicitly specified in square brackets "
+        "after the 'fileset' define the file-types to match."
+        "The 'join-exprs' arg specifies the expressions used to join the metadata table to the input files. "
+        "Each join expression should be in the format '<column-name>=<cell-value-to-match>'. The cell value to match "
+        "can either be the name of an existing metadata field or a Python string template built from one or more existing "
+        "metadata fields, e.g., '{PatientID}_{SessionID}'. "
+        "A complex real-world example is shown below, where the relative path of a PNG file is extracted using the "
+        "`--path-metadata-regex` option and then used to join the metadata table and inject the rows values based on "
+        "a hyperlink in the 'ImagePath' column.\n\n"
+        "    xnat-ingest group ...  \\\n"
+        "        --metadata-table path/to/file.csv[text/csv] fileset[image/png] ImagePath=\"Hyperlink(\\'{relpath}\\')\" \\\n"
+        "        --path-metadata-regex '.*(?<relpath>[\\w\\-]+/[\\w\\-]+.(?:png|jpg))' 'image/png|image/jpg'\n"
+    ),
+)
 def group_cmd(
     input_paths: list[str],
     output_dir: Path,
@@ -256,8 +289,8 @@ def group_cmd(
     datatype: list[MimeType] | None,
     path_metadata_regex: list[PathMetadataRegex],
     unlink_source: str | None,
-    loggers: ty.List[LoggerConfig],
-    additional_loggers: ty.List[str],
+    loggers: list[LoggerConfig],
+    additional_loggers: list[str],
     raise_errors: bool,
     on_resource_clash: OnResourceClash,
     ignore_paths: list[str] | None,
@@ -268,6 +301,7 @@ def group_cmd(
     copy_mode: FileSet.CopyMode,
     collate_resources: tuple[CollationSpec, ...],
     conversions: tuple[MimeType, ...],
+    metadata_tables: tuple[MetadataTable, ...],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -283,7 +317,7 @@ def group_cmd(
 
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
-        start_time = datetime.datetime.now()
+        start_time = datetime.datetime.now(tz=tz.tzlocal())
         errors = group(
             input_paths=input_paths,
             output_dir=output_dir,
@@ -302,6 +336,7 @@ def group_cmd(
             recursive=recursive,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
             conversion_map={c.src: c.tgt for c in conversions},
+            metadata_tables=metadata_tables,
         )
         if errors:
             logger.error(
@@ -313,9 +348,9 @@ def group_cmd(
             logger.info("Staging completed successfully")
         if loop < 0:
             break
-        end_time = datetime.datetime.now()
+        end_time = datetime.datetime.now(tz=tz.tzlocal())
         elapsed_seconds = (end_time - start_time).total_seconds()
-        sleep_time = loop - elapsed_seconds
+        sleep_time = max(loop - elapsed_seconds, 0)
         logger.info(
             "Group took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
@@ -323,7 +358,7 @@ def group_cmd(
             sleep_time,
             loop,
         )
-        time.sleep(loop)
+        time.sleep(sleep_time)
 
 
 @cli.command(
