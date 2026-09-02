@@ -20,6 +20,19 @@ DEFAULT_SPEC_DIR = "__default__"
 TRANSFORMS_SUFFIX = ".transforms.py"
 
 
+def _newest_mtime(path: Path) -> float:
+    """The most recent mtime of anything under `path`, or 0.0 if it doesn't exist.
+
+    Used to tell whether a session's deidentified output is still current with
+    respect to its input.
+    """
+    if not path.exists():
+        return 0.0
+    mtimes = [p.stat().st_mtime for p in path.rglob("*") if p.is_file()]
+    mtimes.append(path.stat().st_mtime)
+    return max(mtimes)
+
+
 def deidentify(
     input_dir: Path,
     output_dir: Path,
@@ -66,6 +79,19 @@ def deidentify(
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
         try:
+            # Skip sessions whose output is already up to date, otherwise every
+            # cycle rewrites __METADATA__.json and `upload` keeps deferring the
+            # session as recently modified.
+            # Compared by mtime, not just existence, so a session that is still
+            # receiving scans is reprocessed rather than left partially done.
+            out_session = output_dir / session_listing.name
+            if _newest_mtime(out_session) >= _newest_mtime(session_listing.cache_path):
+                logger.debug(
+                    "Skipping '%s', its deidentified output is up to date",
+                    session_listing.name,
+                )
+                continue
+
             session = ImagingSession.load(
                 session_listing.cache_path,
                 require_manifest=require_manifest,
