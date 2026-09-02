@@ -5,11 +5,13 @@ paths can never be satisfied and the session is never uploaded.
 """
 
 from pathlib import Path
+
+from fileformats.generic import File
+
 import xnat_ingest.specs as _specs_pkg
 from xnat_ingest.api.deidentify_api import deidentify
 from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
-from fileformats.generic import File
 
 SHIPPED = Path(_specs_pkg.__path__[0])
 NAME = "PROJ.SUBJ.SESS"

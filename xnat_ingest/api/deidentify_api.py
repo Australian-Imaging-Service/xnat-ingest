@@ -11,14 +11,14 @@ from fileformats.core import FileSet, from_mime
 from fileformats.medimage.base import MedicalImagingData
 from tqdm import tqdm
 
-from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 from xnat_ingest.helpers.metadata import Metadata
+from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 from xnat_ingest.model.resource import ImagingResource
 
-from .group_api import BUILD_NAME_DEFAULT
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
 from ..model.session import ImagingSession, Transform
+from .group_api import BUILD_NAME_DEFAULT
 
 DEFAULT_SPEC_DIR = "__default__"
 TRANSFORMS_SUFFIX = ".transforms.py"
