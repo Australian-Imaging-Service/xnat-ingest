@@ -11,6 +11,8 @@ from fileformats.medimage.base import MedicalImagingData
 from tqdm import tqdm
 
 from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
+from xnat_ingest.helpers.metadata import Metadata
+from xnat_ingest.model.resource import ImagingResource
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
@@ -31,6 +33,25 @@ def _newest_mtime(path: Path) -> float:
     mtimes = [p.stat().st_mtime for p in path.rglob("*") if p.is_file()]
     mtimes.append(path.stat().st_mtime)
     return max(mtimes)
+
+def _data_file_count(session_dir: Path) -> int:
+    """Number of DATA files under a session directory.
+
+    Sidecars are excluded on both sides of the comparison: they are written by
+    ImagingResource.save/Metadata.save rather than carried through from the input,
+    so counting them would make a complete session look short by exactly the number
+    of manifests and metadata files it happens to contain.
+    """
+    sidecars = {
+        ImagingResource.MANIFEST_FNAME,
+        ImagingResource.OLD_MANIFEST_FNAME,
+        Metadata.FNAME,
+    }
+    if not session_dir.exists():
+        return 0
+    return sum(
+        1 for f in session_dir.rglob("*") if f.is_file() and f.name not in sidecars
+    )
 
 
 def deidentify(
@@ -115,6 +136,10 @@ def deidentify(
             # The scratch dir is removed after the deidentification process is complete, regardless of success or failure
             scratch_dir = output_dir / f".deid_scratch_{session_listing.name}"
             scratch_dir.mkdir(parents=True, exist_ok=True)
+            # None until save() hands back the real path. If the run raises, the
+            # finally must say "could not verify", NOT count a rebuilt path and
+            # report a completeness verdict for output that was never produced.
+            saved_dir = None
             try:
                 deidentified_session, reid_mdata = session.deidentify(
                     scratch_dir,
@@ -124,28 +149,41 @@ def deidentify(
                     transforms=transforms,
                     max_workers=max_workers,
                 )
-                deidentified_session.save(output_dir)
+                _, saved_dir = deidentified_session.save(output_dir)
             finally:
                 if scratch_dir.exists():
                     shutil.rmtree(scratch_dir)
-                # List dcm files in the output directory to ensure that the deidentification process produced output
-                output_files = [
-                    str(file)
-                    for file in output_dir.rglob("*")
-                    if file.is_file() and str(file).endswith(".dcm")
-                ]
-                input_files = [
-                    str(file)
-                    for file in input_dir.rglob("*")
-                    if file.is_file() and str(file).endswith(".dcm")
-                ]
-                if len(output_files) != len(input_files):
+                # PER SESSION, not per directory. The previous form compared every
+                # file under output_dir against every file under input_dir, so with
+                # more than one session in flight the two numbers described different
+                # sets and the comparison meant nothing.
+                #
+                # The result GATES the unlink below. A run that produced fewer files
+                # than it read must not delete the input it read them from, which is
+                # the only copy still able to repair the difference.
+                # saved_dir comes from save(), NOT rebuilt from the input directory
+                # name. save() derives the name from project/subject/session ids, adds
+                # run_uid when set and an invalid-project prefix when the project is
+                # unrecognised, so the two can differ. Rebuilding it would count an
+                # empty path, make every session look incomplete, and refuse every
+                # unlink forever. group_api does the same thing the same way.
+                n_in = _data_file_count(session_listing.fspath)
+                if saved_dir is None:
+                    # The run failed before producing output. "I could not check" is
+                    # not "the data is missing"; the except branch above has already
+                    # recorded the real error.
+                    complete = False
+                    n_out = -1
+                else:
+                    n_out = _data_file_count(saved_dir)
+                    complete = n_out == n_in
+                if saved_dir is not None and not complete:
                     logger.warning(
                         "Deidentification of session '%s' produced %d output files, but %d input files were found. "
                         "This may indicate that some files were not processed correctly.",
                         session_listing.session_id,
-                        len(output_files),
-                        len(input_files),
+                        n_out,
+                        n_in,
                     )
             reid_document = {
                 "session_uid": session.uid,
@@ -171,13 +209,46 @@ def deidentify(
                 "Error deidentifying session '%s': %s",
                 session_listing.session_id,
                 str(e),
+                extra={"event": "deid_failed", "session": session_listing.name},
             )
             logger.debug(traceback.format_exc())
             errors.append(str(e))
         else:
-            if unlink_source == "all":
-                # remove the original (assigned) session directory in its entirety
-                session_listing.session_dir.rmdir()
+            if saved_dir is not None and not complete:
+                # RECORDED regardless of unlink_source. Incompleteness is a property of
+                # the OUTPUT, not of the deletion policy, and today no site passes
+                # --unlink-source at all, so making this conditional on the flag would
+                # leave every incomplete run reporting success.
+                msg = (
+                    f"Deidentified output of session '{session_listing.session_id}' is "
+                    f"incomplete ({n_out} of {n_in} files)"
+                )
+                if unlink_source:
+                    # The input is the only copy that can still make it whole.
+                    msg += "; source not unlinked so the work can be retried"
+                # STRUCTURED, not just prose. Under AIS_LOG_FORMAT=json the line is
+                # {"ts","level","logger","message"}, and an alert cannot reliably match
+                # free text inside `message`. JsonFormatter passes `extra` through, so
+                # this emits an `event` field a rule can select on, the same shape the
+                # data-policy rules already use.
+                logger.error(
+                    msg,
+                    extra={
+                        "event": "deid_incomplete",
+                        "session": session_listing.name,
+                        "files_out": n_out,
+                        "files_in": n_in,
+                    },
+                )
+                errors.append(msg)
+            elif unlink_source == "all":
+                # remove the original (assigned) session directory in its entirety.
+                # rmtree, NOT rmdir: the session directory holds scan directories, so
+                # rmdir() raises "Directory not empty". assign does the same job the
+                # same way (assign_api.py). LocalSessionListing exposes `fspath`;
+                # there is no `session_dir` attribute, so the previous form raised
+                # AttributeError before it could delete anything.
+                shutil.rmtree(session_listing.fspath)
             elif unlink_source == "keep-metadata":
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton

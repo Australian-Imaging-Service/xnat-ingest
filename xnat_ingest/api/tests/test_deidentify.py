@@ -38,6 +38,98 @@ def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
     return self.new_empty(), dict(REID_MDATA)
 
 
+def _mock_deidentify_passthrough(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
+    """Produces a COMPLETE output: the same session, unmodified.
+
+    _mock_deidentify returns an EMPTY session, which is an incomplete output by
+    definition, so it cannot be used to test the unlink: the completeness gate
+    correctly refuses to delete the input in that case.
+    """
+    return self, dict(REID_MDATA)
+
+
+def test_deidentify_deletes_source_dir_on_success_when_unlink_source_all(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """A session directory is full of scan directories, so the unlink has to be
+    recursive. assign does the same job with shutil.rmtree; this mirrors its test
+    (test_assign_deletes_source_dir_on_success_when_unlink_source_all)."""
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    session_dir = input_dir / SESSION_NAME
+    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            require_manifest=False,
+            unlink_source="all",
+        )
+
+    assert errors == []
+    assert not session_dir.exists()
+
+
+def test_deidentify_keeps_source_when_output_is_incomplete(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """The gate that stops a short run deleting the only copy that can repair it.
+
+    _mock_deidentify returns an empty session, so the output is 0 files against 1
+    input file. Even with unlink_source=all the input must survive.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    session_dir = input_dir / SESSION_NAME
+    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            require_manifest=False,
+            unlink_source="all",
+        )
+
+    assert session_dir.exists(), "an incomplete run must not delete its input"
+    # and it must SAY so. Logging alone would leave the caller with an empty error
+    # list, a "completed successfully" line and exit 0, so a permanently stuck
+    # session would be invisible to everything above this function.
+    assert errors, "an incomplete run must report an error, not just log one"
+    assert "incomplete" in errors[0]
+
+
+def test_deidentify_leaves_source_dir_when_unlink_source_none(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    session_dir = input_dir / SESSION_NAME
+    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            require_manifest=False,
+        )
+
+    assert session_dir.exists()
+    # The mock produces an empty output, so this run IS incomplete. That must be
+    # reported whether or not --unlink-source was passed: incompleteness is a
+    # property of the output, not of the deletion policy. No site passes the flag
+    # today, so tying the report to it would silence every real occurrence.
+    assert errors, "an incomplete run must report an error even without unlink_source"
+    assert "not unlinked" not in errors[0], "nothing was going to be unlinked here"
+
+
 def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
     input_dir, output_dir, spec_dir, reid_dir = dirs
 

@@ -199,7 +199,7 @@ def deidentify_cmd(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        deidentify(
+        errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
             spec_dir=spec_dir,
@@ -211,6 +211,15 @@ def deidentify_cmd(
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
         )
+        # The return value was previously discarded, so a session that failed or was
+        # left incomplete produced no signal above this function at all. group_cmd and
+        # upload_cmd both summarise it the same way.
+        if errors:
+            logger.error(
+                "Deidentification completed with %s errors:\n\n%s",
+                len(errors),
+                "\n".join(errors),
+            )
         if loop < 0:
             break
         end_time = datetime.datetime.now()
