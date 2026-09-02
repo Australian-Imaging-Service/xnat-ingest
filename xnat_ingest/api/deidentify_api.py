@@ -24,18 +24,6 @@ DEFAULT_SPEC_DIR = "__default__"
 TRANSFORMS_SUFFIX = ".transforms.py"
 
 
-def _newest_mtime(path: Path) -> float:
-    """The most recent mtime of anything under `path`, or 0.0 if it doesn't exist.
-
-    Used to tell whether a session's deidentified output is still current with
-    respect to its input.
-    """
-    if not path.exists():
-        return 0.0
-    mtimes = [p.stat().st_mtime for p in path.rglob("*") if p.is_file()]
-    mtimes.append(path.stat().st_mtime)
-    return max(mtimes)
-
 def _data_file_count(session_dir: Path) -> int:
     """Number of DATA files under a session directory.
 
@@ -102,6 +90,16 @@ def _output_is_current(output_session_dir: Path, input_session_dir: Path, n_in: 
     #
     # Verifying against the manifest costs a hash of the output, which is a small
     # fraction of the de-identification it avoids.
+    return _output_verifies(output_session_dir)
+
+
+def _output_verifies(output_session_dir: Path) -> bool:
+    """Whether the output on disk hashes to what its own manifest says.
+
+    Loading with check_checksums=True recomputes every file's checksum and
+    compares it against the manifest written beside it, so this catches a file
+    that is present but truncated or half-written, which a count cannot.
+    """
     try:
         ImagingSession.load(
             output_session_dir, require_manifest=True, check_checksums=True
@@ -109,6 +107,53 @@ def _output_is_current(output_session_dir: Path, input_session_dir: Path, n_in: 
     except Exception:
         return False
     return True
+
+
+def _unlink_source(
+    session_listing: LocalSessionListing,
+    session: ImagingSession,
+    unlink_source: str | None,
+    errors: list[str],
+) -> None:
+    """Retire a session's input now that a complete output exists for it.
+
+    Shared by the path that has just produced the output and the path that
+    found one already there. Both need it: with --unlink-source set, a session
+    whose output was produced BEFORE the flag was turned on is skipped as
+    already current on every later cycle, so if only the first path unlinked,
+    that backlog would sit in the input directory for ever.
+
+    Exceptions are contained. The caller reaches this from an `else:` clause,
+    where a raise is not caught by the enclosing `except` and would propagate
+    out of the session loop and, under --loop, kill the stage for every other
+    session.
+    """
+    if unlink_source == "all":
+        # rmtree, NOT rmdir: the session directory holds scan directories, so
+        # rmdir() raises "Directory not empty". assign does the same job the
+        # same way. LocalSessionListing exposes `fspath`; there is no
+        # `session_dir` attribute, so the previous form raised AttributeError
+        # before it could delete anything.
+        try:
+            shutil.rmtree(session_listing.fspath)
+        except OSError as unlink_err:
+            msg = (
+                f"Could not unlink source of session "
+                f"'{session_listing.session_id}' after a complete run: "
+                f"{unlink_err}"
+            )
+            logger.error(
+                msg,
+                extra={
+                    "event": "deid_unlink_failed",
+                    "session": session_listing.name,
+                },
+            )
+            errors.append(msg)
+    elif unlink_source == "keep-metadata":
+        # remove just the resource data, leaving the session/scan-level
+        # metadata behind as a lightweight skeleton
+        session.unlink(keep_metadata=True)
 
 
 def deidentify(
@@ -158,19 +203,6 @@ def deidentify(
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
         try:
-            # Skip sessions whose output is already up to date, otherwise every
-            # cycle rewrites __METADATA__.json and `upload` keeps deferring the
-            # session as recently modified.
-            # Compared by mtime, not just existence, so a session that is still
-            # receiving scans is reprocessed rather than left partially done.
-            out_session = output_dir / session_listing.name
-            if _newest_mtime(out_session) >= _newest_mtime(session_listing.cache_path):
-                logger.debug(
-                    "Skipping '%s', its deidentified output is up to date",
-                    session_listing.name,
-                )
-                continue
-
             session = ImagingSession.load(
                 session_listing.cache_path,
                 require_manifest=require_manifest,
@@ -312,6 +344,16 @@ def deidentify(
                         "session": session_listing.name,
                     },
                 )
+                # AND RETIRE ITS INPUT, on the same terms as a run that just
+                # produced the output. _output_is_current has already verified
+                # the output is complete AND that its files hash to what its
+                # manifest says, which is a stronger check than the file count
+                # the post-run gate applies. Without this, turning
+                # --unlink-source on would never clear sessions de-identified
+                # before it was turned on: they are skipped as current on every
+                # cycle, so the branch that unlinks is never reached and the
+                # backlog stays for ever.
+                _unlink_source(session_listing, session, unlink_source, errors)
                 continue
 
             build_dir = output_dir / BUILD_NAME_DEFAULT
@@ -397,7 +439,22 @@ def deidentify(
                     n_out = -1
                 else:
                     n_out = _data_file_count(saved_dir)
-                    complete = n_out == n_in
+                    # THE SAME CHECK THE SKIP PATH USES, and it belongs here
+                    # more than there. This gate is what permits the unlink, and
+                    # the unlink is irreversible: the input is the only copy that
+                    # could repair a bad output. It also guards the riskier
+                    # moment. The skip path judges an output that has already
+                    # survived a whole cycle; this one judges an output written
+                    # seconds ago, by a run that may have been interrupted, into
+                    # a destination that on the re-save branch is written IN
+                    # PLACE and can be left truncated under its real name.
+                    #
+                    # Counting alone let exactly that through: a corrupt output
+                    # with the right number of files passed here, its input was
+                    # deleted, and the corruption was then caught on the next
+                    # cycle by the skip path's checksum test, correctly and a
+                    # cycle too late to repair.
+                    complete = n_out == n_in and _output_verifies(saved_dir)
                 if saved_dir is not None and not complete:
                     logger.warning(
                         "Deidentification of session '%s' produced %d output files, but %d input files were found. "
@@ -462,38 +519,8 @@ def deidentify(
                     },
                 )
                 errors.append(msg)
-            elif unlink_source == "all":
-                # NOTE: this whole branch is an `else:` of the try above, so an
-                # exception here is NOT caught by that except and would propagate out
-                # of the session loop, out of deidentify() and, under --loop, out of
-                # the while loop, killing the stage for every other session. rmtree can
-                # raise on EACCES or a concurrent removal, so it is guarded.
-                # remove the original (assigned) session directory in its entirety.
-                # rmtree, NOT rmdir: the session directory holds scan directories, so
-                # rmdir() raises "Directory not empty". assign does the same job the
-                # same way (assign_api.py). LocalSessionListing exposes `fspath`;
-                # there is no `session_dir` attribute, so the previous form raised
-                # AttributeError before it could delete anything.
-                try:
-                    shutil.rmtree(session_listing.fspath)
-                except OSError as unlink_err:
-                    msg = (
-                        f"Could not unlink source of session "
-                        f"'{session_listing.session_id}' after a complete run: "
-                        f"{unlink_err}"
-                    )
-                    logger.error(
-                        msg,
-                        extra={
-                            "event": "deid_unlink_failed",
-                            "session": session_listing.name,
-                        },
-                    )
-                    errors.append(msg)
-            elif unlink_source == "keep-metadata":
-                # remove just the resource data, leaving the session/scan-level
-                # metadata behind as a lightweight skeleton
-                session.unlink(keep_metadata=True)
+            else:
+                _unlink_source(session_listing, session, unlink_source, errors)
     if n_skeletons:
         # ONE line per pass, not one per skeleton: see the DEBUG line above.
         logger.info(

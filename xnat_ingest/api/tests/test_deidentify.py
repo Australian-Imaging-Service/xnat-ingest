@@ -217,6 +217,44 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
     )
 
 
+def test_deidentify_unlinks_a_backlog_session_it_skips(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """Turning --unlink-source on must clear sessions processed before it was.
+
+    A session whose output already exists is skipped as current on every cycle,
+    so if only the just-produced path unlinked, the backlog would sit in the
+    input directory for ever. The skip has already verified the output is
+    complete and hashes to its manifest, which is stronger than the file count
+    the post-run gate applies, so retiring the input there is safe.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    session_dir = input_dir / SESSION_NAME
+
+    # first pass with no unlink: produces the output, leaves the input
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        deidentify(
+            input_dir=input_dir, output_dir=output_dir,
+            spec_dir=spec_dir, reid_dir=reid_dir,
+        )
+    assert session_dir.exists(), "nothing should have been unlinked yet"
+    assert (output_dir / SESSION_NAME).is_dir()
+
+    # second pass WITH unlink: the session is skipped as current, and retired
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        errors = deidentify(
+            input_dir=input_dir, output_dir=output_dir,
+            spec_dir=spec_dir, reid_dir=reid_dir,
+            unlink_source="all",
+        )
+
+    assert errors == []
+    assert not session_dir.exists(), (
+        "a skipped session was never unlinked, so enabling the flag would "
+        "leave the existing backlog in place for ever"
+    )
+
+
 def test_deidentify_skips_an_output_that_is_complete_and_current(
     dirs: tuple[Path, Path, Path, Path],
 ):
