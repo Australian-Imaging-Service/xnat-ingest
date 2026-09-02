@@ -1,4 +1,5 @@
 import json
+import os
 import typing as ty
 from itertools import chain
 from pathlib import Path
@@ -63,14 +64,44 @@ class Metadata(ty.Mapping[str, ty.Any]):
             self._read = True
 
     def save(self, data_dir: Path) -> None:
+        """Write the metadata file, but ONLY if its content would change.
+
+        WHY THE COMPARISON. This is called once per scan directory and once per
+        session directory on every pass. Under `--loop` a stage reprocesses the same
+        sessions repeatedly, and an unconditional write moved every mtime each cycle
+        even when nothing had changed. Both upload paths refuse to touch a session
+        that was modified recently (`upload --wait-period`, and the s3 uploader's
+        settle window), so the session never settled and was never uploaded. The
+        DICOMs were never the problem: ImagingResource.save already returns early when
+        checksums match. It was these three writes.
+
+        WHY TEMP-AND-RENAME. os.replace is atomic within a filesystem, so a reader
+        never sees a half-written file. The previous form truncated in place, which
+        made a truncated __METADATA__.json a reachable artefact if the process died
+        mid-write.
+        """
         # Pull in any not-yet-loaded metadata from the underlying object (e.g. file
         # headers, path-regex fields set on the fileset) so the persisted JSON is the
         # full picture, not just whatever happens to have been accessed so far.
+        #
+        # BEFORE the comparison, not after: comparing a partially-populated _dct
+        # against a fully-populated file on disk would report a difference every pass
+        # and defeat the short-circuit, and writing it would replace a complete file
+        # with a partial one.
         self._ensure_read()
-        with open(data_dir / self.FNAME, "w") as f:
-            # 'default=str' handles values that aren't natively JSON-serialisable but
-            # have a sensible string representation, e.g. pydicom's PersonName
-            json.dump(self._dct, f, default=str, indent=4)
+        # 'default=str' handles values that aren't natively JSON-serialisable but
+        # have a sensible string representation, e.g. pydicom's PersonName
+        serialised = json.dumps(self._dct, default=str, indent=4)
+        fspath = data_dir / self.FNAME
+        try:
+            if fspath.read_text() == serialised:
+                return
+        except (OSError, UnicodeDecodeError):
+            # Absent, unreadable or not text: fall through and write it.
+            pass
+        tmp = fspath.with_name(fspath.name + ".tmp")
+        tmp.write_text(serialised)
+        os.replace(tmp, fspath)
 
     @classmethod
     def load(cls, data_dir: Path, obj: ty.Any) -> ty.Self:
