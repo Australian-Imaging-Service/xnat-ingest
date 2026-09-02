@@ -56,6 +56,37 @@ def _data_file_count(session_dir: Path) -> int:
     )
 
 
+def _newest_mtime(path: Path) -> float:
+    """The most recent mtime of anything under `path`, or 0.0 if it is absent."""
+    if not path.exists():
+        return 0.0
+    mtimes = [f.stat().st_mtime for f in path.rglob("*") if f.is_file()]
+    mtimes.append(path.stat().st_mtime)
+    return max(mtimes)
+
+
+def _output_is_current(output_session_dir: Path, input_session_dir: Path, n_in: int) -> bool:
+    """Whether this session's output can be left alone for this cycle.
+
+    Re-deidentifying an unchanged session is wasted work: measured at roughly 80
+    seconds for a 535-instance series, which a 60-second loop cannot absorb once
+    a site has more than a couple of sessions staged.
+
+    COMPLETENESS IS CHECKED FIRST, and that is the whole point of this function.
+    Comparing mtimes alone, which is what the original version of this skip did,
+    treats "newer than its input" as "finished". An output that is SHORT is also
+    newer than its input, so a session left half-written by a run that died would
+    be skipped on this cycle and on every cycle after it, permanently, while
+    sitting in the directory the upload stage reads. That is the exact failure
+    this stage is supposed to prevent, reached by way of an optimisation.
+    """
+    if not output_session_dir.exists():
+        return False
+    if _data_file_count(output_session_dir) != n_in:
+        return False
+    return _newest_mtime(output_session_dir) >= _newest_mtime(input_session_dir)
+
+
 def deidentify(
     input_dir: Path,
     output_dir: Path,
@@ -235,6 +266,28 @@ def deidentify(
                     },
                 )
                 errors.append(msg)
+                continue
+
+            # SKIP AN OUTPUT THAT IS ALREADY DONE. Supersedes the mtime-only
+            # version of this check, which could skip a partial output for ever.
+            #
+            # The name is taken from the loaded input session rather than from
+            # the input DIRECTORY name, so that a run_uid suffix or an
+            # invalid-project prefix is accounted for. If the deidentified
+            # session were somehow to carry different ids from its input, this
+            # fails open: the guess does not exist, nothing is skipped, and the
+            # session is processed as usual.
+            if _output_is_current(
+                output_dir / session.staging_dirname(), session_listing.fspath, n_in
+            ):
+                logger.debug(
+                    "Skipping '%s', its deidentified output is complete and current",
+                    session_listing.name,
+                    extra={
+                        "event": "deid_output_current",
+                        "session": session_listing.name,
+                    },
+                )
                 continue
 
             build_dir = output_dir / BUILD_NAME_DEFAULT

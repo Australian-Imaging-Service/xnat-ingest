@@ -137,6 +137,67 @@ def test_deidentify_discards_a_stale_build_from_a_crashed_run(
     assert not promoted, f"a stale build was adopted into the output: {promoted}"
 
 
+def test_deidentify_does_not_skip_an_output_that_is_newer_but_short(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """A partial output must be reprocessed, however new it is.
+
+    Skipping on mtime alone treats "newer than its input" as "finished". A
+    session left half-written by a run that died is also newer than its input,
+    so it would be skipped on this cycle and every cycle after it, permanently,
+    while sitting in the directory upload reads.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+
+    # an output that is NEWER than the input but missing its data
+    stale = output_dir / SESSION_NAME
+    (stale / "1.scan" / "RES").mkdir(parents=True)
+    (stale / "__METADATA__.json").write_text("{}")
+
+    calls: list = []
+
+    def counting_deidentify(self, dest_dir, **kwargs):
+        calls.append(self.name)
+        return self, dict(REID_MDATA)
+
+    with patch.object(ImagingSession, "deidentify", counting_deidentify):
+        deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+        )
+
+    assert calls, "a short output was skipped, so the partial session is permanent"
+
+
+def test_deidentify_skips_an_output_that_is_complete_and_current(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """Re-deidentifying an unchanged session is wasted work.
+
+    Measured at roughly 80 seconds for a 535-instance series, which a
+    60-second loop cannot absorb once several sessions are staged.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    calls: list = []
+
+    def counting_deidentify(self, dest_dir, **kwargs):
+        calls.append(self.name)
+        return self, dict(REID_MDATA)
+
+    with patch.object(ImagingSession, "deidentify", counting_deidentify):
+        for _ in range(2):
+            deidentify(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                spec_dir=spec_dir,
+                reid_dir=reid_dir,
+            )
+
+    assert len(calls) == 1, f"the second cycle reprocessed the session: {calls}"
+
+
 def test_deidentify_reports_a_session_with_no_data_files(
     dirs: tuple[Path, Path, Path, Path],
 ):
