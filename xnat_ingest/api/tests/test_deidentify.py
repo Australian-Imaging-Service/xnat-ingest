@@ -62,7 +62,9 @@ def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
     return self.new_empty(), dict(REID_MDATA)
 
 
-def _mock_deidentify_passthrough(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
+def _mock_deidentify_passthrough(
+    self, dest_dir, **kwargs
+) -> tuple[ImagingSession, dict]:
     """Produces a COMPLETE output: the same session, unmodified.
 
     _mock_deidentify returns an EMPTY session, which is an incomplete output by
@@ -191,8 +193,10 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
 
     with patch.object(ImagingSession, "deidentify", counting_deidentify):
         deidentify(
-            input_dir=input_dir, output_dir=output_dir,
-            spec_dir=spec_dir, reid_dir=reid_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
         )
     assert len(calls) == 1
     produced = output_dir / SESSION_NAME
@@ -200,21 +204,20 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
 
     # corrupt one output file in place, keeping the file count identical
     data_files = [
-        f for f in produced.rglob("*")
-        if f.is_file() and not f.name.startswith("__")
+        f for f in produced.rglob("*") if f.is_file() and not f.name.startswith("__")
     ]
     assert data_files, "no data file in the output to corrupt"
     data_files[0].write_bytes(b"truncated")
 
     with patch.object(ImagingSession, "deidentify", counting_deidentify):
         deidentify(
-            input_dir=input_dir, output_dir=output_dir,
-            spec_dir=spec_dir, reid_dir=reid_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
         )
 
-    assert len(calls) == 2, (
-        "a corrupt output was skipped, so it can never be repaired"
-    )
+    assert len(calls) == 2, "a corrupt output was skipped, so it can never be repaired"
 
 
 def test_deidentify_unlinks_a_backlog_session_it_skips(
@@ -234,8 +237,10 @@ def test_deidentify_unlinks_a_backlog_session_it_skips(
     # first pass with no unlink: produces the output, leaves the input
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         deidentify(
-            input_dir=input_dir, output_dir=output_dir,
-            spec_dir=spec_dir, reid_dir=reid_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
         )
     assert session_dir.exists(), "nothing should have been unlinked yet"
     assert (output_dir / SESSION_NAME).is_dir()
@@ -243,8 +248,10 @@ def test_deidentify_unlinks_a_backlog_session_it_skips(
     # second pass WITH unlink: the session is skipped as current, and retired
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
-            input_dir=input_dir, output_dir=output_dir,
-            spec_dir=spec_dir, reid_dir=reid_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
             unlink_source="all",
         )
 
@@ -307,9 +314,9 @@ def test_deidentify_reports_a_session_with_no_data_files(
         )
 
     assert any("no data files" in e for e in errors), errors
-    assert not (output_dir / "PROJ.SUBJ.EMPTY").exists(), (
-        "an output was produced for a session that had no input"
-    )
+    assert not (
+        output_dir / "PROJ.SUBJ.EMPTY"
+    ).exists(), "an output was produced for a session that had no input"
 
 
 def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(

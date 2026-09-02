@@ -7,6 +7,7 @@ de-identified content. If the deid engine emits different bytes each run
 rewrites every file, and the settle window on both upload paths is reset
 forever. Generic File.sample() takes the plain-copy path and cannot show this.
 """
+
 import hashlib
 from pathlib import Path
 
@@ -50,15 +51,22 @@ def test_dicom_deid_is_reproducible_and_does_not_churn(dicom_dir: Path, tmp_path
 
     series = DicomSeries(sorted(p for p in dicom_dir.iterdir() if p.is_file()))
     ImagingSession(
-        uid=NAME, project_id="PROJ", subject_id="SUBJ", session_id="SESS",
+        uid=NAME,
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
         scans=[ImagingScan(id="1", type="PET", resources={"DICOM": series})],
     ).save(inp)
 
-    assert deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+    assert (
+        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+    )
     first = _state(out / NAME)
     assert first, "no output produced"
 
-    assert deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+    assert (
+        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+    )
     second = _state(out / NAME)
 
     content = sorted(k for k in first if k in second and first[k][1] != second[k][1])

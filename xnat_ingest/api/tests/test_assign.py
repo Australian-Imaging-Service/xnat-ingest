@@ -49,6 +49,7 @@ def _mock_session(dirname: str = "PROJ.SUBJ.SESS") -> MagicMock:
     mock.save.side_effect = _save
     return mock
 
+
 def test_assign_calls_load_assign_save_for_each_session(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
@@ -132,9 +133,9 @@ def test_assign_leaves_no_partial_session_under_its_real_name_when_save_dies(
     assert len(errors) == 1
     assert "died part-way through save" in errors[0]
     collectable = [p for p in output_dir.iterdir() if not p.name.startswith("__")]
-    assert collectable == [], (
-        f"a partial session was left where upload would collect it: {collectable}"
-    )
+    assert (
+        collectable == []
+    ), f"a partial session was left where upload would collect it: {collectable}"
     assert not list(output_dir.rglob("inst.dcm")), "the partial data survived"
 
 

@@ -53,7 +53,9 @@ def _newest_mtime(path: Path) -> float:
     return max(mtimes)
 
 
-def _output_is_current(output_session_dir: Path, input_session_dir: Path, n_in: int) -> bool:
+def _output_is_current(
+    output_session_dir: Path, input_session_dir: Path, n_in: int
+) -> bool:
     """Whether this session's output can be left alone for this cycle.
 
     Re-deidentifying an unchanged session is wasted work: measured at roughly 80

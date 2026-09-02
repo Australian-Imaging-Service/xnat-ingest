@@ -306,7 +306,9 @@ def test_metadata_save_does_not_rewrite_unchanged_content(tmp_path):
 
     md.save(tmp_path)
 
-    assert fspath.stat().st_mtime_ns == stamped, "unchanged save must not touch the file"
+    assert (
+        fspath.stat().st_mtime_ns == stamped
+    ), "unchanged save must not touch the file"
     assert fspath.read_text() == content_before
 
 
