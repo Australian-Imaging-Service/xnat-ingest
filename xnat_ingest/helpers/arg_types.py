@@ -628,14 +628,25 @@ class JoinExpr(MultiCliTyped):
 
 @attrs.define
 class MetadataTable(MultiCliTyped):
-    """Represents a metadata table to extract and join metadata from input files.
-    Metadata table path, datatype, row frequency, and join expression.
+    """A tabular metadata source (CSV/TSV) whose rows are joined onto the input data and
+    merged into the corresponding objects' metadata.
 
-    Parameters:
-        path: Path to the metadata table file.
-        datatype: The datatype (or mime-like thereof) of the metadata table file (used to appropriately load the table).
-        row_frequency: The frequency at which rows are defined (e.g., 'session', 'scan', 'resource', 'fileset', 'fileset[<mime-type>]').
-        join_expr: List of join expressions to extract and join metadata from input files.
+    Parameters
+    ----------
+    table_file : FileSet | str | Path
+        The metadata table file. A str/Path is auto-detected as CSV or TSV from its
+        extension; append '[<mime-type>]' to force a format, e.g. 'table.dat[text/csv]'.
+    row_frequency : str | type[FileSet] | types.UnionType
+        What each row corresponds to: one of 'session', 'scan', 'resource', 'fileset'
+        or 'fileset[<mime-like>]'. 'fileset' resolves to the base ``FileSet`` class and
+        'fileset[<mime-like>]' to the named ``FileSet`` type (or '|'-union of types), so
+        the value is usable directly with ``isinstance()``.
+    join_exprs : list[JoinExpr] | str
+        One or more '<column-name>=<cell-value>' expressions (comma-separated in string
+        form). A row matches a target when every expression holds; '<cell-value>' is a
+        metadata field name or a Python format string over metadata fields
+        (e.g. '{PatientID}_{SessionID}'). On a match, all columns of that row are merged
+        into the target's metadata.
     """
 
     table_file: FileSet = attrs.field(converter=table_file_converter)
@@ -657,13 +668,16 @@ class MetadataTable(MultiCliTyped):
     def inject(
         self, target: ImagingSession | ImagingScan | ImagingResource | FileSet
     ) -> None:
-        """
-        Inject metadata from this table into the target object.
+        """Merge the row of this table that matches ``target`` into its metadata.
+
+        Does nothing if ``target``'s type doesn't match ``row_frequency``, if no row
+        matches the join expressions, or if a join field is absent from ``target``'s
+        metadata. Raises ``ValueError`` if more than one row matches.
 
         Parameters
         ----------
-        target : ImagingSession | ImagingScan | Resource | FileSet
-            The target object to inject metadata into.
+        target : ImagingSession | ImagingScan | ImagingResource | FileSet
+            The object whose metadata to inject into.
         """
         from ..model.resource import ImagingResource
         from ..model.scan import ImagingScan

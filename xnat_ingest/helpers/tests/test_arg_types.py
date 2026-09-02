@@ -473,7 +473,7 @@ def test_inject_fileset_mime_frequency_against_raw_fileset(tmp_path: Path) -> No
     data = tmp_path / "hello.txt"
     data.write_text("hi")
     fileset = Plain(data)
-    fileset._explicit_metadata = {"Name": "hello.txt"}
+    fileset.metadata["Name"] = "hello.txt"
 
     table = MetadataTable(Csv(csv_path), "fileset[text/plain]", "Name=Name")
     assert table.row_frequency is Plain
@@ -487,7 +487,7 @@ def test_inject_fileset_union_mime_frequency_matches_any_member(tmp_path: Path) 
     data = tmp_path / "data.tsv"
     data.write_text("a\tb\n1\t2\n")
     fileset = Tsv(data)
-    fileset._explicit_metadata = {"Name": "data.tsv"}
+    fileset.metadata["Name"] = "data.tsv"
 
     table = MetadataTable(
         Csv(lookup), "fileset[text/csv|text/tab-separated-values]", "Name=Name"
@@ -500,7 +500,7 @@ def test_inject_fileset_union_mime_frequency_matches_any_member(tmp_path: Path) 
     other = tmp_path / "note.txt"
     other.write_text("hi")
     other_fs = Plain(other)
-    other_fs._explicit_metadata = {"Name": "note.txt"}
+    other_fs.metadata["Name"] = "note.txt"
     table.inject(other_fs)
     assert "Note" not in other_fs.metadata
 
@@ -511,7 +511,7 @@ def test_inject_plain_fileset_frequency_matches_any_fileset(tmp_path: Path) -> N
     data = tmp_path / "hello.txt"
     data.write_text("hi")
     fileset = Plain(data)
-    fileset._explicit_metadata = {"Name": "hello.txt"}
+    fileset.metadata["Name"] = "hello.txt"
 
     table = MetadataTable(Csv(csv_path), "fileset", "Name=Name")
     assert table.row_frequency is FileSet

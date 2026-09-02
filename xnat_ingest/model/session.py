@@ -520,6 +520,22 @@ class ImagingSession:
                 f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
             ]
 
+        if path_metadata_regex:
+            for fileset in tqdm(
+                filesets,
+                "Extracting metadata from file paths...",
+            ):
+                for path_mdata in path_metadata_regex:
+                    if isinstance(fileset, path_mdata.datatype):
+                        fileset_path = str(getattr(fileset, "fspath", fileset.parent))
+                        match = re.match(path_mdata.regex, fileset_path)
+                        if match is None:
+                            raise ValueError(
+                                f"Could not extract metadata from path '{fileset_path}' "
+                                f"using pattern '{path_mdata.regex}'"
+                            )
+                        fileset.metadata.update(match.groupdict())
+
         MetadataTable.inject_list(metadata_tables, filesets)
 
         sessions: dict[tuple[str, str, str] | str, Self] = {}
@@ -558,24 +574,12 @@ class ImagingSession:
                 scan_id,
                 session_uid,
             )
-            metadata = None
-            for path_mdata in path_metadata_regex:
-                if isinstance(fileset, path_mdata.datatype):
-                    fileset_path = str(getattr(fileset, "fspath", fileset.parent))
-                    match = re.match(path_mdata.regex, fileset_path)
-                    if match is None:
-                        raise ValueError(
-                            f"Could not extract metadata from path '{fileset_path}' "
-                            f"using pattern '{path_mdata.regex}'"
-                        )
-                    metadata = match.groupdict()
             session.add_resource(
                 scan_id,
                 None,
                 resource_label,
                 fileset,
                 on_clash=on_resource_clash,
-                metadata=metadata,
             )
         # Inject metadata from the metadata tables into the sessions, scans, and resources
         MetadataTable.inject_list(metadata_tables, list(sessions.values()))

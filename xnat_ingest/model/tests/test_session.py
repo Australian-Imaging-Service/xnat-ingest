@@ -802,8 +802,9 @@ def _deidentify_test_impl(
     deidentified = fileset.copy(dest)
     # session.deidentify() now reconstructs reid metadata itself by diffing
     # `metadata` before/after calling deidentify(), so the stand-in "stripped"
-    # fileset needs to actually report different metadata to the original.
-    deidentified._explicit_metadata = {}
+    # fileset needs to actually report different metadata to the original. A fresh
+    # copy of a generic ``File`` has no metadata reader, so its metadata is already
+    # empty - nothing to strip here.
     return deidentified
 
 
@@ -811,14 +812,14 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     """Return a File instance with contains_phi=True and an injected deidentify().
 
     Setting contains_phi=True routes it through the deidentify branch in
-    session.deidentify(). expected_reid is set as the fileset's explicit metadata so
-    that session.deidentify()'s before/after diff reconstructs it. The injected
+    session.deidentify(). expected_reid is written to the fileset's metadata overlay
+    so that session.deidentify()'s before/after diff reconstructs it. The injected
     method is a functools.partial binding a module-level function (not a closure),
     just for consistency/reuse across the fixtures in this module.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True
-    f._explicit_metadata = dict(expected_reid)
+    f.metadata.update(expected_reid)
     f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
 
