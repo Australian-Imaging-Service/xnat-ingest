@@ -10,7 +10,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from xnat_ingest.api.group_api import BUILD_NAME_DEFAULT, group
-from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.helpers.arg_types import IDSpec, MetadataTable
 from xnat_ingest.model.resource import ImagingResource
 from xnat_ingest.model.session import ImagingSession
 
@@ -254,6 +254,73 @@ def test_group_creates_build_dir(tmp_path: Path) -> None:
     )
 
     assert (output_dir / BUILD_NAME_DEFAULT).exists()
+
+
+@pytest.fixture
+def patient_id(dicom_dir: Path) -> str:
+    """The PatientID of the dummy dataset, discovered by a throwaway load so the
+    metadata-table tests don't have to hard-code it"""
+    sessions = ImagingSession.from_paths(
+        dicom_dir, [DicomSeries], SESSION_FIELD, SCAN_FIELD, RESOURCE_FIELD
+    )
+    resource = next(iter(next(iter(sessions[0].scans.values())).resources.values()))
+    return str(resource.fileset.metadata["PatientID"])
+
+
+def test_group_injects_session_metadata_from_table(
+    dicom_dir: Path, patient_id: str, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    table = tmp_path / "clinical.csv"
+    table.write_text(
+        "PatientID,StudyComment,Cohort\n"
+        f"{patient_id},injected-via-table,control\n"
+        "someone-else,should-not-be-used,case\n"
+    )
+
+    errors = group(
+        input_paths=[str(dicom_dir)],
+        output_dir=output_dir,
+        datatypes=[DicomSeries],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        metadata_tables=[
+            MetadataTable(str(table), "session", "PatientID=PatientID"),
+        ],
+    )
+
+    assert errors == []
+    session_dir = next(
+        d
+        for d in output_dir.iterdir()
+        if d.is_dir() and d.name.startswith(ImagingSession.PRE_ASSIGN_PREFIX)
+    )
+    reloaded = ImagingSession.load(session_dir)
+    assert reloaded.metadata["StudyComment"] == "injected-via-table"
+    assert reloaded.metadata["Cohort"] == "control"
+
+
+def test_from_paths_injects_resource_metadata_from_table(
+    dicom_dir: Path, patient_id: str, tmp_path: Path
+) -> None:
+    table = tmp_path / "clinical.csv"
+    table.write_text(f"PatientID,Radiotracer\n{patient_id},FDG\nother,ignored\n")
+
+    sessions = ImagingSession.from_paths(
+        dicom_dir,
+        [DicomSeries],
+        SESSION_FIELD,
+        SCAN_FIELD,
+        RESOURCE_FIELD,
+        metadata_tables=[
+            MetadataTable(str(table), "resource", "PatientID=PatientID"),
+        ],
+    )
+
+    resource = next(iter(next(iter(sessions[0].scans.values())).resources.values()))
+    assert resource.metadata["Radiotracer"] == "FDG"
 
 
 def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):

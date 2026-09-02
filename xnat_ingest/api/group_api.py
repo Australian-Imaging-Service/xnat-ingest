@@ -104,7 +104,8 @@ def group(
         The "row frequency" arg specifies what each row in the
         metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource',
         'fileset', 'fileset[<mime-type>]'. If provided, the mime-type(s) explicitly specified in square brackets
-        after the 'fileset' define the file-types to match.
+        after the 'fileset' define the file-types to match (multiple mime-types can be '|'-separated, e.g.
+        'fileset[image/png|image/jpeg]').
         The 'join-exprs' arg specifies the expressions used to join the metadata table to the input files.
         Each join expression should be in the format '<column-name>=<cell-value-to-match>'. The cell value to match
         can either be the name of an existing metadata field or a Python string template built from one or more existing

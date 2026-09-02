@@ -578,7 +578,7 @@ class ImagingSession:
                 metadata=metadata,
             )
         # Inject metadata from the metadata tables into the sessions, scans, and resources
-        MetadataTable.inject_list(metadata_tables, sessions)
+        MetadataTable.inject_list(metadata_tables, list(sessions.values()))
         for session in sessions.values():
             MetadataTable.inject_list(metadata_tables, list(session.scans.values()))
             for scan in session.scans.values():
