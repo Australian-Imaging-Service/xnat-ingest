@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fileformats.core import from_mime
-from fileformats.generic import File
+from fileformats.generic import File, SetOf
 from fileformats.medimage import DicomSeries
 from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_CountRate,
@@ -558,10 +558,77 @@ def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
         on_clash="merge",
     )
     assert "Merging resource" in caplog.text
-    assert session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset == [
-        file1,
-        file2,
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert isinstance(merged.fileset, SetOf)
+    assert merged.fileset.content_types == (File,)
+    assert set(merged.fileset.fspaths) == set(file1.fspaths) | set(file2.fspaths)
+
+
+def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
+    """A merged resource combines the files of both filesets into a single
+    ``SetOf[...]``, collates the members' metadata (scalar where they agree,
+    aligned list where they differ), and round-trips through ``save()``/``load()``."""
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    view1 = src_dir / "lesion-dermoscopy.dat"
+    view2 = src_dir / "lesion-clinical.dat"
+    view1.write_text("first view")
+    view2.write_text("second view")
+    fileset1 = File(view1)
+    fileset2 = File(view2)
+    # 'LesionID' agrees across the two views, 'View' differs
+    fileset1.metadata.update({"LesionID": "L1", "View": "dermoscopy"})
+    fileset2.metadata.update({"LesionID": "L1", "View": "clinical"})
+
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: fileset1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=fileset2,
+        on_clash="merge",
+    )
+
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert isinstance(merged.fileset, SetOf)
+    assert merged.fileset.content_types == (File,)
+    assert sorted(p.name for p in merged.fileset.fspaths) == [
+        "lesion-clinical.dat",
+        "lesion-dermoscopy.dat",
     ]
+    # agreed field stays scalar, differing field is collated into an aligned list
+    assert merged.metadata["LesionID"] == "L1"
+    assert merged.metadata["View"] == ["dermoscopy", "clinical"]
+
+    saved, _ = session.save(tmp_path / "staged")
+    session_dir = (tmp_path / "staged").joinpath(*session.staging_relpath)
+    reloaded = ImagingSession.load(session_dir)
+
+    reloaded_resource = reloaded.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert sorted(p.name for p in reloaded_resource.fileset.fspaths) == [
+        "lesion-clinical.dat",
+        "lesion-dermoscopy.dat",
+    ]
+    assert reloaded_resource.metadata["LesionID"] == "L1"
+    assert reloaded_resource.metadata["View"] == ["dermoscopy", "clinical"]
+    assert (
+        reloaded_resource.checksums
+        == saved.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].checksums
+    )
 
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
