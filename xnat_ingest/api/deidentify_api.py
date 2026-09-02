@@ -93,6 +93,7 @@ def deidentify(
     reid_dir.mkdir(parents=True, exist_ok=True)
 
     errors: list[str] = []
+    n_skeletons = 0
 
     default_loaded = load_specs(spec_dir / DEFAULT_SPEC_DIR)
 
@@ -163,6 +164,79 @@ def deidentify(
             #
             # The rename costs nothing: save() writes the same bytes either way
             # and os.replace within output_dir is a rename, not a copy.
+            # AN EMPTY INPUT IS NOT A COMPLETE RUN. The completeness gate below
+            # compares n_out against n_in, and 0 == 0 is vacuously True, so a
+            # session directory holding no data files used to pass as complete:
+            # deidentify created an output for it, reported success and exited 0,
+            # and on tier-1 upload reads that directory directly. Measured: an
+            # empty input produced an output containing nothing but a metadata
+            # sidecar, with errors == [].
+            #
+            # Reported as its own event rather than folded into deid_incomplete.
+            # "I was handed a session with nothing in it" is a different fault
+            # from "my output is short": the first means the stage before this
+            # one failed or the directory is a leftover, and only the second
+            # says anything about this stage's work.
+            n_in = _data_file_count(session_listing.fspath)
+            if n_in == 0:
+                # TWO DIFFERENT THINGS LOOK LIKE ZERO, and only one is a fault.
+                #
+                # `--unlink-source keep-metadata` deliberately leaves a session
+                # with no data files: session.unlink removes each resource
+                # directory outright and keeps the scan and session metadata, so a
+                # later stage can still work out which scan a late-arriving file
+                # belongs to. That skeleton is the designed steady state of that
+                # mode, and under --loop it is re-examined every cycle forever.
+                # Reporting it would emit an error every interval, for every
+                # session ever processed, for as long as the stage runs.
+                #
+                # The session-level metadata file is what separates them: save()
+                # writes it as its very last action, so its presence means the
+                # session was fully written at least once and what is left is a
+                # skeleton. A directory that never got that far is either a
+                # leftover or the wreckage of a stage that died, and that IS a
+                # fault worth reporting.
+                #
+                # This also catches a HALF-WRITTEN INPUT, which is why the test
+                # is on the metadata file and not on some marker of the unlink
+                # mode. assign writes its output in place, so a session it died
+                # part-way through has data files but no session metadata, and
+                # one that died before writing any has neither. Either way this
+                # stage now declines to consume a partial upstream output rather
+                # than deidentifying it and presenting it as whole.
+                if (session_listing.fspath / Metadata.FNAME).exists():
+                    n_skeletons += 1
+                    # DEBUG, not INFO: skeletons are never removed, so under
+                    # --loop this line would repeat for every processed session
+                    # every interval, without bound, for the life of the
+                    # deployment. One aggregate line per cycle is logged below
+                    # instead. The structured event stays so a rule can still
+                    # count them.
+                    logger.debug(
+                        "Skipping '%s': already processed and reduced to a "
+                        "metadata-only skeleton",
+                        session_listing.name,
+                        extra={
+                            "event": "deid_skeleton_skipped",
+                            "session": session_listing.name,
+                        },
+                    )
+                    continue
+                msg = (
+                    f"Session '{session_listing.session_id}' contains no data "
+                    f"files and no session metadata, so there is nothing to "
+                    f"deidentify"
+                )
+                logger.error(
+                    msg,
+                    extra={
+                        "event": "deid_empty_input",
+                        "session": session_listing.name,
+                    },
+                )
+                errors.append(msg)
+                continue
+
             build_dir = output_dir / BUILD_NAME_DEFAULT
             scratch_dir = build_dir / f"scratch_{session_listing.name}"
             work_dir = build_dir / f"promote_{session_listing.name}"
@@ -233,7 +307,11 @@ def deidentify(
                 # unrecognised, so the two can differ. Rebuilding it would count an
                 # empty path, make every session look incomplete, and refuse every
                 # unlink forever. group_api does the same thing the same way.
-                n_in = _data_file_count(session_listing.fspath)
+                # n_in was measured BEFORE the run, above, not here. Measuring it
+                # after the fact would count whatever the source holds NOW: a
+                # session that gained files while this run was working would read
+                # n_out < n_in and be called incomplete, when the right answer is
+                # that the new files are simply not this run's to carry.
                 if saved_dir is None:
                     # The run failed before producing output. "I could not check" is
                     # not "the data is missing"; the except branch above has already
@@ -339,6 +417,14 @@ def deidentify(
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton
                 session.unlink(keep_metadata=True)
+    if n_skeletons:
+        # ONE line per pass, not one per skeleton: see the DEBUG line above.
+        logger.info(
+            "Skipped %d already-processed session(s) reduced to metadata-only "
+            "skeletons",
+            n_skeletons,
+            extra={"event": "deid_skeletons_skipped", "count": n_skeletons},
+        )
     if errors:
         logger.error(
             "Deidentification completed with %d errors",
