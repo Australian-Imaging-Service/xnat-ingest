@@ -73,6 +73,44 @@ def test_deidentify_deletes_source_dir_on_success_when_unlink_source_all(
     assert not session_dir.exists()
 
 
+def test_deidentify_discards_a_stale_build_from_a_crashed_run(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """A build tree left by a run that died before promotion must not be adopted.
+
+    save() does mkdir(exist_ok=True), so without wiping the promote directory first
+    the survivor would be merged into and then renamed in as though this run had
+    produced it. Stale files would reach XNAT, and could pad an incomplete run up to
+    n_out == n_in and unlock the unlink.
+
+    This is the first-materialisation path, which is the one that promotes: the
+    output does not exist yet, so the session is built under __build__ and renamed
+    into place.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    session_dir = input_dir / SESSION_NAME
+    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+
+    stale = (
+        output_dir / "__build__" / f"promote_{SESSION_NAME}" / SESSION_NAME / "9.ghost"
+    )
+    stale.mkdir(parents=True)
+    (stale / "ghost.dcm").write_text("from a crashed run")
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            require_manifest=False,
+        )
+
+    promoted = list(output_dir.rglob("ghost.dcm"))
+    assert not promoted, f"a stale build was adopted into the output: {promoted}"
+
+
 def test_deidentify_keeps_source_when_output_is_incomplete(
     dirs: tuple[Path, Path, Path, Path],
 ):

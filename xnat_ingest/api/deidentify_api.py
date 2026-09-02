@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import shutil
 import traceback
 import typing as ty
@@ -14,6 +15,7 @@ from xnat_ingest.helpers.remotes import LocalSessionListing, list_session_dirs
 from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.model.resource import ImagingResource
 
+from .group_api import BUILD_NAME_DEFAULT
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
 from ..model.session import ImagingSession, Transform
@@ -131,11 +133,43 @@ def deidentify(
             specs, transforms = loaded
 
             # Create a scratch directory for temporary files during deidentification
-            # The scratch directory is created within the output directory to ensure that
-            # it is on the same filesystem, which is important for efficient file operations
-            # The scratch dir is removed after the deidentification process is complete, regardless of success or failure
-            scratch_dir = output_dir / f".deid_scratch_{session_listing.name}"
-            scratch_dir.mkdir(parents=True, exist_ok=True)
+            # Scratch lives under __build__, which is invisible to every consumer:
+            # list_session_dirs skips names starting with "__" and the s3 uploader
+            # skips it by name. The previous ".deid_scratch_<name>" was NOT invisible,
+            # because list_session_dirs excludes "__"-prefixed names and not
+            # "."-prefixed ones, so on tier-1, where upload reads /data/deidentified
+            # directly, a scratch directory could be listed as a session mid-write.
+            #
+            # Wiped before use as well as after: a tree surviving a run that died
+            # would otherwise be picked up by the next one.
+            #
+            # A SECOND directory under __build__ is used to materialise an output
+            # that does not exist yet, so that it appears under its real name by
+            # rename rather than filling up in place. A crash part-way through a
+            # first save would otherwise leave a partial tree under the real name;
+            # once its mtimes go quiet it looks complete to both upload paths, and
+            # the completeness gate below cannot catch it because the gate runs in
+            # the process that just died.
+            #
+            # Only when there is NO existing output. Re-saving over one that is
+            # already there goes straight to output_dir, because building
+            # elsewhere and renaming in defeats both write-if-changed
+            # short-circuits: each is conditional on the destination already
+            # existing (Metadata.save compares against the file, ImagingResource
+            # .save is gated on `if resource_dir.exists()`). Measured: always
+            # building rewrote every file including the DICOMs on an unchanged
+            # session, resetting both upload settle windows every cycle, which is
+            # a worse stall than the metadata churn it was meant to replace.
+            #
+            # The rename costs nothing: save() writes the same bytes either way
+            # and os.replace within output_dir is a rename, not a copy.
+            build_dir = output_dir / BUILD_NAME_DEFAULT
+            scratch_dir = build_dir / f"scratch_{session_listing.name}"
+            work_dir = build_dir / f"promote_{session_listing.name}"
+            for stale in (scratch_dir, work_dir):
+                if stale.exists():
+                    shutil.rmtree(stale)
+            scratch_dir.mkdir(parents=True)
             # None until save() hands back the real path. If the run raises, the
             # finally must say "could not verify", NOT count a rebuilt path and
             # report a completeness verdict for output that was never produced.
@@ -149,10 +183,42 @@ def deidentify(
                     transforms=transforms,
                     max_workers=max_workers,
                 )
-                _, saved_dir = deidentified_session.save(output_dir)
+                # Where save() WILL put it, worked out with save()'s own rule.
+                # ONE binding, passed to both calls. If the exists-check and the
+                # save ever disagreed on available_projects, the check would look
+                # for a name without the INVALID_UNRECOGNISED_ prefix while save()
+                # wrote one with it, and every cycle would take the promote branch
+                # onto a path that is not where the output actually lives.
+                available_projects = None
+                final_dir = output_dir / deidentified_session.staging_dirname(
+                    available_projects
+                )
+                if final_dir.exists():
+                    # In place, and so NOT atomic: a crash here leaves an output
+                    # part old and part new. Much narrower than the first save,
+                    # because the checksum short-circuit rewrites only resources
+                    # whose content actually changed, and a stale resource left by
+                    # a half-finished pass is overwritten on the next one.
+                    _, saved_dir = deidentified_session.save(
+                        output_dir, available_projects
+                    )
+                else:
+                    work_dir.mkdir(parents=True)
+                    _, built_dir = deidentified_session.save(
+                        work_dir, available_projects
+                    )
+                    # Appears under its real name in one step. If final_dir did
+                    # somehow get created in between, os.replace raises rather
+                    # than merging, the except below records it, and the source
+                    # is not unlinked.
+                    os.replace(built_dir, final_dir)
+                    saved_dir = final_dir
             finally:
-                if scratch_dir.exists():
-                    shutil.rmtree(scratch_dir)
+                # Both, and unconditionally: whatever is left in either is by
+                # definition not part of a promoted output, and leaving it would be
+                # adopted by the next run.
+                shutil.rmtree(scratch_dir, ignore_errors=True)
+                shutil.rmtree(work_dir, ignore_errors=True)
                 # PER SESSION, not per directory. The previous form compared every
                 # file under output_dir against every file under input_dir, so with
                 # more than one session in flight the two numbers described different
@@ -242,13 +308,33 @@ def deidentify(
                 )
                 errors.append(msg)
             elif unlink_source == "all":
+                # NOTE: this whole branch is an `else:` of the try above, so an
+                # exception here is NOT caught by that except and would propagate out
+                # of the session loop, out of deidentify() and, under --loop, out of
+                # the while loop, killing the stage for every other session. rmtree can
+                # raise on EACCES or a concurrent removal, so it is guarded.
                 # remove the original (assigned) session directory in its entirety.
                 # rmtree, NOT rmdir: the session directory holds scan directories, so
                 # rmdir() raises "Directory not empty". assign does the same job the
                 # same way (assign_api.py). LocalSessionListing exposes `fspath`;
                 # there is no `session_dir` attribute, so the previous form raised
                 # AttributeError before it could delete anything.
-                shutil.rmtree(session_listing.fspath)
+                try:
+                    shutil.rmtree(session_listing.fspath)
+                except OSError as unlink_err:
+                    msg = (
+                        f"Could not unlink source of session "
+                        f"'{session_listing.session_id}' after a complete run: "
+                        f"{unlink_err}"
+                    )
+                    logger.error(
+                        msg,
+                        extra={
+                            "event": "deid_unlink_failed",
+                            "session": session_listing.name,
+                        },
+                    )
+                    errors.append(msg)
             elif unlink_source == "keep-metadata":
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton

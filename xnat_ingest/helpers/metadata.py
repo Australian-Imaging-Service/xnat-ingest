@@ -66,8 +66,11 @@ class Metadata(ty.Mapping[str, ty.Any]):
     def save(self, data_dir: Path) -> None:
         """Write the metadata file, but ONLY if its content would change.
 
-        WHY THE COMPARISON. This is called once per scan directory and once per
-        session directory on every pass. Under `--loop` a stage reprocesses the same
+        WHY THE COMPARISON. There are three call sites, not three writes:
+        ImagingResource.save (per RESOURCE), ImagingScan.save (per scan) and
+        ImagingSession.save (per session). A session with S scans and R resources
+        writes 1 + S + R of these files on every pass, and the per-resource one is
+        the most numerous. Under `--loop` a stage reprocesses the same
         sessions repeatedly, and an unconditional write moved every mtime each cycle
         even when nothing had changed. Both upload paths refuse to touch a session
         that was modified recently (`upload --wait-period`, and the s3 uploader's

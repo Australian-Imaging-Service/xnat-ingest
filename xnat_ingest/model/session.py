@@ -1534,6 +1534,30 @@ class ImagingSession:
             session.uid = session.metadata.get(cls.UID_METADATA_KEY, None)
         return session
 
+    def staging_dirname(self, available_projects: list[str] | None = None) -> str:
+        """The directory name this session is saved under by :meth:`save`.
+
+        Split out of ``save`` so that a caller can work out where the session
+        WILL land before saving it. ``deidentify_api`` needs that to decide
+        whether an output already exists, and rebuilding the rule at the call
+        site would let the two drift: the name is not simply the input
+        directory's, because it is derived from the assigned ids, gains a
+        ``run_uid`` suffix when one is set and an invalid-project prefix when
+        the project is unrecognised.
+        """
+        if self.name is None:
+            # Project/subject/session IDs haven't been assigned yet, so flag the
+            # directory as not-yet-assigned rather than assuming they're set
+            return self.staging_relpath[0]
+        if available_projects is None or self.project_id in available_projects:
+            project_id = self.project_id
+        else:
+            project_id = "INVALID_UNRECOGNISED_" + self.project_id
+        session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
+        if self.run_uid:
+            session_dirname += f".{self.run_uid}"
+        return session_dirname
+
     def save(
         self,
         dest_dir: Path,
@@ -1594,19 +1618,7 @@ class ImagingSession:
             )
 
         saved = self.new_empty()
-        if self.name is None:
-            # Project/subject/session IDs haven't been assigned yet, so flag the
-            # directory as not-yet-assigned rather than assuming they're set
-            session_dirname = self.staging_relpath[0]
-        else:
-            if available_projects is None or self.project_id in available_projects:
-                project_id = self.project_id
-            else:
-                project_id = "INVALID_UNRECOGNISED_" + self.project_id
-            session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
-            if self.run_uid:
-                session_dirname += f".{self.run_uid}"
-        session_dir = dest_dir / session_dirname
+        session_dir = dest_dir / self.staging_dirname(available_projects)
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(included_scans, f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(
