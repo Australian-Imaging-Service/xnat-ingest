@@ -1166,6 +1166,65 @@ class ImagingSession:
                     deid_resource,
                     on_clash=on_resource_clash,
                 )
+        # SESSION-LEVEL RESOURCES, which this loop used to drop entirely.
+        #
+        # A session can carry resources attached to the SESSION rather than to a
+        # scan -- a report, a summary, anything added with add_session_resource.
+        # deidentified starts from new_empty(), which copies the ids and nothing
+        # else, and the loop above walks self.scans only, so those resources
+        # never reached the output. They were not de-identified, not copied, and
+        # nothing said so.
+        #
+        # save() has always handled them (included_session_resources), so this
+        # was a hole in deidentify alone, and it is worse than a plain data loss:
+        # the per-session completeness gate counts data files on both sides, so a
+        # session carrying one would come out short, be reported incomplete, and
+        # correctly refuse to unlink its input -- for ever, on every cycle,
+        # because the next run drops it again.
+        #
+        # They go at the top of dest_dir rather than under a scan id, which is
+        # where save() puts them and where load() looks for them.
+        for resource_name, resource in self.session_resources.items():
+            contains_phi = getattr(resource.fileset, "contains_phi", False)
+            resource_spec = None
+            resource_transforms = None
+            if contains_phi:
+                resource_spec = select_spec(resource.fileset)
+                resource_transforms = select_transforms(resource.fileset)
+                if resource_spec is None:
+                    msg = (
+                        "No deidentification specification found for %s fileset in the "
+                        "session-level %s resource. Please provide a project "
+                        "specification for %s in the file format hierarchy to "
+                        "deidentify this resource. Returning None and copying the files "
+                        "without deidentification, which may lead to PHI being uploaded "
+                        "to XNAT if the fileset contains PHI. Matching specifications "
+                        "found in project spec: %s"
+                    )
+                    msg_vars = (
+                        type(resource.fileset).__name__,
+                        resource_name,
+                        type(resource.fileset).__name__,
+                        list(specs),
+                    )
+                    if require_matching_spec:
+                        raise KeyError(msg % msg_vars)
+                    else:
+                        logger.warning(msg, *msg_vars)
+            deid_resource, reid_mdata = _deidentify_or_copy_resource(
+                resource.fileset,
+                resource_name,
+                dest_dir / resource_name,
+                contains_phi,
+                resource_spec,
+                copy_mode,
+                max_workers,
+                transforms=resource_transforms,
+            )
+            if reid_mdata is not None:
+                reid_series.append(reid_mdata)
+            deidentified.add_session_resource(resource_name, deid_resource)
+
         return deidentified, collate_metadata_series(reid_series)
 
     def associate_files(
