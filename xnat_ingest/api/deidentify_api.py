@@ -84,7 +84,31 @@ def _output_is_current(output_session_dir: Path, input_session_dir: Path, n_in: 
         return False
     if _data_file_count(output_session_dir) != n_in:
         return False
-    return _newest_mtime(output_session_dir) >= _newest_mtime(input_session_dir)
+    if _newest_mtime(output_session_dir) < _newest_mtime(input_session_dir):
+        return False
+    # CONTENT, NOT JUST COUNT, and this is the load-bearing part.
+    #
+    # A re-save writes into the output IN PLACE, so a run that dies during one
+    # can leave a file truncated or half-written under the real name. The file
+    # is still there, so the count is right, and it was written after its input,
+    # so the mtime is newer. Counting alone would call that finished and skip it
+    # on this cycle and every cycle afterwards.
+    #
+    # Skipping is not merely a missed opportunity to notice: it BYPASSES the
+    # repair. ImagingResource.save is what fixes a bad output, by loading what is
+    # on disk, finding the checksums disagree and overwriting it. That code only
+    # runs if save() runs, and this function decides whether it does. So a skip
+    # that examines a corrupt output is what makes the corruption permanent.
+    #
+    # Verifying against the manifest costs a hash of the output, which is a small
+    # fraction of the de-identification it avoids.
+    try:
+        ImagingSession.load(
+            output_session_dir, require_manifest=True, check_checksums=True
+        )
+    except Exception:
+        return False
+    return True
 
 
 def deidentify(

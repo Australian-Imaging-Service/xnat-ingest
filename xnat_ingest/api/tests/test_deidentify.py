@@ -171,6 +171,52 @@ def test_deidentify_does_not_skip_an_output_that_is_newer_but_short(
     assert calls, "a short output was skipped, so the partial session is permanent"
 
 
+def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    """A file that is present but wrong must still be reprocessed.
+
+    A re-save writes in place, so a crash can leave a file truncated under its
+    real name. The count is still right and the mtime is still newer than the
+    input, so a count-only currency check would skip it for ever. Skipping also
+    bypasses the repair: ImagingResource.save is what overwrites a bad output,
+    and it only runs if the session is not skipped.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    calls: list = []
+
+    def counting_deidentify(self, dest_dir, **kwargs):
+        calls.append(self.name)
+        return self, dict(REID_MDATA)
+
+    with patch.object(ImagingSession, "deidentify", counting_deidentify):
+        deidentify(
+            input_dir=input_dir, output_dir=output_dir,
+            spec_dir=spec_dir, reid_dir=reid_dir,
+        )
+    assert len(calls) == 1
+    produced = output_dir / SESSION_NAME
+    assert produced.is_dir()
+
+    # corrupt one output file in place, keeping the file count identical
+    data_files = [
+        f for f in produced.rglob("*")
+        if f.is_file() and not f.name.startswith("__")
+    ]
+    assert data_files, "no data file in the output to corrupt"
+    data_files[0].write_bytes(b"truncated")
+
+    with patch.object(ImagingSession, "deidentify", counting_deidentify):
+        deidentify(
+            input_dir=input_dir, output_dir=output_dir,
+            spec_dir=spec_dir, reid_dir=reid_dir,
+        )
+
+    assert len(calls) == 2, (
+        "a corrupt output was skipped, so it can never be repaired"
+    )
+
+
 def test_deidentify_skips_an_output_that_is_complete_and_current(
     dirs: tuple[Path, Path, Path, Path],
 ):

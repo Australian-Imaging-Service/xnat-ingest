@@ -2035,7 +2035,20 @@ def test_deidentify_cli_dicom_encrypted_reid(
 
     def mock_deidentify(self, dest_dir, **kwargs):
         mock_session = MagicMock()
-        mock_session.save = MagicMock()
+
+        # save() returns (session, saved_dir) and creates that directory.
+        # deidentify materialises a session that does not exist yet under
+        # __build__ and renames it into place, so a save that returns nothing
+        # and writes nothing leaves nothing to rename.
+        session_dirname = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+
+        def _save(dest_dir, *args, **kwargs):
+            saved_dir = Path(dest_dir) / session_dirname
+            saved_dir.mkdir(parents=True, exist_ok=True)
+            return mock_session, saved_dir
+
+        mock_session.save = MagicMock(side_effect=_save)
+        mock_session.staging_dirname = MagicMock(return_value=session_dirname)
         return mock_session, {"PatientID": PATIENT_ID}
 
     with patch.object(ImagingSession, "deidentify", mock_deidentify):
