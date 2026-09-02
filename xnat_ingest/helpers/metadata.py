@@ -63,6 +63,10 @@ class Metadata(ty.Mapping[str, ty.Any]):
             self._read = True
 
     def save(self, data_dir: Path) -> None:
+        # Pull in any not-yet-loaded metadata from the underlying object (e.g. file
+        # headers, path-regex fields set on the fileset) so the persisted JSON is the
+        # full picture, not just whatever happens to have been accessed so far.
+        self._ensure_read()
         with open(data_dir / self.FNAME, "w") as f:
             # 'default=str' handles values that aren't natively JSON-serialisable but
             # have a sensible string representation, e.g. pydicom's PersonName
