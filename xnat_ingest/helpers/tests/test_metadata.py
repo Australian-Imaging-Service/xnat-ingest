@@ -295,7 +295,11 @@ def test_metadata_save_does_not_rewrite_unchanged_content(tmp_path):
     """
     from xnat_ingest.helpers.metadata import Metadata
 
-    md = Metadata({"PatientID": "X", "StudyDate": "20260101"}, None)
+    # _read=True, and so no backing object is needed. save() now calls
+    # _ensure_read() first (added upstream so the persisted JSON is the full
+    # picture), which would dereference a None object. These two cases are about
+    # what save() WRITES, not about what it loads, so the read is marked done.
+    md = Metadata({"PatientID": "X", "StudyDate": "20260101"}, None, True)
     md.save(tmp_path)
     fspath = tmp_path / Metadata.FNAME
     before = fspath.stat().st_mtime_ns
@@ -315,11 +319,11 @@ def test_metadata_save_does_not_rewrite_unchanged_content(tmp_path):
 def test_metadata_save_writes_when_content_changes(tmp_path):
     from xnat_ingest.helpers.metadata import Metadata
 
-    md = Metadata({"PatientID": "X"}, None)
+    md = Metadata({"PatientID": "X"}, None, True)
     md.save(tmp_path)
     fspath = tmp_path / Metadata.FNAME
 
-    md2 = Metadata({"PatientID": "Y"}, None)
+    md2 = Metadata({"PatientID": "Y"}, None, True)
     md2.save(tmp_path)
 
     assert "Y" in fspath.read_text()
