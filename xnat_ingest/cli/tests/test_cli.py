@@ -43,8 +43,11 @@ from xnat_ingest.cli import (
     group_cmd,
     upload_cmd,
 )
-from xnat_ingest.helpers.arg_types import MimeType  # type: ignore[import-untyped]
-from xnat_ingest.helpers.arg_types import IDSpec, XnatLogin
+from xnat_ingest.helpers.arg_types import (
+    IDSpec,
+    MimeType,  # type: ignore[import-untyped]
+    XnatLogin,
+)
 from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.helpers.remotes import list_session_dirs, upload_file_to_s3
 from xnat_ingest.model.resource import ImagingResource
@@ -155,7 +158,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         os.environ,
         {
             "XINGEST_DATATYPES": (
-                "medimage/dicom-series;" "medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
+                "medimage/dicom-series;medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
             )
         },
     ):
@@ -579,9 +582,9 @@ def test_stage_and_upload(
     )
 
     assert result.exit_code == 0, show_cli_trace(result)
-    assert (
-        "as all the resources already exist on XNAT" in result.stdout
-    ), show_cli_trace(result)
+    assert "as all the resources already exist on XNAT" in result.stdout, (
+        show_cli_trace(result)
+    )
 
     dicom_scan_headers = {
         "1": {
@@ -618,9 +621,9 @@ def test_stage_and_upload(
             ]
 
             for xscan in xsession.scans.values():
-                assert (
-                    xscan.resources
-                ), f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                assert xscan.resources, (
+                    f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                )
                 for xresource in xscan.resources.values():
                     assert xresource.files, (
                         f"Resource {xresource.label!r} on scan {xscan.id!r} "
@@ -731,9 +734,9 @@ def test_stage_wait_period(
     assert result.exit_code == 0, show_cli_trace(result)
     logs = stage_log_file.read_text()
     assert " as it was last modified " in logs, show_cli_trace(result)
-    assert not [
-        p for p in sorted_dir.iterdir() if not p.name.startswith("__")
-    ], show_cli_trace(result)
+    assert not [p for p in sorted_dir.iterdir() if not p.name.startswith("__")], (
+        show_cli_trace(result)
+    )
 
     time.sleep(10)
 
@@ -1152,9 +1155,9 @@ def test_sort_orthanc_collate_resources(
     assert len(session_dirs) == 1
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
-    assert any(
-        item.is_dir() for item in resource_dir.iterdir()
-    ), "Expected nested sub-directory structure without collation"
+    assert any(item.is_dir() for item in resource_dir.iterdir()), (
+        "Expected nested sub-directory structure without collation"
+    )
 
     # With --collate-resources siblings, all files are placed flat in the resource dir
     sorted_collated_dir = tmp_path / "sorted_collated"
@@ -1180,9 +1183,9 @@ def test_sort_orthanc_collate_resources(
     assert len(session_dirs) == 1
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
-    assert all(
-        item.is_file() for item in resource_dir.iterdir()
-    ), "Expected flat structure with 'siblings' collation"
+    assert all(item.is_file() for item in resource_dir.iterdir()), (
+        "Expected flat structure with 'siblings' collation"
+    )
 
 
 def test_assign_missing_id_field_collects_error(
@@ -1224,9 +1227,9 @@ def test_assign_missing_id_field_collects_error(
     logs = assign_log_file.read_text()
     assert "Assign completed with 1 errors" in logs, show_cli_trace(result)
     # The session couldn't be assigned an ID, so nothing was written to the output dir
-    assert not [
-        d for d in assigned_dir.iterdir() if d.name != INVALID_DIRNAME
-    ], show_cli_trace(result)
+    assert not [d for d in assigned_dir.iterdir() if d.name != INVALID_DIRNAME], (
+        show_cli_trace(result)
+    )
 
 
 @mock_aws
@@ -1885,9 +1888,9 @@ def test_deidentify_cli_dicom(
     # 7. Deidentified session directory contains files
     deid_session_root = output_dir / session_name
     assert deid_session_root.exists()
-    assert any(
-        p.is_file() for p in deid_session_root.rglob("*")
-    ), f"No files found under {deid_session_root}"
+    assert any(p.is_file() for p in deid_session_root.rglob("*")), (
+        f"No files found under {deid_session_root}"
+    )
 
 
 def test_deidentify_cli_dicom_missing_transform(

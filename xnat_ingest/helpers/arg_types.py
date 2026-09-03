@@ -69,7 +69,6 @@ class classproperty(object):
 
 
 class CliType(click.types.ParamType):
-
     is_composite = True
 
     def __init__(
@@ -162,7 +161,6 @@ def to_lower(value: str) -> str:
 
 @attrs.define
 class LoggerConfig(MultiCliTyped):
-
     type: str
     loglevel: str
     location: str
@@ -181,14 +179,12 @@ class Convert(MultiCliTyped):
 
 @attrs.define
 class PathMetadataRegex(MultiCliTyped):
-
     regex: str
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
 
 @attrs.define
 class UploadMethod(MultiCliTyped):
-
     method: str = attrs.field(
         validator=attrs.validators.in_(
             {"per_file", "tar_memory", "tgz_memory", "tar_file", "tgz_file"}
@@ -209,7 +205,6 @@ class UploadMethod(MultiCliTyped):
 
 @attrs.define
 class AssociatedFiles(CliTyped):
-
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
     glob: str = attrs.field()
     identity_pattern: str = attrs.field()
@@ -217,7 +212,6 @@ class AssociatedFiles(CliTyped):
 
 @attrs.define
 class XnatLogin(CliTyped):
-
     host: str
     user: str
     password: str
@@ -225,7 +219,6 @@ class XnatLogin(CliTyped):
 
 @attrs.define
 class OrthancLogin(CliTyped):
-
     url: str
     user: str
     password: str
@@ -234,7 +227,6 @@ class OrthancLogin(CliTyped):
 
 @attrs.define
 class StoreCredentials(CliTyped):
-
     access_key: str
     access_secret: str
 
@@ -480,7 +472,6 @@ class IDSpec(MultiCliTyped):
 
 @attrs.define
 class MimeType(str, MultiCliTyped):
-
     mime: str
 
     @property
@@ -490,7 +481,6 @@ class MimeType(str, MultiCliTyped):
 
 @attrs.define
 class CollationSpec(MultiCliTyped):
-
     mime: str
     collation: str = attrs.field(default="siblings")
 

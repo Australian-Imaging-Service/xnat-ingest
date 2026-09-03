@@ -104,7 +104,6 @@ def check_upload(
             included_formats.add(fileformat)
 
     with xnat_repo.connection:
-
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
         if str(input_dir).startswith("s3://"):
@@ -134,7 +133,6 @@ def check_upload(
             desc=f"Processing staged sessions found in '{input_dir}'",
             disable=disable_progress,
         ):
-
             try:
                 xproject = xnat_repo.connection.projects[session_listing.project_id]
             except KeyError:
