@@ -9,7 +9,13 @@ from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import cli
 
-from ..api.group_api import group, group_orthanc
+from ..api.group_api import (
+    DEFAULT_RESOURCE_FIELD,
+    DEFAULT_SCAN_FIELD,
+    DEFAULT_SESSION_FIELD,
+    group,
+    group_orthanc,
+)
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     CollationSpec,
@@ -46,12 +52,13 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=(("StudyInstanceUID", "all"),),
+    default=DEFAULT_SESSION_FIELD,
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID. Can also be a Python format "
-        "string over several fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
+        "(XINGEST_SESSION env. var). Defaults to 'StudyInstanceUID' for DICOM collections; other "
+        "fileset types need an explicit spec. Can also be a Python format string over several "
+        "fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
     ),
 )
 @click.option(
@@ -59,12 +66,14 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=[["SeriesNumber", "all"]],
+    default=DEFAULT_SCAN_FIELD,
     metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
-        "Python format string over several fields (see --session) (XINGEST_SCAN env. var)"
+        "Python format string over several fields (see --session). Defaults to 'SeriesNumber' "
+        "for DICOM collections (one scan per acquisition series); for any fileset type not "
+        "matched by a --scan spec the scan is named after the resource. (XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
@@ -72,7 +81,7 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=(),
+    default=DEFAULT_RESOURCE_FIELD,
     metavar="<specifier> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
@@ -116,12 +125,12 @@ are uploaded to XNAT
 @click.option(
     "--on-resource-clash",
     type=click.Choice(ON_RESOURCE_CLASH),
-    default="avoid",
+    default="error",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
         "Determines the behavior when a resource with the same name already exists in the scan. "
-        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
-        "Default: 'avoid'"
+        "Options are 'error' (default), 'avoid' (append a _2, _3 ... suffix), 'merge' (combine "
+        "into one SetOf resource), 'overwrite' (XINGEST_ON_RESOURCE_CLASH env. var)."
     ),
 )
 @click.option(
