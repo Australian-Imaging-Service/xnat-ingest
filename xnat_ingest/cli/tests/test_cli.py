@@ -893,8 +893,8 @@ def test_group_metadata_table_detailed_example(
 
     session_dirs = {d.name: d for d in list_session_dirs(sorted_dir)}
     assert len(session_dirs) == 2
-    subj01_dir = next(d for n, d in session_dirs.items() if "subj_01" in n)
-    subj02_dir = next(d for n, d in session_dirs.items() if "subj_02" in n)
+    subj01_dir = next(d for n, d in session_dirs.items() if "subj-01" in n)
+    subj02_dir = next(d for n, d in session_dirs.items() if "subj-02" in n)
 
     subj01_resources = resource_dirs(subj01_dir)
     assert set(subj01_resources) == {"lesionA", "lesionB"}

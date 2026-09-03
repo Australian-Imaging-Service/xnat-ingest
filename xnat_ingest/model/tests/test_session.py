@@ -31,7 +31,12 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from conftest import get_raw_data_files
 from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
 from xnat_ingest.helpers.metadata import Metadata
-from xnat_ingest.model.session import ImagingScan, ImagingSession, _metadata_diff
+from xnat_ingest.model.session import (
+    ImagingScan,
+    ImagingSession,
+    _metadata_diff,
+    _type_name_resource_label,
+)
 from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
@@ -412,6 +417,61 @@ def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
                 PathMetadataRegex(r"^/nonexistent/(?P<cohort>.+)$", DicomSeries),
             ],
         )
+
+
+def test_from_paths_injects_datatype_metadata_field(tmp_path: Path) -> None:
+    """The resolved fileset type name is exposed as the '__datatype__' metadata
+    field and is usable from an IDSpec (including a format string)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("sess")],
+        scan_field=[IDSpec("sess")],
+        resource_field=[IDSpec("res_{__datatype__}")],
+        path_metadata_regex=[PathMetadataRegex(r".*/(?P<sess>[^/]+)\.txt", File)],
+    )
+
+    scan = next(iter(sessions[0].scans.values()))
+    assert list(scan.resources) == ["res_File"]
+    resource = next(iter(scan.resources.values()))
+    assert resource.fileset.metadata["__datatype__"] == "File"
+
+
+def test_from_paths_resource_label_defaults_to_mime_like_type_name(
+    tmp_path: Path,
+) -> None:
+    """With no resource_field, each resource is labelled with the mime-like
+    rendering of its fileset's type name ('-' kept, '.'/'+' collapsed to '_')."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("__datatype__")],
+        # resource_field omitted -> mime-like(type_name)
+    )
+
+    assert list(next(iter(sessions[0].scans.values())).resources) == ["file"]
+
+
+@pytest.mark.parametrize(
+    "type_name, expected",
+    [
+        ("VectraExport", "vectra-export"),
+        ("Sqlite3Db", "sqlite3-db"),
+        ("SyngoMi_Vr20b_ListMode", "syngo-mi_vr20b_list-mode"),
+        ("Png___SetOf", "png_set-of"),
+    ],
+)
+def test_type_name_resource_label(type_name: str, expected: str) -> None:
+    assert _type_name_resource_label(type_name) == expected
 
 
 CLASH_SCAN_ID = "1"

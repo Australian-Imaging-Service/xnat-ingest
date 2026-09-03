@@ -22,9 +22,9 @@ def group(
     input_paths: list[str],
     output_dir: Path,
     datatypes: list[FileSet],
-    session: list[IDSpec],
-    scan: list[IDSpec],
-    resource: list[IDSpec],
+    session: ty.Sequence[IDSpec],
+    scan: ty.Sequence[IDSpec],
+    resource: ty.Sequence[IDSpec] = (),
     path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     unlink_source: str | None = None,
     raise_errors: bool = False,
@@ -50,15 +50,16 @@ def group(
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
     datatypes: list[FileSet]
         List of FileSet types to look for in the input files. Only files with these datatypes will be considered for staging.
-    session: list[IDSpec] | None
+    session: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the session UIDs from the input files to group them into
         separate sessions
-    scan: list[IDSpec]
+    scan: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the scan IDs from the input files to group them into
         scans
-    resource: list[IDSpec]
+    resource: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the resource IDs from the input files to group them into
-        resources
+        resources. If empty, each resource is labelled with the mime-like rendering
+        of its fileset type name, e.g. 'vectra-export', 'sqlite3-db'
     path_metadata_regex: ty.Sequence[PathMetadataRegex]
         Regular expressions to extract "metadata" values from resource file paths as named groups. The named
         groups are used as metadata fields for the resource files, and the extracted values will be used to populate

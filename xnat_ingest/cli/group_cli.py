@@ -72,13 +72,15 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=[["ImageType[2:]", "all"]],
+    default=(),
     metavar="<specifier> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
         "for different datatypes (use `generic/file-set` as a catch-all if required), or a "
-        "Python format string over several fields (see --session). (XINGEST_RESOURCE env. var)"
+        "Python format string over several fields (see --session). If not given, each "
+        "resource is labelled with the mime-like rendering of its fileset type name, "
+        "e.g. 'vectra-export', 'sqlite3-db'. (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -284,9 +286,9 @@ are uploaded to XNAT
 def group_cmd(
     input_paths: list[str],
     output_dir: Path,
-    session: list[IDSpec],
-    scan: list[IDSpec],
-    resource: list[IDSpec],
+    session: ty.Sequence[IDSpec],
+    scan: ty.Sequence[IDSpec],
+    resource: ty.Sequence[IDSpec],
     datatype: list[MimeType] | None,
     path_metadata_regex: list[PathMetadataRegex],
     unlink_source: str | None,
