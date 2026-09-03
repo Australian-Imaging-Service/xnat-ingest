@@ -424,13 +424,15 @@ class IDSpec(MultiCliTyped):
                 "'--path-metadata-regex' to give it a proper name first if needed"
             ) from None
 
-    xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
+    # '-' is permitted in XNAT IDs/labels (and BIDS-style 'sub-01' labels rely on
+    # it); everything else outside [A-Za-z0-9_-] is collapsed to '_'
+    xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_-]+")
 
     @classmethod
     def get_value_from_matching_spec(
         cls,
         metadata: MetadataLike,
-        id_fields: list["IDSpec"],
+        id_fields: ty.Sequence["IDSpec"],
         missing_ids: dict[str, str] | None = None,
         escape: bool = True,
     ) -> str:

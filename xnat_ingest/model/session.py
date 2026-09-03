@@ -20,6 +20,7 @@ import yaml
 from dateutil.parser import isoparse
 from fileformats.application import Yaml
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
 from fileformats.generic import Directory, SetOf
 from fileformats.medimage import DicomCollection
@@ -146,6 +147,18 @@ def _set_content_types(fileset: FileSet) -> tuple[type[FileSet], ...]:
     return tuple(content_types) if content_types else (type(fileset),)
 
 
+def _type_name_resource_label(type_name: str) -> str:
+    """Fallback resource label for a fileset with no ``--resource`` spec: the
+    mime-like rendering of its type name, e.g. 'vectra-export', 'sqlite3-db',
+    run through the same ID/label escaping as session/scan IDs
+    (:attr:`IDSpec.xnat_id_escape_re`) so the '.'/'+' that ``to_mime_format_name``
+    emits for vendor/classifier type names (``SyngoMi_Vr20b_ListMode`` ->
+    ``syngo-mi.vr20b.list-mode``, ``Png___SetOf`` -> ``png+set-of``) collapse to
+    '_' while '-' is kept.
+    """
+    return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
+
+
 def _deidentify_or_copy_resource(
     fileset: FileSet,
     resource_name: str,
@@ -222,6 +235,10 @@ class ImagingSession:
     # Metadata key the originating session UID is stashed under when saving, so it can
     # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.SESSION
     UID_METADATA_KEY = "__uid__"
+    # Metadata key under which each fileset's resolved fileformats type name (e.g.
+    # 'VectraExport', 'Sqlite3Db') is stashed during grouping, so it can be
+    # referenced from --session/--scan/--resource specs (e.g. '{__datatype__}')
+    TYPE_METADATA_KEY = "__datatype__"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -400,9 +417,9 @@ class ImagingSession:
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: type[FileSet] | ty.Sequence[type[FileSet]],
-        session_field: list[IDSpec],
-        scan_field: list[IDSpec],
-        resource_field: list[IDSpec],
+        session_field: ty.Sequence[IDSpec],
+        scan_field: ty.Sequence[IDSpec],
+        resource_field: ty.Sequence[IDSpec] = (),
         recursive: bool = False,
         on_resource_clash: OnResourceClash = "error",
         ignore_paths: list[str] | None = None,
@@ -420,13 +437,15 @@ class ImagingSession:
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
             [DicomSeries, NiftiGz]
-        session_field: list[IDSpec]
+        session_field: ty.Sequence[IDSpec]
             the metadata field that uniquely identifies the session, used to group files
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
-        scan_field: list[IDSpec]
+        scan_field: ty.Sequence[IDSpec]
             the value of this field is used to group resources under single scans.
-        resource_field: list[IDSpec]
-            the value of this field is used to identify resources
+        resource_field: ty.Sequence[IDSpec]
+            the value of this field is used to identify resources. If empty, the
+            resource is labelled with the mime-like rendering of the fileset's type
+            name, e.g. 'vectra-export', 'sqlite3-db'
         recursive : bool, optional
             recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
             by default False
@@ -569,6 +588,12 @@ class ImagingSession:
                             )
                         fileset.metadata.update(match.groupdict())
 
+        # Expose each fileset's resolved type name as a metadata field so it can be
+        # referenced from --session/--scan/--resource specs (setdefault so an
+        # explicit path-regex group of the same name still wins)
+        for fileset in filesets:
+            fileset.metadata.setdefault(cls.TYPE_METADATA_KEY, fileset.type_name)
+
         MetadataTable.inject_list(metadata_tables, filesets)
 
         sessions: dict[tuple[str, str, str] | str, Self] = {}
@@ -589,6 +614,10 @@ class ImagingSession:
                 else:
                     resource_label = dicom_image_type_to_resource_label(image_type)
 
+            elif not resource_field:
+                # No --resource spec given: label the resource with the mime-like
+                # rendering of the fileset's type name, e.g. 'vectra-export'
+                resource_label = _type_name_resource_label(fileset.type_name)
             else:
                 resource_label = IDSpec.get_value_from_matching_spec(
                     fileset, resource_field

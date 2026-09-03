@@ -57,7 +57,8 @@ def test_plain_field_missing_uses_placeholder() -> None:
 def test_compound_specifier_combines_fields() -> None:
     spec = IDSpec("{PatientID}_{AccessionNumber}")
     value = spec.get_value({"PatientID": "subj-01", "AccessionNumber": "42"})
-    assert value == "subj_01_42"
+    # '-' is kept (permitted in XNAT IDs); other punctuation would collapse to '_'
+    assert value == "subj-01_42"
 
 
 def test_date_format_spec_against_live_datetime() -> None:
