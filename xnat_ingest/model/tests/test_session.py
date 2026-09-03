@@ -474,6 +474,100 @@ def test_type_name_resource_label(type_name: str, expected: str) -> None:
     assert _type_name_resource_label(type_name) == expected
 
 
+def _tree(root: Path) -> Path:
+    """A VectraExport-shaped tree for the recursive-directory tests:
+    ``analysis/`` holds a .json (the wanted nested dir), ``lesion/`` holds a .csv
+    (an ignored sibling dir), plus a loose file at the top."""
+    (root / "analysis").mkdir(parents=True)
+    (root / "analysis" / "result.json").write_text("{}")
+    (root / "analysis" / "notes.txt").write_text("inside the wanted dir")
+    (root / "lesion").mkdir()
+    (root / "lesion" / "data.csv").write_text("a,b\n1,2\n")
+    (root / "plain").mkdir()
+    (root / "plain" / "deep").mkdir()
+    (root / "plain" / "deep" / "result.json").write_text("{}")
+    (root / "scan.txt").write_text("a loose file")
+    return root
+
+
+def test_recursive_collect_prunes_on_match(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    from xnat_ingest.model.session import _recursive_collect
+
+    root = _tree(tmp_path / "export")
+    got = set(_recursive_collect(root, [DirectoryOf[Json]], [DirectoryOf[Csv]]))
+
+    assert got == {
+        root / "analysis",  # wanted dir: yielded whole, not descended
+        root / "plain" / "deep",  # found by descending the unmatched 'plain'
+        root / "scan.txt",  # loose file
+    }
+    # 'lesion/' matched an ignore_datatype -> skipped, its .csv never surfaces
+    # 'analysis/' not descended -> its own files never surface
+
+
+def test_from_paths_recursive_pulls_nested_directory_datatype(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv, Plain
+
+    root = _tree(tmp_path / "export")
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json]],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<name>[^/]+)$", DirectoryOf[Json])
+        ],
+        ignore_datatypes=[DirectoryOf[Csv], Plain],
+    )
+
+    assert len(sessions) == 1
+    scans = sessions[0].scans
+    # both DirectoryOf[Json] dirs (analysis/ and plain/deep/) pulled, nothing else
+    assert set(scans) == {"analysis", "deep"}
+
+
+def test_from_paths_recursive_raises_on_unlisted_type(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.core.exceptions import FormatRecognitionError
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    root = _tree(tmp_path / "export")
+    (root / "mystery.unknownext").write_text("not a recognised type")
+
+    with pytest.raises(FormatRecognitionError, match="mystery"):
+        ImagingSession.from_paths(
+            root,
+            datatypes=[DirectoryOf[Json]],
+            session_field=[IDSpec("__datatype__")],
+            scan_field=[IDSpec("__datatype__")],
+            recursive=True,
+            ignore_datatypes=[DirectoryOf[Csv]],  # doesn't cover the loose files
+        )
+
+
+def test_from_paths_recursive_rejects_bare_generic_directory(tmp_path: Path) -> None:
+    from fileformats.generic import Directory
+
+    root = _tree(tmp_path / "export")
+    with pytest.raises(ValueError, match="generic/directory"):
+        ImagingSession.from_paths(
+            root,
+            datatypes=[Directory],
+            session_field=[IDSpec("__datatype__")],
+            scan_field=[IDSpec("__datatype__")],
+            recursive=True,
+        )
+
+
 CLASH_SCAN_ID = "1"
 CLASH_SCAN_TYPE = "a-type"
 CLASH_RESOURCE_NAME = "FILE"
