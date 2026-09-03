@@ -33,7 +33,7 @@ def group(
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
     ignore_paths: list[str] | None = None,
-    ignore_types: list[type[FileSet]] = (),
+    ignore_datatypes: ty.Sequence[type[FileSet]] = (),
     on_resource_clash: OnResourceClash = "error",
     metadata_tables: list[MetadataTable] | None = None,
     recursive: bool = False,
@@ -82,9 +82,11 @@ def group(
     ignore_paths: list[str] | None
         Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
         To ignore all paths by default, use ".*" as the value for this parameter.
-    ignore_types: list[type[FileSet]] | None
-        Datatypes that should be ignored when grouping files into sessions. If None, paths that aren't recognised as part of the
-        requested datatypes or filtered using ignore_paths will raise an error
+    ignore_datatypes: ty.Sequence[type[FileSet]]
+        Datatypes expected in the input but not wanted: recognised filesets of these types are
+        dropped rather than raising, and (with ``recursive``) matching directories are skipped
+        without descending. A path matching neither ``datatypes`` nor ``ignore_datatypes`` (nor
+        ``ignore_paths``) still raises.
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
@@ -148,7 +150,7 @@ def group(
         recursive=recursive,
         on_resource_clash=on_resource_clash,
         ignore_paths=ignore_paths,
-        ignore_types=ignore_types,
+        ignore_datatypes=ignore_datatypes,
         path_metadata_regex=path_metadata_regex,
         metadata_tables=metadata_tables,
     )
