@@ -986,3 +986,31 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
     )
     _, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
     assert reid_mdata == {"PatientName": "Alice", "DOB": "19901201"}
+
+
+def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
+    """max_workers passed to session.deidentify() should reach each resource's
+    own FileSet.deidentify() call unchanged.
+    """
+    received_max_workers: list = []
+
+    def _capturing_deidentify_impl(
+        fileset: File,
+        out_dir: Path,
+        spec: ty.Any = None,
+        **kwargs: ty.Any,
+    ) -> File:
+        received_max_workers.append(kwargs.get("max_workers"))
+        return _deidentify_test_impl(fileset, out_dir, spec=spec, **kwargs)
+
+    f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
+    f.deidentify = functools.partial(_capturing_deidentify_impl, f)
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    session.deidentify(tmp_path / "dest", specs={File: {}}, max_workers=3)
+    assert received_max_workers == [3]

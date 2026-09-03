@@ -170,6 +170,7 @@ are uploaded to XNAT
     "--recursive/--not-recursive",
     type=bool,
     default=False,
+    envvar="XINGEST_RECURSIVE",
     help=("Whether to recursively search input directories for input files"),
 )
 @click.option(

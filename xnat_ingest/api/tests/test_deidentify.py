@@ -303,6 +303,57 @@ def test_deidentify_uses_project_spec_over_default(
     assert received_specs[0].get(DicomSeries) == project_spec_file
 
 
+def test_deidentify_passes_max_workers_through(
+    dirs: tuple[Path, Path, Path, Path],
+) -> None:
+    """max_workers should be forwarded from deidentify_api.deidentify() to
+    ImagingSession.deidentify() unchanged.
+    """
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+
+    received_max_workers: list = []
+
+    def capturing_deidentify(self, *_, **kwargs):
+        received_max_workers.append(kwargs.get("max_workers"))
+        return self.new_empty(), dict(REID_MDATA)
+
+    with patch.object(ImagingSession, "deidentify", capturing_deidentify):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            max_workers=4,
+        )
+
+    assert errors == []
+    assert received_max_workers == [4]
+
+
+def test_deidentify_max_workers_defaults_to_none(
+    dirs: tuple[Path, Path, Path, Path],
+) -> None:
+    """When not given explicitly, max_workers should be forwarded as None."""
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+
+    received_max_workers: list = []
+
+    def capturing_deidentify(self, *_, **kwargs):
+        received_max_workers.append(kwargs.get("max_workers"))
+        return self.new_empty(), dict(REID_MDATA)
+
+    with patch.object(ImagingSession, "deidentify", capturing_deidentify):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+        )
+
+    assert errors == []
+    assert received_max_workers == [None]
+
+
 # ── end-to-end test (no mocking of ImagingSession.deidentify) ───────────────
 
 
