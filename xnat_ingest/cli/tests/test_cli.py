@@ -1,8 +1,10 @@
 import json
 import os
 import shutil
+import struct
 import time
 import typing as ty
+import zlib
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -789,6 +791,154 @@ def test_group_path_metadata_regex(
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
     mdata = json.loads((resource_dir / Metadata.FNAME).read_bytes())
     assert mdata["cohort"] == "cohort-A"
+
+
+def _write_minimal_png(path: Path, *, rgb: tuple[int, int, int] = (0, 0, 0)) -> Path:
+    """Write a minimal but valid 1x1 PNG so fileformats recognises it as image/png."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00" + bytes(rgb))
+    path.write_bytes(
+        signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+    )
+    return path
+
+
+def test_group_metadata_table_detailed_example(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """End-to-end version of the worked example in ``xnat-ingest group --help``.
+
+    A directory tree of PNG images whose relative path is captured with
+    ``--path-metadata-regex`` and used to join a CSV metadata table
+    (``fileset[image/png|image/jpeg]`` row frequency). The joined table carries a
+    ``SubjectID`` column that groups/labels the session and a ``LesionID`` column
+    that both names the scan and collapses the multiple views of a lesion into a
+    single merged resource via ``--on-resource-clash merge``.
+    """
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    images_dir = tmp_path / "images"
+    rel_paths = [
+        "subj-01/lesionA-dermoscopy.png",
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionB-dermoscopy.png",
+        "subj-02/lesionC-dermoscopy.png",
+    ]
+    for i, rel in enumerate(rel_paths):
+        _write_minimal_png(images_dir / rel, rgb=(10 + i, 20 + i, 30 + i))
+
+    table = tmp_path / "clinical.csv"
+    table.write_text(
+        "relpath,SubjectID,LesionID,Diagnosis\n"
+        "subj-01/lesionA-dermoscopy.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionA-clinical.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionB-dermoscopy.png,subj-01,lesionB,nevus\n"
+        "subj-02/lesionC-dermoscopy.png,subj-02,lesionC,melanoma\n"
+    )
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(images_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+            "--datatype",
+            "image/png",
+            "--session",
+            "SubjectID",
+            "all",
+            "--scan",
+            "LesionID",
+            "all",
+            "--resource",
+            "LesionID",
+            "all",
+            "--on-resource-clash",
+            "merge",
+            "--path-metadata-regex",
+            r".*/(?P<relpath>[\w-]+/[\w-]+\.(?:png|jpg))",
+            "image/png|image/jpeg",
+            "--metadata-table",
+            f"{table}[text/csv]",
+            "fileset[image/png|image/jpeg]",
+            "relpath=relpath",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    def resource_dirs(session_dir: Path) -> dict[str, Path]:
+        return {
+            res_dir.name: res_dir
+            for scan_dir in session_dir.iterdir()
+            if scan_dir.is_dir()
+            for res_dir in scan_dir.iterdir()
+            if res_dir.is_dir()
+        }
+
+    session_dirs = {d.name: d for d in list_session_dirs(sorted_dir)}
+    assert len(session_dirs) == 2
+    subj01_dir = next(d for n, d in session_dirs.items() if "subj_01" in n)
+    subj02_dir = next(d for n, d in session_dirs.items() if "subj_02" in n)
+
+    subj01_resources = resource_dirs(subj01_dir)
+    assert set(subj01_resources) == {"lesionA", "lesionB"}
+
+    # lesionA merged its two views into a single SetOf[Png] resource
+    assert sorted(p.name for p in subj01_resources["lesionA"].glob("*.png")) == [
+        "lesionA-clinical.png",
+        "lesionA-dermoscopy.png",
+    ]
+    lesion_a_manifest = json.loads(
+        (subj01_resources["lesionA"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_a_manifest["datatype"] == "image/png+set-of"
+    lesion_b_manifest = json.loads(
+        (subj01_resources["lesionB"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_b_manifest["datatype"] == "image/png"
+    lesion_a_mdata = json.loads(
+        (subj01_resources["lesionA"] / Metadata.FNAME).read_bytes()
+    )
+    # columns the two rows agree on stay scalar, the per-file 'relpath' is collated
+    # into a list aligned with the merged files
+    assert lesion_a_mdata["SubjectID"] == "subj-01"
+    assert lesion_a_mdata["LesionID"] == "lesionA"
+    assert lesion_a_mdata["Diagnosis"] == "melanoma"
+    assert sorted(lesion_a_mdata["relpath"]) == [
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionA-dermoscopy.png",
+    ]
+
+    # lesionB is a single-view resource, so it keeps its per-file metadata
+    lesion_b_mdata = json.loads(
+        (subj01_resources["lesionB"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_b_mdata["Diagnosis"] == "nevus"
+    assert lesion_b_mdata["relpath"] == "subj-01/lesionB-dermoscopy.png"
+
+    subj02_resources = resource_dirs(subj02_dir)
+    assert set(subj02_resources) == {"lesionC"}
+    lesion_c_mdata = json.loads(
+        (subj02_resources["lesionC"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_c_mdata["SubjectID"] == "subj-02"
+    assert lesion_c_mdata["Diagnosis"] == "melanoma"
 
 
 def test_group_ignore_path_option_skips_unrecognised_files(

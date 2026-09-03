@@ -6,7 +6,12 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, OnResourceClash, PathMetadataRegex
+from ..helpers.arg_types import (
+    IDSpec,
+    MetadataTable,
+    OnResourceClash,
+    PathMetadataRegex,
+)
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
@@ -30,6 +35,7 @@ def group(
     ignore_paths: list[str] | None = None,
     ignore_types: list[type[FileSet]] = (),
     on_resource_clash: OnResourceClash = "error",
+    metadata_tables: list[MetadataTable] | None = None,
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
@@ -42,8 +48,8 @@ def group(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
-    datatypes: list[MimeType]
-        List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
+    datatypes: list[FileSet]
+        List of FileSet types to look for in the input files. Only files with these datatypes will be considered for staging.
     session: list[IDSpec] | None
         List of field specifications to use for extracting the session UIDs from the input files to group them into
         separate sessions
@@ -89,6 +95,39 @@ def group(
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
+    metadata_tables: list[MetadataTable] | None
+        Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var).
+        The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or
+        TSV from the file extension; a different format can be forced by appending its mime-type in square
+        brackets, e.g. 'path/to/table.dat[text/csv]'.
+        The "row frequency" arg specifies what each row in the
+        metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource',
+        'fileset', 'fileset[<mime-type>]'. When one or more mime-types are given in square brackets after
+        'fileset' they restrict the join to input files of those types (multiple mime-types can be '|'-separated,
+        e.g. 'fileset[image/png|image/jpeg]'); a bare 'fileset' matches any input file.
+        The 'join-exprs' arg is a comma-separated list of '<column-name>=<cell-value>' expressions; a row is a
+        match when every expression holds. The '<cell-value>' is either the name of an existing metadata field
+        or a Python format string over one or more metadata fields, e.g. '{PatientID}_{SessionID}'. All columns
+        of the matched row are then merged into the target's metadata.
+        The example below extracts the relative path of an image file with `path_metadata_regex` and uses it to
+        join a table whose 'ImagePath' column holds spreadsheet HYPERLINK() formulas::
+
+            group(
+                ...,
+                path_metadata_regex=[
+                    PathMetadataRegex(
+                        regex=r".*/(?P<relpath>[\\w-]+/[\\w-]+\\.(?:png|jpg))",
+                        datatype="image/png|image/jpeg",
+                    )
+                ],
+                metadata_tables=[
+                    MetadataTable(
+                        table_file="path/to/table.csv[text/csv]",
+                        row_frequency="fileset[image/png|image/jpeg]",
+                        join_exprs='ImagePath=HYPERLINK("{relpath}")',
+                    )
+                ],
+            )
     """
 
     errors = []
@@ -110,6 +149,7 @@ def group(
         ignore_paths=ignore_paths,
         ignore_types=ignore_types,
         path_metadata_regex=path_metadata_regex,
+        metadata_tables=metadata_tables,
     )
 
     errors = save_sessions_to_dir(

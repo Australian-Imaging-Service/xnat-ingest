@@ -21,7 +21,7 @@ from dateutil.parser import isoparse
 from fileformats.application import Yaml
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
 from fileformats.core.utils import collate_metadata_series
-from fileformats.generic import Directory
+from fileformats.generic import Directory, SetOf
 from fileformats.medimage import DicomCollection
 from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
@@ -33,6 +33,7 @@ from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AssociatedFiles,
     IDSpec,
+    MetadataTable,
     OnResourceClash,
     PathMetadataRegex,
 )
@@ -110,6 +111,39 @@ def _metadata_diff(
         elif val != new_val:
             diff[key] = val
     return diff
+
+
+def _expand_collated_metadata(
+    metadata: dict[str, ty.Any], num_members: int
+) -> list[dict[str, ty.Any]]:
+    """Reconstruct the per-member metadata dicts from a dict previously produced by
+    ``Metadata.collate`` for ``num_members`` members, so a further member can be
+    collated in without nesting the already-listed values.
+
+    A value is treated as per-member only when it is a list whose length matches
+    ``num_members``; with a single existing member there is nothing to expand.
+    """
+    if num_members <= 1:
+        return [dict(metadata)]
+    members: list[dict[str, ty.Any]] = [{} for _ in range(num_members)]
+    for key, value in metadata.items():
+        if isinstance(value, list) and len(value) == num_members:
+            for member, item in zip(members, value):
+                if item is not None:
+                    member[key] = item
+        else:
+            for member in members:
+                member[key] = value
+    return members
+
+
+def _set_content_types(fileset: FileSet) -> tuple[type[FileSet], ...]:
+    """The content types to classify ``fileset`` by when folding it into a merged
+    ``SetOf`` resource: the classifiers of an existing ``SetOf`` (from a previous
+    merge) or the fileset's own type otherwise.
+    """
+    content_types = getattr(type(fileset), "content_types", ())
+    return tuple(content_types) if content_types else (type(fileset),)
 
 
 def _deidentify_or_copy_resource(
@@ -374,6 +408,7 @@ class ImagingSession:
         ignore_paths: list[str] | None = None,
         ignore_types: list[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
+        metadata_tables: list[MetadataTable] | None = None,
     ) -> list[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -409,6 +444,9 @@ class ImagingSession:
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
             the corresponding metadata fields to complement the metadata read from the file headers.
+        metadata_tables : list[MetadataTable] or None, optional
+            a list of MetadataTable objects that define how to extract metadata from input files (e.g. CSV files and spreadsheets)
+            and join them with the sessions. If None, no metadata tables will be used.
 
 
         Returns
@@ -436,7 +474,7 @@ class ImagingSession:
             if Directory in datatypes or FileSet in datatypes:
                 raise ValueError(
                     "Cannot use `generic/directory` or `generic/file-set` datatypes with the `recursive` option. Please "
-                    "define a more specific directory datatype (datatypes={datatypes})"
+                    f"define a more specific directory datatype (datatypes={datatypes})"
                 )
             ignore_types.append(Directory)
 
@@ -515,6 +553,24 @@ class ImagingSession:
                 f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
             ]
 
+        if path_metadata_regex:
+            for fileset in tqdm(
+                filesets,
+                "Extracting metadata from file paths...",
+            ):
+                for path_mdata in path_metadata_regex:
+                    if isinstance(fileset, path_mdata.datatype):
+                        fileset_path = str(getattr(fileset, "fspath", fileset.parent))
+                        match = re.match(path_mdata.regex, fileset_path)
+                        if match is None:
+                            raise ValueError(
+                                f"Could not extract metadata from path '{fileset_path}' "
+                                f"using pattern '{path_mdata.regex}'"
+                            )
+                        fileset.metadata.update(match.groupdict())
+
+        MetadataTable.inject_list(metadata_tables, filesets)
+
         sessions: dict[tuple[str, str, str] | str, Self] = {}
 
         for fileset in tqdm(
@@ -551,25 +607,21 @@ class ImagingSession:
                 scan_id,
                 session_uid,
             )
-            metadata = None
-            for path_mdata in path_metadata_regex:
-                if isinstance(fileset, path_mdata.datatype):
-                    fileset_path = str(getattr(fileset, "fspath", fileset.parent))
-                    match = re.match(path_mdata.regex, fileset_path)
-                    if match is None:
-                        raise ValueError(
-                            f"Could not extract metadata from path '{fileset_path}' "
-                            f"using pattern '{path_mdata.regex}'"
-                        )
-                    metadata = match.groupdict()
             session.add_resource(
                 scan_id,
                 None,
                 resource_label,
                 fileset,
                 on_clash=on_resource_clash,
-                metadata=metadata,
             )
+        # Inject metadata from the metadata tables into the sessions, scans, and resources
+        MetadataTable.inject_list(metadata_tables, list(sessions.values()))
+        for session in sessions.values():
+            MetadataTable.inject_list(metadata_tables, list(session.scans.values()))
+            for scan in session.scans.values():
+                MetadataTable.inject_list(
+                    metadata_tables, list(scan.resources.values())
+                )
         return list(sessions.values())
 
     def assign(
@@ -1142,10 +1194,33 @@ class ImagingSession:
                     scan_id,
                     self.name,
                 )
-                if isinstance(existing.fileset, list):
-                    resource.fileset = existing.fileset.append(fileset)
-                else:
-                    resource.fileset = [existing.fileset, fileset]
+                # Combine the members into a single ``SetOf[...]`` resource,
+                # classified by the union of their content types, and collate their
+                # metadata the same way a scan collates its resources' (see
+                # ``ImagingScan.metadata``): fields every member agrees on stay
+                # scalar, fields that differ (e.g. a per-file 'relpath' from
+                # ``--path-metadata-regex``) become a list aligned with the merged
+                # files.
+                existing_fspaths = list(existing.fileset.fspaths)
+                content_types = tuple(
+                    dict.fromkeys(
+                        _set_content_types(existing.fileset)
+                        + _set_content_types(fileset)
+                    )
+                )
+                merged_fileset = SetOf[content_types](
+                    [*existing_fspaths, *fileset.fspaths]
+                )
+                members = _expand_collated_metadata(
+                    dict(existing.fileset.metadata), len(existing_fspaths)
+                )
+                members.append(dict(fileset.metadata))
+                merged_fileset.metadata.update(Metadata.collate(members))
+                resource = ImagingResource(
+                    name=resource_name, fileset=merged_fileset, scan=scan
+                )
+                if metadata:
+                    resource.metadata.update(metadata)
             elif on_clash == "avoid":
                 match = re.match(r"^(.*)__(\d+)$", resource_name)
                 if match:
