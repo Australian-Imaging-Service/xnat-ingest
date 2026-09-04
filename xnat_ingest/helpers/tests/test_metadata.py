@@ -1,3 +1,4 @@
+import os
 import typing as ty
 from pathlib import Path
 
@@ -283,3 +284,47 @@ def test_collate_metadata_key_with_only_none_values_stays_none():
     collated = Metadata.collate(metadata_dicts)
 
     assert collated["x"] is None
+
+
+def test_metadata_save_does_not_rewrite_unchanged_content(tmp_path):
+    """An unchanged save must not touch the file.
+
+    Under --loop a stage reprocesses the same session every cycle. An unconditional
+    write moved the mtime each time, and both upload paths skip a session that was
+    modified recently, so the session never settled and was never uploaded.
+    """
+    from xnat_ingest.helpers.metadata import Metadata
+
+    # _read=True, and so no backing object is needed. save() now calls
+    # _ensure_read() first (added upstream so the persisted JSON is the full
+    # picture), which would dereference a None object. These two cases are about
+    # what save() WRITES, not about what it loads, so the read is marked done.
+    md = Metadata({"PatientID": "X", "StudyDate": "20260101"}, None, True)
+    md.save(tmp_path)
+    fspath = tmp_path / Metadata.FNAME
+    before = fspath.stat().st_mtime_ns
+    content_before = fspath.read_text()
+
+    os.utime(fspath, ns=(before - 10_000_000_000, before - 10_000_000_000))
+    stamped = fspath.stat().st_mtime_ns
+
+    md.save(tmp_path)
+
+    assert (
+        fspath.stat().st_mtime_ns == stamped
+    ), "unchanged save must not touch the file"
+    assert fspath.read_text() == content_before
+
+
+def test_metadata_save_writes_when_content_changes(tmp_path):
+    from xnat_ingest.helpers.metadata import Metadata
+
+    md = Metadata({"PatientID": "X"}, None, True)
+    md.save(tmp_path)
+    fspath = tmp_path / Metadata.FNAME
+
+    md2 = Metadata({"PatientID": "Y"}, None, True)
+    md2.save(tmp_path)
+
+    assert "Y" in fspath.read_text()
+    assert not list(tmp_path.glob("*.tmp")), "the temp file must not be left behind"

@@ -1596,3 +1596,38 @@ def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
     )
     session.deidentify(tmp_path / "dest", specs={File: {}}, max_workers=3)
     assert received_max_workers == [3]
+
+
+def test_deidentify_carries_session_level_resources(tmp_path: Path) -> None:
+    """A resource attached to the SESSION must survive de-identification.
+
+    deidentify() builds its output from new_empty(), which copies the ids and
+    nothing else, and then walks self.scans. Session-level resources were in
+    neither, so they were silently dropped: not de-identified, not copied, and
+    nothing reported.
+
+    It is worse than a plain loss. The per-session completeness gate in
+    deidentify_api counts data files on both sides, so a session carrying one
+    comes out short, is reported incomplete, and correctly refuses to unlink its
+    input -- for ever, because the next run drops it again.
+    """
+    from xnat_ingest.model.scan import ImagingScan
+    from xnat_ingest.model.session import ImagingSession
+
+    session = ImagingSession(
+        uid="PROJ.SUBJ.SESS",
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
+        scans=[ImagingScan(id="1", type="T", resources={"RES": File.sample(seed=1)})],
+    )
+    session.add_session_resource("report", File.sample(seed=42))
+    assert "report" in session.session_resources
+
+    deid, _ = session.deidentify(tmp_path / "out", require_matching_spec=False)
+
+    assert "report" in deid.session_resources, (
+        "the session-level resource was dropped by deidentify(), so it never "
+        "reaches XNAT and the completeness gate refuses the unlink for ever"
+    )
+    assert set(deid.scans) == set(session.scans), "scans must be unaffected"

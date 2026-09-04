@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import traceback
 import typing as ty
@@ -11,6 +12,7 @@ from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..model.session import ImagingSession
+from .group_api import BUILD_NAME_DEFAULT
 
 INVALID_DIRNAME = "__invalid__"
 
@@ -176,11 +178,65 @@ def assign(
                 errors.append(msg)
                 already_invalid.add(session.uid)
             dest_dir = invalid_dir if missing_ids else output_dir
-            session.save(
-                dest_dir=dest_dir,
-                copy_mode=copy_mode,
-                include=include,
-            )
+            # MATERIALISE A NEW SESSION BY RENAME, NOT IN PLACE.
+            #
+            # save() creates the session directory and then fills it, so a run
+            # that dies part-way leaves a partial session under its real name.
+            # That matters more here than anywhere else in the pipeline: with
+            # de-identification done in Orthanc, which is how every site is
+            # configured, `upload` reads this directory DIRECTLY. Nothing
+            # rewrites the partial tree, its mtimes go quiet, it satisfies the
+            # settle window on both upload paths, and it is uploaded as though
+            # it were whole. There is no completeness check on that path, and
+            # sites run with --dont-require-manifest, which switches off the one
+            # check that would have rejected a short resource.
+            #
+            # Only when the output does not exist yet. Re-saving over one that
+            # is already there writes in place, because building elsewhere and
+            # renaming in defeats the write-if-changed short-circuits in
+            # ImagingResource.save and Metadata.save, both of which are
+            # conditional on the destination existing. Losing them moves every
+            # mtime on every pass, which is what stops a session from ever
+            # settling long enough to be uploaded.
+            #
+            # group_api does the same thing with move_dir; this is the same
+            # guarantee reached with a rename, which is atomic within a
+            # directory tree on one filesystem.
+            available_projects = None
+            build_dir = dest_dir / BUILD_NAME_DEFAULT
+            work_dir = build_dir / f"promote_{session_listing.name}"
+            if work_dir.exists():
+                shutil.rmtree(work_dir)
+            try:
+                final_dir = dest_dir / session.staging_dirname(available_projects)
+                if final_dir.exists():
+                    session.save(
+                        dest_dir=dest_dir,
+                        available_projects=available_projects,
+                        copy_mode=copy_mode,
+                        include=include,
+                    )
+                else:
+                    work_dir.mkdir(parents=True)
+                    _, built_dir = session.save(
+                        dest_dir=work_dir,
+                        available_projects=available_projects,
+                        copy_mode=copy_mode,
+                        include=include,
+                    )
+                    os.replace(built_dir, final_dir)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+                # rmdir, not rmtree: it removes the build directory only when it
+                # is empty, so a session still being built by another pass is
+                # never taken out from under it. Leaving an empty __build__ in
+                # the output would be harmless to the pipeline, since every
+                # consumer skips the name, but it is noise in a directory
+                # operators read by hand.
+                try:
+                    build_dir.rmdir()
+                except OSError:
+                    pass
         except Exception as e:
             if raise_errors:
                 raise

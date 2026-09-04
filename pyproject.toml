@@ -10,6 +10,12 @@ requires-python = ">=3.11"
 dependencies = [
     "click >=8.3",
     "discord",
+    # Declared explicitly, and floored at 0.18.1, for two reasons. The package
+    # imports fileformats.core directly in several modules, so it is a real direct
+    # dependency that was only ever arriving transitively. And 0.18.1 replaced the
+    # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
+    # the new API does not exist.
+    "fileformats >=0.18.1",
     "fileformats-medimage >=0.13.0",
     "fileformats-medimage-extras >=0.13.0",
     "fileformats-vendor-siemens >=0.2.1",

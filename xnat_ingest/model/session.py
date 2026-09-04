@@ -1289,6 +1289,65 @@ class ImagingSession:
                     deid_resource,
                     on_clash=on_resource_clash,
                 )
+        # SESSION-LEVEL RESOURCES, which this loop used to drop entirely.
+        #
+        # A session can carry resources attached to the SESSION rather than to a
+        # scan -- a report, a summary, anything added with add_session_resource.
+        # deidentified starts from new_empty(), which copies the ids and nothing
+        # else, and the loop above walks self.scans only, so those resources
+        # never reached the output. They were not de-identified, not copied, and
+        # nothing said so.
+        #
+        # save() has always handled them (included_session_resources), so this
+        # was a hole in deidentify alone, and it is worse than a plain data loss:
+        # the per-session completeness gate counts data files on both sides, so a
+        # session carrying one would come out short, be reported incomplete, and
+        # correctly refuse to unlink its input -- for ever, on every cycle,
+        # because the next run drops it again.
+        #
+        # They go at the top of dest_dir rather than under a scan id, which is
+        # where save() puts them and where load() looks for them.
+        for resource_name, resource in self.session_resources.items():
+            contains_phi = getattr(resource.fileset, "contains_phi", False)
+            resource_spec = None
+            resource_transforms = None
+            if contains_phi:
+                resource_spec = select_spec(resource.fileset)
+                resource_transforms = select_transforms(resource.fileset)
+                if resource_spec is None:
+                    msg = (
+                        "No deidentification specification found for %s fileset in the "
+                        "session-level %s resource. Please provide a project "
+                        "specification for %s in the file format hierarchy to "
+                        "deidentify this resource. Returning None and copying the files "
+                        "without deidentification, which may lead to PHI being uploaded "
+                        "to XNAT if the fileset contains PHI. Matching specifications "
+                        "found in project spec: %s"
+                    )
+                    msg_vars = (
+                        type(resource.fileset).__name__,
+                        resource_name,
+                        type(resource.fileset).__name__,
+                        list(specs),
+                    )
+                    if require_matching_spec:
+                        raise KeyError(msg % msg_vars)
+                    else:
+                        logger.warning(msg, *msg_vars)
+            deid_resource, reid_mdata = _deidentify_or_copy_resource(
+                resource.fileset,
+                resource_name,
+                dest_dir / resource_name,
+                contains_phi,
+                resource_spec,
+                copy_mode,
+                max_workers,
+                transforms=resource_transforms,
+            )
+            if reid_mdata is not None:
+                reid_series.append(reid_mdata)
+            deidentified.add_session_resource(resource_name, deid_resource)
+
         return deidentified, collate_metadata_series(reid_series)
 
     def associate_files(
@@ -1667,6 +1726,30 @@ class ImagingSession:
             session.uid = session.metadata.get(cls.UID_METADATA_KEY, None)
         return session
 
+    def staging_dirname(self, available_projects: list[str] | None = None) -> str:
+        """The directory name this session is saved under by :meth:`save`.
+
+        Split out of ``save`` so that a caller can work out where the session
+        WILL land before saving it. ``deidentify_api`` needs that to decide
+        whether an output already exists, and rebuilding the rule at the call
+        site would let the two drift: the name is not simply the input
+        directory's, because it is derived from the assigned ids, gains a
+        ``run_uid`` suffix when one is set and an invalid-project prefix when
+        the project is unrecognised.
+        """
+        if self.name is None:
+            # Project/subject/session IDs haven't been assigned yet, so flag the
+            # directory as not-yet-assigned rather than assuming they're set
+            return self.staging_relpath[0]
+        if available_projects is None or self.project_id in available_projects:
+            project_id = self.project_id
+        else:
+            project_id = "INVALID_UNRECOGNISED_" + self.project_id
+        session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
+        if self.run_uid:
+            session_dirname += f".{self.run_uid}"
+        return session_dirname
+
     def save(
         self,
         dest_dir: Path,
@@ -1727,19 +1810,7 @@ class ImagingSession:
             )
 
         saved = self.new_empty()
-        if self.name is None:
-            # Project/subject/session IDs haven't been assigned yet, so flag the
-            # directory as not-yet-assigned rather than assuming they're set
-            session_dirname = self.staging_relpath[0]
-        else:
-            if available_projects is None or self.project_id in available_projects:
-                project_id = self.project_id
-            else:
-                project_id = "INVALID_UNRECOGNISED_" + self.project_id
-            session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
-            if self.run_uid:
-                session_dirname += f".{self.run_uid}"
-        session_dir = dest_dir / session_dirname
+        session_dir = dest_dir / self.staging_dirname(available_projects)
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(included_scans, f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(
