@@ -871,6 +871,7 @@ def test_group_metadata_table_detailed_example(
             "all",
             "--on-resource-clash",
             "merge",
+            "image/png|image/jpeg",
             "--path-metadata-regex",
             r".*/(?P<relpath>[\w-]+/[\w-]+\.(?:png|jpg))",
             "image/png|image/jpeg",
@@ -941,7 +942,7 @@ def test_group_metadata_table_detailed_example(
     assert lesion_c_mdata["Diagnosis"] == "melanoma"
 
 
-def test_group_ignore_path_option_skips_unrecognised_files(
+def test_group_allow_unrecognised_skips_unrecognised_files(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -961,7 +962,7 @@ def test_group_ignore_path_option_skips_unrecognised_files(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-path",
+            "--allow-unrecognised",
             r".*\.txt",
         ],
     )
@@ -971,7 +972,7 @@ def test_group_ignore_path_option_skips_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_without_ignore_path_fails_on_unrecognised_file(
+def test_group_without_allow_unrecognised_fails_on_unrecognised_file(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -997,7 +998,7 @@ def test_group_without_ignore_path_fails_on_unrecognised_file(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_path_pattern_not_matching_still_fails(
+def test_group_allow_unrecognised_pattern_not_matching_still_fails(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -1017,7 +1018,7 @@ def test_group_ignore_path_pattern_not_matching_still_fails(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-path",
+            "--allow-unrecognised",
             r"unrelated-pattern",
         ],
     )

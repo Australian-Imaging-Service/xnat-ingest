@@ -190,6 +190,20 @@ class PathMetadataRegex(MultiCliTyped):
 
 
 @attrs.define
+class ClashSpec(MultiCliTyped):
+    """A ``--on-resource-clash`` entry: a policy plus the datatype scope it applies
+    to. A resource-name clash between two filesets is resolved by the first
+    ``ClashSpec`` whose ``scope`` covers *both* of them; anything not covered
+    raises. ``scope`` accepts a mime-like, a ``|``-union of them, or ``all``.
+    """
+
+    policy: str = attrs.field(validator=attrs.validators.in_(ON_RESOURCE_CLASH))
+    scope: ty.Union[ty.Type[FileSet], types.UnionType] = attrs.field(
+        converter=datatype_converter
+    )
+
+
+@attrs.define
 class UploadMethod(MultiCliTyped):
 
     method: str = attrs.field(

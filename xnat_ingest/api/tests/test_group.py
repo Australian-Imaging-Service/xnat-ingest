@@ -104,7 +104,7 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_group_unrecognised_file_raises_without_ignore_paths(
+def test_group_unrecognised_file_raises_without_allow_unrecognised(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -124,7 +124,7 @@ def test_group_unrecognised_file_raises_without_ignore_paths(
         )
 
 
-def test_group_ignore_paths_skips_matching_unrecognised_files(
+def test_group_allow_unrecognised_skips_matching_files(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -140,7 +140,7 @@ def test_group_ignore_paths_skips_matching_unrecognised_files(
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        ignore_paths=[r"notes\.txt"],
+        allow_unrecognised=[r"notes\.txt"],
     )
 
     assert errors == []
@@ -150,7 +150,7 @@ def test_group_ignore_paths_skips_matching_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_ignore_paths_pattern_not_matching_still_raises(
+def test_group_allow_unrecognised_pattern_not_matching_still_raises(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -167,7 +167,7 @@ def test_group_ignore_paths_pattern_not_matching_still_raises(
             session=SESSION_FIELD,
             scan=SCAN_FIELD,
             resource=RESOURCE_FIELD,
-            ignore_paths=[r"unrelated-pattern"],
+            allow_unrecognised=[r"unrelated-pattern"],
         )
 
 

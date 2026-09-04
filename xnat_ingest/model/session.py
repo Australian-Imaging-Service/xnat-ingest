@@ -1,3 +1,4 @@
+import glob as glob_mod
 import hashlib
 import inspect
 import json
@@ -33,6 +34,7 @@ from ..exceptions import ImagingSessionParseError, StagingError
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AssociatedFiles,
+    ClashSpec,
     IDSpec,
     MetadataTable,
     OnResourceClash,
@@ -161,6 +163,74 @@ def _type_name_resource_label(type_name: str) -> str:
     '_' while '-' is kept.
     """
     return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
+
+
+def _drop_excluded_paths(
+    fspaths: ty.Sequence[Path],
+    input_dirs: ty.Sequence[Path],
+    exclude_globs: ty.Sequence[str],
+) -> list[Path]:
+    """Drop every ``fspath`` whose path *relative to one of ``input_dirs``* matches
+    one of ``exclude_globs``. Unlike ``allow_unrecognised`` this fires before
+    classification, so it removes a path even if a ``--datatype`` would claim it
+    (e.g. a vendor thumbnail that is a valid ``image/png``). Globs use the standard
+    ``glob`` syntax - ``*`` does not cross ``/``, ``**`` does - and match the whole
+    relative path.
+    """
+    if not exclude_globs:
+        return list(fspaths)
+    matchers = [
+        re.compile(glob_mod.translate(g, recursive=True, include_hidden=True))
+        for g in exclude_globs
+    ]
+    kept: list[Path] = []
+    for p in fspaths:
+        rels: list[str] = []
+        for base in input_dirs:
+            try:
+                rels.append(str(p.relative_to(base)))
+            except ValueError:
+                continue
+        if any(m.match(rel) for m in matchers for rel in rels):
+            logger.debug("Excluding '%s' (matched --exclude-path)", p)
+            continue
+        kept.append(p)
+    return kept
+
+
+def _fileset_in_scope(fileset: FileSet, scope: type[FileSet] | ty.Any) -> bool:
+    """Whether ``fileset`` falls within a ``ClashSpec`` scope - either it is an
+    instance of ``scope``, or it is a ``SetOf`` whose every content type is a
+    subclass of ``scope`` (so a re-merge into an existing ``SetOf[Png, Jpeg]``
+    still counts as covered by an ``image/png|image/jpeg`` scope).
+    """
+    if isinstance(fileset, scope):
+        return True
+    content_types = getattr(type(fileset), "content_types", ())
+    return bool(content_types) and all(issubclass(ct, scope) for ct in content_types)
+
+
+def _resolve_clash_policy(
+    specs: ty.Sequence[ClashSpec],
+    existing: FileSet,
+    incoming: FileSet,
+    where: str,
+) -> str:
+    """The clash policy for a name collision between ``existing`` and ``incoming``:
+    the first ``ClashSpec`` whose scope covers *both*. Raises if none does.
+    """
+    for spec in specs:
+        if _fileset_in_scope(existing, spec.scope) and _fileset_in_scope(
+            incoming, spec.scope
+        ):
+            return spec.policy
+    raise KeyError(
+        f"Resource-name clash between a {type(existing).__name__} and a "
+        f"{type(incoming).__name__} {where}, and no --on-resource-clash spec's "
+        "scope covers both. Add one (e.g. "
+        f"'--on-resource-clash avoid \"{to_mime(type(existing))}|{to_mime(type(incoming))}\"'), "
+        "or tighten --scan / --resource so the two don't collide."
+    )
 
 
 def _recursive_collect(
@@ -461,8 +531,9 @@ class ImagingSession:
         scan_field: ty.Sequence[IDSpec] = (),
         resource_field: ty.Sequence[IDSpec] = (),
         recursive: bool = False,
-        on_resource_clash: OnResourceClash = "error",
-        ignore_paths: list[str] | None = None,
+        on_resource_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
+        allow_unrecognised: ty.Sequence[str] | None = None,
+        exclude_paths: ty.Sequence[str] | None = None,
         ignore_datatypes: ty.Sequence[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
         metadata_tables: list[MetadataTable] | None = None,
@@ -496,20 +567,29 @@ class ImagingSession:
             skipping an ``ignore_datatypes`` match whole). ``generic/directory`` and
             ``generic/file-set`` cannot be used as ``datatypes`` with ``recursive``.
             By default False
-        on_resource_clash : OnResourceClash, optional
-            if "avoid", if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
-            if "merge", existing sessions with the same name will be merged.
-            if "error", an error will be raised if a session with the same name already exists in the staging directory.
-            if "overwrite", an existing resource with the same name will be overwritten.
-        ignore_paths : list[str] or None, optional
-            regular expressions to match paths that should be ignored
+        on_resource_clash : OnResourceClash or Sequence[ClashSpec], optional
+            how to handle two filesets resolving to the same scan/resource name.
+            A bare policy string ("error"/"avoid"/"merge"/"overwrite") applies to
+            any clash. A sequence of ``ClashSpec`` (policy + datatype scope) resolves
+            each clash with the first spec whose scope covers *both* filesets;
+            "merge" folds them into a ``SetOf``, "avoid" suffixes, "overwrite"
+            replaces; a clash no spec covers raises. Default "error".
+        allow_unrecognised : Sequence[str] or None, optional
+            regular expressions matched against the *basename* of any input path
+            that no datatype recognised - matches are skipped instead of raising
+            ``FormatRecognitionError``. Does not affect recognised filesets.
+        exclude_paths : Sequence[str] or None, optional
+            glob patterns matched against each input path *relative to its input
+            directory*, applied before classification so a match is dropped even if
+            a datatype would claim it (e.g. a vendor thumbnail that is a valid
+            ``image/png``). ``*`` does not cross ``/``, ``**`` does.
         ignore_datatypes : ty.Sequence[type[FileSet]] or None, optional
             datatypes that are expected in the input but not wanted: recognised
             filesets of these types are dropped from the result rather than raising,
             and (when ``recursive``) matching directories are skipped without
             descending. An input path matching neither ``datatypes`` nor
-            ``ignore_datatypes`` (nor ``ignore_paths``) still raises.
+            ``ignore_datatypes`` (nor ``allow_unrecognised``/``exclude_paths``)
+            still raises.
         path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
@@ -570,6 +650,7 @@ class ImagingSession:
                 "Invalid type of 'files_path', must be a pathlib.Path, str or list of"
             )
         fspaths: list[Path] = []
+        input_dirs: list[Path] = []
         for fspath in files_path:
             logger.debug("Searching for file types in '%s'", str(fspath))
             if isinstance(fspath, Path) or "*" not in fspath:
@@ -579,6 +660,7 @@ class ImagingSession:
                         f"Provided file-system path '{fspath}' does not exist"
                     )
                 if fspath.is_dir():
+                    input_dirs.append(fspath)
                     if recurse_into_dirs:
                         logger.debug(
                             "Walking '%s' for directory datatypes (prune-on-match)",
@@ -611,6 +693,9 @@ class ImagingSession:
 
         fspaths = [fix_long_path(p) for p in fspaths]
 
+        if exclude_paths:
+            fspaths = _drop_excluded_paths(fspaths, input_dirs, exclude_paths)
+
         if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
             raise ValueError(
                 "The following paths do not exist:\n"
@@ -635,7 +720,7 @@ class ImagingSession:
         filesets = from_paths(
             fspaths,
             *(datatypes + ignore_datatypes),
-            ignore="|".join(ignore_paths) if ignore_paths else None,
+            ignore="|".join(allow_unrecognised) if allow_unrecognised else None,
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
         if ignore_datatypes:
@@ -1250,7 +1335,7 @@ class ImagingSession:
         resource_name: str,
         fileset: FileSet,
         associated: AssociatedFiles | None = None,
-        on_clash: OnResourceClash = "error",
+        on_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
         metadata: dict[str, ty.Any] | None = None,
         clash_hint: str | None = None,
     ) -> None:
@@ -1268,12 +1353,13 @@ class ImagingSession:
             the fileset to add as the resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
-        on_clash : OnResourceClash, optional
-            if "avoid", if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
-            if "merge", existing sessions with the same name will be merged.
-            if "error", an error will be raised if a resource with the same name already exists in the scan.
-            if "overwrite", an existing resource with the same name will be overwritten.
+        on_clash : OnResourceClash or Sequence[ClashSpec], optional
+            a bare policy ("error"/"avoid"/"merge"/"overwrite") applied to any
+            clash, or a sequence of ``ClashSpec`` (policy + datatype scope) where
+            the clash is resolved by the first spec whose scope covers *both* the
+            existing and incoming filesets - a clash no spec covers raises.
+            "avoid" suffixes the name, "merge" folds both into a ``SetOf``,
+            "overwrite" replaces the existing one, "error" raises. Default "error".
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
         clash_hint : str, optional
@@ -1317,7 +1403,17 @@ class ImagingSession:
                     existing,
                 )
                 return
-            elif on_clash == "overwrite":
+            if isinstance(on_clash, str):
+                policy = on_clash
+            else:
+                policy = _resolve_clash_policy(
+                    on_clash,
+                    existing.fileset,
+                    fileset,
+                    f"for resource '{resource_name}' in {scan_id} scan of "
+                    f"{self.name} session",
+                )
+            if policy == "overwrite":
                 logger.warning(
                     "Overwriting existing resource '%s' in %s scan in %s session",
                     resource_name,
@@ -1325,7 +1421,7 @@ class ImagingSession:
                     self.name,
                 )
                 del scan.resources[resource_name]
-            elif on_clash == "merge":
+            elif policy == "merge":
                 logger.info(
                     "Merging resource '%s' with existing resource in %s scan in %s session",
                     resource_name,
@@ -1359,7 +1455,7 @@ class ImagingSession:
                 )
                 if metadata:
                     resource.metadata.update(metadata)
-            elif on_clash == "avoid":
+            elif policy == "avoid":
                 match = re.match(r"^(.*)__(\d+)$", resource_name)
                 if match:
                     base_name, num = match.groups()
@@ -1379,19 +1475,18 @@ class ImagingSession:
                 resource = ImagingResource(
                     name=resource_name, fileset=fileset, scan=scan
                 )
-            elif on_clash == "error":
+            elif policy == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                    f"{self.name} session. Use 'on_resource_clash=\"overwrite\"' to overwrite the existing resource, "
-                    "'on_resource_clash=\"avoid\"' to increment the resource name, "
-                    "'on_resource_clash=\"merge\"' to merge with the existing resource, or "
-                    "'on_resource_clash=\"error\"' to raise an error."
-                    + (f" {clash_hint}" if clash_hint else ""),
+                    f"{self.name} session. Pass --on-resource-clash <policy> <scope> "
+                    "(policy one of 'avoid'/'merge'/'overwrite') with a scope covering "
+                    "the clashing datatype(s), or tighten --scan / --resource so they "
+                    "don't collide." + (f" {clash_hint}" if clash_hint else ""),
                 )
             else:
                 assert (
                     False
-                ), f"Invalid value for on_resource_clash: {on_clash} (should be one of {ON_RESOURCE_CLASH})"
+                ), f"Invalid resource-clash policy: {policy} (should be one of {ON_RESOURCE_CLASH})"
         scan.resources[resource_name] = resource
 
     def add_session_resource(

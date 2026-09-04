@@ -8,6 +8,7 @@ from fileformats.medimage import DicomSeries
 from tqdm import tqdm
 
 from ..helpers.arg_types import (
+    ClashSpec,
     IDSpec,
     MetadataTable,
     OnResourceClash,
@@ -44,9 +45,10 @@ def group(
     wait_period: int = 0,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
-    ignore_paths: list[str] | None = None,
+    allow_unrecognised: ty.Sequence[str] = (),
+    exclude_paths: ty.Sequence[str] = (),
     ignore_datatypes: ty.Sequence[type[FileSet]] = (),
-    on_resource_clash: OnResourceClash = "error",
+    on_resource_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
     metadata_tables: list[MetadataTable] | None = None,
     recursive: bool = False,
 ) -> list[str]:
@@ -96,21 +98,28 @@ def group(
         sessions. If None, the default collation behavior for each FileSet type will be used.
     conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
         A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
-    ignore_paths: list[str] | None
-        Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
-        To ignore all paths by default, use ".*" as the value for this parameter.
+    allow_unrecognised: ty.Sequence[str]
+        Regexes matched against the *basename* of any input path that no datatype recognised;
+        matches are skipped instead of raising ``FormatRecognitionError``. ``[".*"]`` tolerates
+        all unrecognised files. Does not affect recognised filesets.
+    exclude_paths: ty.Sequence[str]
+        Globs matched against each input path *relative to its input directory*, applied before
+        classification so a match is dropped even if a datatype would claim it (e.g. a vendor
+        thumbnail that is a valid ``image/png``). ``*`` does not cross ``/``, ``**`` does.
     ignore_datatypes: ty.Sequence[type[FileSet]]
         Datatypes expected in the input but not wanted: recognised filesets of these types are
         dropped rather than raising, and (with ``recursive``) matching directories are skipped
         without descending. A path matching neither ``datatypes`` nor ``ignore_datatypes`` (nor
-        ``ignore_paths``) still raises.
+        ``allow_unrecognised`` / ``exclude_paths``) still raises.
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    on_resource_clash: OnResourceClash = "error"
-        Behaviour when two filesets resolve to the same scan/resource name. "error"
-        (default) raises; "avoid" appends a _2, _3 ... suffix; "merge" combines them into
-        one SetOf resource; "overwrite" replaces the existing one.
+    on_resource_clash: OnResourceClash or Sequence[ClashSpec]
+        Behaviour when two filesets resolve to the same scan/resource name. A bare policy
+        string ("error"/"avoid"/"merge"/"overwrite") applies to any clash. A sequence of
+        ``ClashSpec`` (policy + datatype scope) resolves each clash with the first spec whose
+        scope covers *both* filesets - a clash no spec covers raises. "avoid" suffixes,
+        "merge" folds into one ``SetOf``, "overwrite" replaces. Default "error".
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
@@ -165,7 +174,8 @@ def group(
         resource_field=resource,
         recursive=recursive,
         on_resource_clash=on_resource_clash,
-        ignore_paths=ignore_paths,
+        allow_unrecognised=allow_unrecognised,
+        exclude_paths=exclude_paths,
         ignore_datatypes=ignore_datatypes,
         path_metadata_regex=path_metadata_regex,
         metadata_tables=metadata_tables,

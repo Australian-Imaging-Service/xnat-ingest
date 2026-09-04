@@ -10,6 +10,7 @@ from fileformats.text import Csv, Plain, Tsv
 
 from xnat_ingest.exceptions import ImagingSessionParseError
 from xnat_ingest.helpers.arg_types import (
+    ClashSpec,
     IDSpec,
     JoinExpr,
     MetadataTable,
@@ -304,6 +305,50 @@ def test_table_file_converter_explicit_mime_suffix_tolerates_whitespace(
 def test_table_file_converter_rejects_other_types() -> None:
     with pytest.raises(TypeError):
         table_file_converter(123)  # type: ignore[arg-type]
+
+
+# ── ClashSpec ─────────────────────────────────────────────────────────────
+
+
+def test_clash_spec_single_mime_scope() -> None:
+    spec = ClashSpec("merge", "image/png")
+    assert spec.policy == "merge"
+    assert spec.scope is Png
+
+
+def test_clash_spec_union_scope() -> None:
+    spec = ClashSpec("avoid", "image/png|image/jpeg")
+    assert issubclass(Png, spec.scope) and issubclass(Jpeg, spec.scope)
+
+
+def test_clash_spec_all_scope_is_fileset() -> None:
+    assert ClashSpec("overwrite", "all").scope is FileSet
+
+
+def test_clash_spec_rejects_unknown_policy() -> None:
+    with pytest.raises(ValueError):
+        ClashSpec("bogus", "all")
+
+
+def test_clash_spec_cli_option_nargs_two() -> None:
+    @click.command()
+    @click.option(
+        "--on-resource-clash",
+        type=ClashSpec.cli_type,
+        nargs=2,
+        multiple=True,
+        default=(),
+    )
+    def cmd(on_resource_clash: tuple[ClashSpec, ...]) -> None:
+        for s in on_resource_clash:
+            click.echo(f"{s.policy}:{s.scope}")
+
+    res = CliRunner().invoke(
+        cmd,
+        ["--on-resource-clash", "merge", "image/png|image/jpeg"],
+        catch_exceptions=False,
+    )
+    assert res.output.strip() == f"merge:{Png | Jpeg}"
 
 
 # ── row_frequency_converter ────────────────────────────────────────────────
