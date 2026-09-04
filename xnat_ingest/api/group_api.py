@@ -4,6 +4,7 @@ import typing as ty
 from pathlib import Path
 
 from fileformats.core import FileSet
+from fileformats.medimage import DicomSeries
 from tqdm import tqdm
 
 from ..helpers.arg_types import (
@@ -17,14 +18,25 @@ from ..model.session import ImagingSession
 
 BUILD_NAME_DEFAULT = "__build__"
 
+# Default ID specs, shared verbatim with the ``xnat-ingest group`` CLI options in
+# ``group_cli.py`` so the API and CLI can never drift apart
+DEFAULT_SESSION_FIELD: tuple[IDSpec, ...] = (
+    IDSpec("StudyInstanceUID", "medimage/dicom-collection"),
+)
+DEFAULT_SCAN_FIELD: tuple[IDSpec, ...] = (
+    IDSpec("SeriesNumber", "medimage/dicom-collection"),
+)
+DEFAULT_RESOURCE_FIELD: tuple[IDSpec, ...] = ()
+_DEFAULT_DATATYPES: tuple[type[FileSet], ...] = (DicomSeries,)
+
 
 def group(
     input_paths: list[str],
     output_dir: Path,
-    datatypes: list[FileSet],
-    session: ty.Sequence[IDSpec],
-    scan: ty.Sequence[IDSpec],
-    resource: ty.Sequence[IDSpec] = (),
+    datatypes: ty.Sequence[type[FileSet]] = _DEFAULT_DATATYPES,
+    session: ty.Sequence[IDSpec] = DEFAULT_SESSION_FIELD,
+    scan: ty.Sequence[IDSpec] = DEFAULT_SCAN_FIELD,
+    resource: ty.Sequence[IDSpec] = DEFAULT_RESOURCE_FIELD,
     path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     unlink_source: str | None = None,
     raise_errors: bool = False,
@@ -48,14 +60,19 @@ def group(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
-    datatypes: list[FileSet]
-        List of FileSet types to look for in the input files. Only files with these datatypes will be considered for staging.
+    datatypes: ty.Sequence[type[FileSet]]
+        FileSet types to look for in the input files. Only files with these datatypes will be
+        considered for staging. Defaults to ``(DicomSeries,)`` to mirror the CLI.
     session: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the session UIDs from the input files to group them into
-        separate sessions
+        separate sessions. Defaults to ``DEFAULT_SESSION_FIELD`` (``StudyInstanceUID``
+        scoped to DICOM collections; the same object backs the CLI's ``--session``);
+        other fileset types need an explicit spec.
     scan: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the scan IDs from the input files to group them into
-        scans
+        scans. Defaults to ``DEFAULT_SCAN_FIELD`` (``SeriesNumber`` scoped to DICOM
+        collections; shared with the CLI's ``--scan``); for a fileset whose type is not
+        matched by any spec here the scan is named after that fileset's resource.
     resource: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the resource IDs from the input files to group them into
         resources. If empty, each resource is labelled with the mime-like rendering
@@ -90,11 +107,10 @@ def group(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    on_resource_clash: OnResourceClash = "avoid"
-        If "avoid", if a session with the same name already exists in the staging directory, a suffix will be added to the session
-        name to avoid overwriting the existing session.
-        If "merge", existing sessions with the same name will be merged.
-        If "error", an error will be raised if a session with the same name already exists in the staging directory.
+    on_resource_clash: OnResourceClash = "error"
+        Behaviour when two filesets resolve to the same scan/resource name. "error"
+        (default) raises; "avoid" appends a _2, _3 ... suffix; "merge" combines them into
+        one SetOf resource; "overwrite" replaces the existing one.
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.

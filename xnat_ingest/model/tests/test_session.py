@@ -693,6 +693,58 @@ def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
         DirectoryOf[Json].__name__,
         DirectoryOf[Csv].__name__,
     }
+def test_from_paths_scan_id_defaults_to_resource_label(tmp_path: Path) -> None:
+    """With no scan_field, each resource sits in a scan of the same name."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        # scan_field / resource_field omitted
+    )
+
+    scan = next(iter(sessions[0].scans.values()))
+    assert scan.id == "file"
+    assert list(scan.resources) == ["file"]
+
+
+def test_from_paths_datatype_scoped_scan_spec_falls_through(tmp_path: Path) -> None:
+    """A datatype-scoped --scan spec that doesn't apply to a fileset's type (the
+    DICOM 'SeriesNumber' default vs a plain File) names the scan after the resource
+    rather than raising."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+    )
+
+    assert next(iter(sessions[0].scans.values())).id == "file"
+
+
+def test_from_paths_session_spec_not_matching_type_raises_clearly(
+    tmp_path: Path,
+) -> None:
+    """The session UID has no auto-fallback: a session spec whose datatype doesn't
+    apply to a fileset (the DICOM-scoped default vs a plain File) raises an
+    actionable error rather than a bare 'resource label' TypeError."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    with pytest.raises(TypeError, match="apply to a File"):
+        ImagingSession.from_paths(
+            src,
+            datatypes=[File],
+            session_field=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        )
 
 
 CLASH_SCAN_ID = "1"
@@ -807,6 +859,53 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
         CLASH_RESOURCE_NAME,
         CLASH_RESOURCE_NAME + "__2",
     ]
+
+
+def _clash_session() -> ImagingSession:
+    return ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: File.sample(seed=1)},
+            )
+        ],
+    )
+
+
+def test_add_resource_clash_hint_in_error() -> None:
+    with pytest.raises(KeyError, match="auto-derived from its fileset type"):
+        _clash_session().add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=File.sample(seed=2),
+            on_clash="error",
+            clash_hint=(
+                "the --scan and --resource ID(s) for this resource were "
+                "auto-derived from its fileset type; pass explicit --scan / "
+                "--resource specifier(s) to control grouping"
+            ),
+        )
+
+
+def test_add_resource_clash_hint_in_avoid_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logging.getLogger("xnat-ingest").setLevel(logging.WARNING)
+    _clash_session().add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=File.sample(seed=2),
+        on_clash="avoid",
+        clash_hint="pass explicit --scan / --resource specifier(s) to control grouping",
+    )
+    assert "pass explicit --scan / --resource specifier(s)" in caplog.text
 
 
 def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:

@@ -46,6 +46,10 @@ logger = logging.getLogger("xnat-ingest")
 
 Transform = ty.Callable[[ty.Mapping[str, ty.Any]], ty.Any]
 
+# Sentinel returned by ``IDSpec.get_value_from_matching_spec`` when no scan spec
+# applies to a fileset's type, signalling that the scan should take the resource's name
+_DERIVED_ID: ty.Any = object()
+
 _DATE_FORMATS = ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d", "%Y%m%d", "%m/%d/%y", "%m/%d/%Y"]
 _TIME_FORMATS = ["%H.%M.%S", "%H:%M:%S", "%H%M%S"]
 
@@ -454,7 +458,7 @@ class ImagingSession:
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: type[FileSet] | ty.Sequence[type[FileSet]],
         session_field: ty.Sequence[IDSpec],
-        scan_field: ty.Sequence[IDSpec],
+        scan_field: ty.Sequence[IDSpec] = (),
         resource_field: ty.Sequence[IDSpec] = (),
         recursive: bool = False,
         on_resource_clash: OnResourceClash = "error",
@@ -478,6 +482,8 @@ class ImagingSession:
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
         scan_field: ty.Sequence[IDSpec]
             the value of this field is used to group resources under single scans.
+            For a fileset whose type is not matched by any spec here (including the
+            empty default), the scan is named after that fileset's resource.
         resource_field: ty.Sequence[IDSpec]
             the value of this field is used to identify resources. If empty, the
             resource is labelled with the mime-like rendering of the fileset's type
@@ -675,9 +681,9 @@ class ImagingSession:
             "Sorting resources into XNAT tree structure...",
         ):
             session_uid = IDSpec.get_value_from_matching_spec(fileset, session_field)
-            scan_id = IDSpec.get_value_from_matching_spec(fileset, scan_field)
-            # XNAT requires DICOM datasets to have in 'DICOM' and 'secondary'
-            # resource labels otherwise some features don't work
+            # XNAT requires DICOM datasets to have 'DICOM'/'secondary' resource
+            # labels otherwise some features don't work
+            resource_derived = False
             if isinstance(fileset, DicomCollection):
                 try:
                     image_type = fileset.contents[0].metadata["ImageType"]
@@ -685,15 +691,39 @@ class ImagingSession:
                     resource_label = "DICOM"
                 else:
                     resource_label = dicom_image_type_to_resource_label(image_type)
-
             elif not resource_field:
                 # No --resource spec given: label the resource with the mime-like
                 # rendering of the fileset's type name, e.g. 'vectra-export'
                 resource_label = _type_name_resource_label(fileset.type_name)
+                resource_derived = True
             else:
                 resource_label = IDSpec.get_value_from_matching_spec(
                     fileset, resource_field
                 )
+            # No --scan spec matches this fileset's type (e.g. the datatype-scoped
+            # 'SeriesNumber' default doesn't apply to a non-DICOM fileset): put the
+            # resource in a scan of the same name
+            scan_id = IDSpec.get_value_from_matching_spec(
+                fileset, scan_field, default=_DERIVED_ID
+            )
+            scan_derived = scan_id is _DERIVED_ID
+            if scan_derived:
+                scan_id = resource_label
+            derived_specs = [
+                spec
+                for spec, was_derived in (
+                    ("--scan", scan_derived),
+                    ("--resource", resource_derived),
+                )
+                if was_derived
+            ]
+            clash_hint = (
+                f"the {' and '.join(derived_specs)} ID(s) for this resource were "
+                f"auto-derived from its fileset type; pass explicit "
+                f"{' / '.join(derived_specs)} specifier(s) to control grouping"
+                if derived_specs
+                else None
+            )
             try:
                 session = sessions[session_uid]
             except KeyError:
@@ -714,6 +744,7 @@ class ImagingSession:
                 resource_label,
                 fileset,
                 on_clash=on_resource_clash,
+                clash_hint=clash_hint,
             )
         # Inject metadata from the metadata tables into the sessions, scans, and resources
         MetadataTable.inject_list(metadata_tables, list(sessions.values()))
@@ -1221,6 +1252,7 @@ class ImagingSession:
         associated: AssociatedFiles | None = None,
         on_clash: OnResourceClash = "error",
         metadata: dict[str, ty.Any] | None = None,
+        clash_hint: str | None = None,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -1244,6 +1276,11 @@ class ImagingSession:
             if "overwrite", an existing resource with the same name will be overwritten.
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
+        clash_hint : str, optional
+            extra context appended to the message when a resource-name clash is
+            hit (raised for ``on_clash="error"``, logged for ``"avoid"``), e.g. to
+            note that the clashing IDs were auto-derived because no ``--scan``/
+            ``--resource`` spec was given.
         """
         try:
             scan = self.scans[scan_id]
@@ -1334,8 +1371,10 @@ class ImagingSession:
                     resource_name = f"{base_name}__{num}"
                     num += 1
                 logger.warning(
-                    "Incremented resource name to '%s' to avoid clash with existing resources",
+                    "Incremented resource name to '%s' to avoid clash with existing "
+                    "resources%s",
                     resource_name,
+                    f". {clash_hint}" if clash_hint else "",
                 )
                 resource = ImagingResource(
                     name=resource_name, fileset=fileset, scan=scan
@@ -1346,7 +1385,8 @@ class ImagingSession:
                     f"{self.name} session. Use 'on_resource_clash=\"overwrite\"' to overwrite the existing resource, "
                     "'on_resource_clash=\"avoid\"' to increment the resource name, "
                     "'on_resource_clash=\"merge\"' to merge with the existing resource, or "
-                    "'on_resource_clash=\"error\"' to raise an error.",
+                    "'on_resource_clash=\"error\"' to raise an error."
+                    + (f" {clash_hint}" if clash_hint else ""),
                 )
             else:
                 assert (

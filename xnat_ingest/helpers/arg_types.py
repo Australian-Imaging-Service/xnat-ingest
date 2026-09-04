@@ -43,6 +43,9 @@ if ty.TYPE_CHECKING:
 
 logger = logging.getLogger("xnat-ingest")
 
+# Sentinel distinguishing "no default supplied" from a real ``None``/``""`` default
+_UNSET: ty.Any = object()
+
 # Define a type for the --on-resource-clash option, which can be one of "avoid", "merge", or "error".
 # The tuple is the single source of truth: it doubles as the click.Choice() options, while the
 # Literal (derived from it) is used for type-checking the parameter/argument annotations.
@@ -435,11 +438,13 @@ class IDSpec(MultiCliTyped):
         id_fields: ty.Sequence["IDSpec"],
         missing_ids: dict[str, str] | None = None,
         escape: bool = True,
+        default: ty.Any = _UNSET,
     ) -> str:
         """
         Given a list of IDSpec objects, find the first one that matches the type of the
         resource and use it to extract the ID value from the resource's metadata. If no
-        matching IDSpec is found, raise a TypeError.
+        matching IDSpec is found, return ``default`` if one was supplied, otherwise
+        raise a TypeError.
 
         Parameters
         ----------
@@ -452,6 +457,9 @@ class IDSpec(MultiCliTyped):
             the field name
         escape: bool
             If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+        default: Any
+            If supplied, returned when no IDSpec's datatype matches the target
+            instead of raising ``TypeError``
 
         Returns
         -------
@@ -461,7 +469,7 @@ class IDSpec(MultiCliTyped):
         Raises
         ------
         TypeError
-            If no matching IDSpec is found for the resource's type
+            If no matching IDSpec is found for the resource's type and no ``default`` was supplied
         ImagingSessionParseError
             If the metadata field is not found and missing_ids is not provided
         """
@@ -472,9 +480,13 @@ class IDSpec(MultiCliTyped):
                 )
                 logger.debug("Using %s to extract ID from %s", id_field, metadata)
                 return value
+        if default is not _UNSET:
+            return default
+        specs = ", ".join(str(f) for f in id_fields) or "(none)"
         raise TypeError(
-            f"No resource label field specification matches type of {metadata}, "
-            f"provided {id_fields}"
+            f"None of the provided ID specifications [{specs}] apply to a "
+            f"{type(metadata).__name__}; supply a specification whose datatype matches "
+            f"this type (use 'all' to match any type)"
         )
 
 

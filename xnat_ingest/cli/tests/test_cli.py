@@ -1418,6 +1418,10 @@ def test_check_upload_empty_scan(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1551,6 +1555,10 @@ def test_check_upload_missing_resource(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1682,6 +1690,10 @@ def test_check_upload_checksum_fail(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # non-DICOM test formats: the default DICOM-scoped --session/--scan
+            # specs don't apply, set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
