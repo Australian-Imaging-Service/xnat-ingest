@@ -424,6 +424,45 @@ def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
     }
 
 
+def test_deidentify_no_reid_dir_discards_metadata(
+    dirs: tuple[Path, Path, Path, Path],
+) -> None:
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+        )
+
+    assert errors == []
+    # deidentified output still produced, but nothing written to reid_dir
+    assert (output_dir / SESSION_NAME).exists()
+    assert not list(reid_dir.iterdir())
+
+
+def test_deidentify_encrypt_key_without_reid_dir_warns(
+    dirs: tuple[Path, Path, Path, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    input_dir, output_dir, spec_dir, _ = dirs
+
+    with (
+        patch.object(ImagingSession, "deidentify", _mock_deidentify),
+        caplog.at_level("WARNING", logger="xnat-ingest"),
+    ):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_encrypt_key=Fernet.generate_key(),
+        )
+
+    assert errors == []
+    assert "no --reid-dir" in caplog.text
+
+
 def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
     input_dir, output_dir, spec_dir, reid_dir = dirs
     key = Fernet.generate_key()

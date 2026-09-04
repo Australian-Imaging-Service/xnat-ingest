@@ -46,13 +46,9 @@ Formats without a matching spec file are only deidentified if a spec is found fo
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').
 
-REID_DIR is the directory to save the re-identification metadata to, which can be used to
-re-identify the de-identified data if needed. The re-identification metadata is saved in
-JSON format, with one JSON file per session, containing a list of mappings from original
-to de-identified identifiers for each resource in the session, as well as any additional
-metadata needed for re-identification (e.g. DICOM tags that were modified during de-identification).
-The re-identification metadata files are named <session_id>.json (or <session_id>.json.enc if encrypted
-by --reid-encrypt-key option) and saved in the REID_DIR.
+The re-identification metadata (a mapping from original to de-identified identifiers for
+each resource in the session, plus any DICOM tags modified during de-identification) is
+only written if --reid-dir is given; see that option.
 """,
 )
 @click.argument(
@@ -68,10 +64,20 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     type=click.Path(path_type=Path, exists=True),
     envvar="XINGEST_SPEC_DIR",
 )
-@click.argument(
-    "reid_dir",
+@click.option(
+    "--reid-dir",
     type=click.Path(path_type=Path),
+    default=None,
     envvar="XINGEST_REID_DIR",
+    help=(
+        "The directory to save the re-identification metadata to, which can be used to "
+        "re-identify the de-identified data if needed. One JSON file is written per "
+        "session, named <session_id>.json (or <session_id>.json.enc if encrypted with "
+        "--reid-encrypt-key). If this option is not given, the re-identification "
+        "metadata is discarded rather than written to disk, which is the safer default "
+        "when retaining the original<->deidentified mapping would itself be a security "
+        "concern (XINGEST_REID_DIR env. var)"
+    ),
 )
 @click.option(
     "--unlink-source",
@@ -168,7 +174,7 @@ def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
-    reid_dir: Path,
+    reid_dir: Path | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     require_manifest: bool,
