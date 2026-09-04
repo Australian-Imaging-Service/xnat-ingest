@@ -693,6 +693,8 @@ def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
         DirectoryOf[Json].__name__,
         DirectoryOf[Csv].__name__,
     }
+
+
 def test_from_paths_scan_id_defaults_to_resource_label(tmp_path: Path) -> None:
     """With no scan_field, each resource sits in a scan of the same name."""
     src = tmp_path / "src"
