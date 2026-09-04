@@ -27,13 +27,22 @@ default), and collates files into a directory structure of
   (``XINGEST_INPUT_PATHS``)
 * ``OUTPUT_DIR`` — where grouped sessions are written (``XINGEST_OUTPUT_DIR``)
 
-By default, sessions are grouped by DICOM ``StudyInstanceUID``, scans by
-``SeriesNumber`` and resources by ``ImageType``. These are configurable via
-``--session``/``--scan``/``--resource`` if your data needs different fields (see
-:doc:`/cli`).
+By default (tuned for DICOM), sessions are grouped by ``StudyInstanceUID`` and, for
+DICOM collections, scans by ``SeriesNumber``. If no ``--resource`` spec matches a
+fileset, its resource is named after the fileset's type (``dicom-series``,
+``vectra-export``, ...); if no ``--scan`` spec matches, the scan takes that same
+name. Override any of these with ``--session``/``--scan``/``--resource`` for other
+data — each takes ``<specifier> <datatype>`` and can be repeated to treat datatypes
+differently (see :doc:`/cli`).
 
 Add ``--unlink-source all`` to remove each source file once it's been staged
 (``all``/``keep-metadata`` behave the same here — see below).
+
+Non-DICOM data (raw exports, image files, vendor directory formats) needs
+``--datatype`` set to the relevant `FileFormats
+<https://arcanaframework.github.io/fileformats/>`_ MIME-like type(s), and usually its
+own ``--session``/``--scan``/``--resource`` specs since the DICOM defaults won't
+apply.
 
 Pulling extra metadata from file/directory paths
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -91,6 +100,64 @@ value or has become a plain string (e.g. after being reloaded from a
 a date first if the format spec looks like it wants one. If a field referenced in the
 specifier can't be resolved at all, that part of the ID falls back to the same
 placeholder mechanism described below for ``assign``.
+
+Recursing into nested directory formats
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--recursive`` descends into the input directories. For plain file datatypes it
+just flattens the tree. When a ``--datatype`` (or ``--ignore-datatype``) is a
+*directory* format, the walk instead stops descending into a directory as soon as it
+validates as one of them: a ``--datatype`` match is taken whole (its contents are
+never looked at individually), an ``--ignore-datatype`` match is skipped whole, and
+anything else is descended. This is how you pull a nested directory format out of a
+larger vendor export:
+
+.. code-block:: console
+
+    $ xnat-ingest group /data/incoming /data/staging/grouped --recursive \
+        --datatype medimage/vnd.canfield.whole-body-analysis-dir \
+        --datatype medimage/vnd.canfield.dexi-data-dir \
+        --exclude-path '*/*/*.png'
+
+``generic/directory`` and ``generic/file-set`` can't be used as a ``--datatype``
+with ``--recursive`` (they match every directory, at every depth).
+
+Deciding what to skip
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Anything found under the input paths that no ``--datatype`` recognises is a hard
+error by default. Three options relax that, from most to least targeted:
+
+* ``--exclude-path <glob>`` drops a path *before* it is classified, matching the path
+  **relative to its input directory** — so it removes a path even if a ``--datatype``
+  would have claimed it (e.g. a vendor thumbnail that happens to be a valid
+  ``image/png`` three directories deep, while keeping your real ``image/png`` two
+  deep). ``*`` does not cross ``/``, ``**`` does. Repeatable.
+* ``--ignore-datatype <mime>`` names a datatype that *is* recognised but isn't wanted:
+  its filesets are dropped from the result, and (with ``--recursive``) matching
+  directories are skipped without descending. Repeatable.
+* ``--allow-unrecognised <regex>`` matches the **basename** of any leftover path that
+  no datatype recognised, and skips it instead of raising. ``--allow-unrecognised
+  '.*'`` tolerates every stray file. It never affects a recognised fileset.
+
+A path matching none of these (nor a ``--datatype``) still aborts the run.
+
+Handling resource-name clashes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If two filesets resolve to the same ``<scan>/<resource>`` name, the run aborts unless
+you say what to do about it. ``--on-resource-clash`` takes ``<policy> <scope>`` and
+is repeatable; a clash is resolved by the first entry whose ``<scope>`` (a MIME-like,
+a ``|``-union, or ``all``) covers **both** filesets:
+
+* ``merge`` folds them into a single ``SetOf[...]`` resource (e.g. the PNG and JPEG
+  views of one lesion, under ``--on-resource-clash merge 'image/png|image/jpeg'``)
+* ``avoid`` appends a ``__2``/``__3`` suffix
+* ``overwrite`` replaces the existing resource
+
+A clash that no entry's scope covers (e.g. a PNG colliding with a directory format)
+always raises — tighten ``--scan``/``--resource`` so the two don't collide, or add a
+scope that deliberately covers both.
 
 
 Grouping straight from an Orthanc server
