@@ -711,7 +711,10 @@ def test_deidentify_max_workers_defaults_to_none(
 
     def capturing_deidentify(self, *_, **kwargs):
         received_max_workers.append(kwargs.get("max_workers"))
-        return self.new_empty(), dict(REID_MDATA)
+        new_sess = self.new_empty()
+        # add something to the session so it isn't empty
+        new_sess.add_session_resource("report", File.sample(seed=42))
+        return new_sess, dict(REID_MDATA)
 
     with patch.object(ImagingSession, "deidentify", capturing_deidentify):
         errors = deidentify(
