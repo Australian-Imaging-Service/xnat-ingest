@@ -171,7 +171,7 @@ def test_group_ignore_paths_pattern_not_matching_still_raises(
         )
 
 
-def test_group_ignore_types_excludes_recognised_but_unwanted_files(
+def test_group_ignore_datatypes_excludes_recognised_but_unwanted_files(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -187,7 +187,7 @@ def test_group_ignore_types_excludes_recognised_but_unwanted_files(
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        ignore_types=[Json],
+        ignore_datatypes=[Json],
     )
 
     assert errors == []
@@ -200,7 +200,7 @@ def test_group_ignore_types_excludes_recognised_but_unwanted_files(
     assert not list(resource_dir.rglob("notes.json"))
 
 
-def test_group_without_ignore_types_raises_on_recognised_extra_type(
+def test_group_without_ignore_datatypes_raises_on_recognised_extra_type(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -220,7 +220,7 @@ def test_group_without_ignore_types_raises_on_recognised_extra_type(
         )
 
 
-def test_group_ignore_types_contradicting_datatype_raises(
+def test_group_ignore_datatypes_contradicting_datatype_raises(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -234,7 +234,7 @@ def test_group_ignore_types_contradicting_datatype_raises(
             session=SESSION_FIELD,
             scan=SCAN_FIELD,
             resource=RESOURCE_FIELD,
-            ignore_types=[DicomSeries],
+            ignore_datatypes=[DicomSeries],
         )
 
 

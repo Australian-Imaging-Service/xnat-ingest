@@ -147,16 +147,17 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--ignore-type",
-    "ignore_types",
+    "--ignore-datatype",
+    "ignore_datatypes",
     type=MimeType.cli_type,
-    default=None,
+    default=(),
     multiple=True,
-    envvar="XINGEST_IGNORE_TYPE",
+    envvar="XINGEST_IGNORE_DATATYPE",
     help=(
-        "Datatypes that should be ignored when grouping files into sessions. If None, paths "
-        "that aren't recognised as part of the requested datatypes or filtered using "
-        "ignore_paths will raise an error (XINGEST_IGNORE env. var)"
+        "Datatypes expected in the input but not wanted: recognised files of these types are "
+        "dropped instead of raising, and with --recursive a matching directory is skipped "
+        "without descending into it. A path matching neither --datatype nor --ignore-datatype "
+        "nor --ignore-path still raises. (XINGEST_IGNORE_DATATYPE env. var)"
     ),
 )
 @click.option(
@@ -306,7 +307,7 @@ def group_cmd(
     raise_errors: bool,
     on_resource_clash: OnResourceClash,
     ignore_paths: list[str] | None,
-    ignore_types: list[MimeType] | None,
+    ignore_datatypes: tuple[MimeType, ...],
     loop: int,
     wait_period: int,
     recursive: bool,
@@ -341,7 +342,7 @@ def group_cmd(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             ignore_paths=ignore_paths,
-            ignore_types=[dt.datatype for dt in ignore_types],
+            ignore_datatypes=[dt.datatype for dt in ignore_datatypes],
             on_resource_clash=on_resource_clash,
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,

@@ -163,6 +163,42 @@ def _type_name_resource_label(type_name: str) -> str:
     return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
 
 
+def _recursive_collect(
+    root: Path,
+    datatypes: ty.Sequence[type[FileSet]],
+    ignore_datatypes: ty.Sequence[type[FileSet]],
+) -> ty.Iterator[Path]:
+    """Walk ``root`` yielding paths for ``from_paths`` to classify.
+
+    A directory that validates as one of ``datatypes`` is yielded whole and *not*
+    descended into; a directory that validates only as an ``ignore_datatypes``
+    directory format is skipped whole (not yielded, not descended); any other
+    directory is descended. Every loose file is yielded, so an unlisted file type
+    still raises in ``from_paths`` as usual.
+
+    ``dt.matches()`` runs the datatype's full validation on each directory node,
+    which for rich directory formats (e.g. a Canfield export) is not free - fine
+    for the export-sized trees this is meant for.
+    """
+    want = tuple(d for d in datatypes if issubclass(d, Directory))
+    skip = tuple(d for d in ignore_datatypes if issubclass(d, Directory))
+    stack: list[Path] = [root]
+    seen: set[Path] = set()
+    while stack:
+        current = stack.pop()
+        resolved = current.resolve()
+        if resolved in seen:  # guard against symlink loops
+            continue
+        seen.add(resolved)
+        for child in sorted(current.iterdir()):
+            if not child.is_dir() or any(dt.matches(child) for dt in want):
+                yield child
+            elif any(dt.matches(child) for dt in skip):
+                continue
+            else:
+                stack.append(child)
+
+
 def _deidentify_or_copy_resource(
     fileset: FileSet,
     resource_name: str,
@@ -427,7 +463,7 @@ class ImagingSession:
         recursive: bool = False,
         on_resource_clash: OnResourceClash = "error",
         ignore_paths: list[str] | None = None,
-        ignore_types: list[type[FileSet]] | None = None,
+        ignore_datatypes: ty.Sequence[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
         metadata_tables: list[MetadataTable] | None = None,
     ) -> list[Self]:
@@ -453,8 +489,13 @@ class ImagingSession:
             resource is labelled with the mime-like rendering of the fileset's type
             name, e.g. 'vectra-export', 'sqlite3-db'
         recursive : bool, optional
-            recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
-            by default False
+            recurse into directories passed as file paths. For file datatypes this
+            flattens the tree; when any ``datatypes`` / ``ignore_datatypes`` entry is
+            a directory format the walk stops descending into a directory as soon as
+            it validates as one of them (yielding a ``datatypes`` match whole,
+            skipping an ``ignore_datatypes`` match whole). ``generic/directory`` and
+            ``generic/file-set`` cannot be used as ``datatypes`` with ``recursive``.
+            By default False
         on_resource_clash : OnResourceClash, optional
             if "avoid", if a resource with the same name already exists in the scan, increment the
             resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
@@ -463,8 +504,12 @@ class ImagingSession:
             if "overwrite", an existing resource with the same name will be overwritten.
         ignore_paths : list[str] or None, optional
             regular expressions to match paths that should be ignored
-        ignore_types : list[type[FileSet]] or None, optional
-            types to be ignored
+        ignore_datatypes : ty.Sequence[type[FileSet]] or None, optional
+            datatypes that are expected in the input but not wanted: recognised
+            filesets of these types are dropped from the result rather than raising,
+            and (when ``recursive``) matching directories are skipped without
+            descending. An input path matching neither ``datatypes`` nor
+            ``ignore_datatypes`` (nor ``ignore_paths``) still raises.
         path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
@@ -486,22 +531,37 @@ class ImagingSession:
             DICOM files within the session
         """
 
-        if ignore_types:
-            if contradicting := set(datatypes) & set(ignore_types):
-                raise ValueError(
-                    "The following datatypes were listed for both inclusion (`datatypes`) and exclusion "
-                    f"(`ignore_types`): {list(contradicting)}"
-                )
-        else:
-            ignore_types = []
+        if not isinstance(datatypes, ty.Sequence):
+            datatypes = [datatypes]
+        datatypes = list(datatypes)
 
+        ignore_datatypes = list(ignore_datatypes or [])
+        if contradicting := set(datatypes) & set(ignore_datatypes):
+            raise ValueError(
+                "The following datatypes were listed for both inclusion (`datatypes`) and exclusion "
+                f"(`ignore_datatypes`): {list(contradicting)}"
+            )
+
+        # When recursing, a directory format among datatypes/ignore_datatypes makes
+        # the walk prune-on-match (see _recursive_collect) rather than flatten. The
+        # bare generic types match every directory / path so they can't be used.
+        recurse_into_dirs = False
         if recursive:
             if Directory in datatypes or FileSet in datatypes:
                 raise ValueError(
-                    "Cannot use `generic/directory` or `generic/file-set` datatypes with the `recursive` option. Please "
-                    f"define a more specific directory datatype (datatypes={datatypes})"
+                    "Cannot use `generic/directory` or `generic/file-set` as a `--datatype` "
+                    "with `--recursive` (they match every directory / path at every depth). "
+                    f"Use a specific directory datatype instead (datatypes={datatypes})"
                 )
-            ignore_types.append(Directory)
+            recurse_into_dirs = any(
+                isinstance(d, type) and issubclass(d, Directory)
+                for d in (*datatypes, *ignore_datatypes)
+            )
+            if not recurse_into_dirs:
+                # file-only recursion: flatten everything, and let a generic
+                # Directory soak up the bare directory nodes so from_paths doesn't
+                # choke on them
+                ignore_datatypes.append(Directory)
 
         if isinstance(files_path, (Path, str)):
             files_path = [files_path]
@@ -519,7 +579,15 @@ class ImagingSession:
                         f"Provided file-system path '{fspath}' does not exist"
                     )
                 if fspath.is_dir():
-                    if recursive:
+                    if recurse_into_dirs:
+                        logger.debug(
+                            "Walking '%s' for directory datatypes (prune-on-match)",
+                            str(fspath),
+                        )
+                        fspaths.extend(
+                            _recursive_collect(fspath, datatypes, ignore_datatypes)
+                        )
+                    elif recursive:
                         logger.debug(
                             "Recursively searching for all paths '%s' directory",
                             str(fspath),
@@ -560,22 +628,26 @@ class ImagingSession:
             "%Y%m%d%H%M%S",
         )
 
-        if not isinstance(datatypes, ty.Sequence):
-            datatypes = [datatypes]
-
         from_paths_kwargs = {}
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
         filesets = from_paths(
             fspaths,
-            *(datatypes + ignore_types),
+            *(datatypes + ignore_datatypes),
             ignore="|".join(ignore_paths) if ignore_paths else None,
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
-        if ignore_types:
+        if ignore_datatypes:
+            # drop filesets of an ignored datatype, but never one that also matches
+            # an explicitly-requested datatype (a specific Directory subclass in
+            # `datatypes` would otherwise be filtered by the generic `Directory`
+            # added for file-only recursion)
             filesets = [
-                f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
+                f
+                for f in filesets
+                if any(isinstance(f, d) for d in datatypes)
+                or not any(isinstance(f, t) for t in ignore_datatypes)
             ]
 
         if path_metadata_regex:

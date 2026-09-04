@@ -1025,7 +1025,7 @@ def test_group_ignore_path_pattern_not_matching_still_fails(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_type_excludes_recognised_but_unwanted_files(
+def test_group_ignore_datatype_excludes_recognised_but_unwanted_files(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -1045,7 +1045,7 @@ def test_group_ignore_type_excludes_recognised_but_unwanted_files(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-type",
+            "--ignore-datatype",
             "application/json",
         ],
     )
@@ -1055,7 +1055,7 @@ def test_group_ignore_type_excludes_recognised_but_unwanted_files(
     assert len(session_dirs) == 1
 
 
-def test_group_without_ignore_type_fails_on_recognised_extra_type(
+def test_group_without_ignore_datatype_fails_on_recognised_extra_type(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -1081,7 +1081,7 @@ def test_group_without_ignore_type_fails_on_recognised_extra_type(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_type_contradicting_datatype_fails(
+def test_group_ignore_datatype_contradicting_datatype_fails(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -1102,7 +1102,7 @@ def test_group_ignore_type_contradicting_datatype_fails(
             "0",
             "--datatype",
             "medimage/dicom-series",
-            "--ignore-type",
+            "--ignore-datatype",
             "medimage/dicom-series",
         ],
     )
