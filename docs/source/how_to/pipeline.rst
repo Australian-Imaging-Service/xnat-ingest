@@ -27,12 +27,13 @@ default), and collates files into a directory structure of
   (``XINGEST_INPUT_PATHS``)
 * ``OUTPUT_DIR`` — where grouped sessions are written (``XINGEST_OUTPUT_DIR``)
 
-By default (tuned for DICOM), sessions are grouped by ``StudyInstanceUID`` and, for
-DICOM collections, scans by ``SeriesNumber``. If no ``--resource`` spec matches a
-fileset, its resource is named after the fileset's type (``dicom-series``,
-``vectra-export``, ...); if no ``--scan`` spec matches, the scan takes that same
-name. Override any of these with ``--session``/``--scan``/``--resource`` for other
-data — each takes ``<specifier> <datatype>`` and can be repeated to treat datatypes
+For DICOM collections, sessions are grouped by ``StudyInstanceUID`` and
+scans by ``SeriesNumber`` by default. No defaults are provided for other formats.
+If no ``--resource`` spec matches a fileset, its resource is named after the
+fileset's type (``dicom-series``, ``vectra-export``, ...); if no ``--scan``
+spec matches, the scan takes that same name. Override any of these with
+``--session``/``--scan``/``--resource`` for other data — each takes
+``<specifier> <datatype>`` and can be repeated to treat datatypes
 differently (see :doc:`/cli`).
 
 Add ``--unlink-source all`` to remove each source file once it's been staged
