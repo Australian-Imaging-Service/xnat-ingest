@@ -534,6 +534,48 @@ def test_from_paths_recursive_pulls_nested_directory_datatype(tmp_path: Path) ->
     assert set(scans) == {"analysis", "deep"}
 
 
+def test_from_paths_recursive_ignore_path_wildcard_pulls_only_wanted_dirs(
+    tmp_path: Path,
+) -> None:
+    """The wanted directory formats are nested inside larger 'clutter' directories
+    whose internal structure we don't want to track. ``ignore_paths=['.*']`` mops
+    up every non-matching path so only the requested nested dirs come through - no
+    ``ignore_datatypes`` enumeration needed."""
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+
+    root = tmp_path / "export"
+    # WholeBodyCapture-shaped clutter dir with the wanted analysis dir buried in it
+    capture = root / "WBcapture"
+    (capture / "analysis").mkdir(parents=True)
+    (capture / "analysis" / "result.json").write_text("{}")
+    (capture / "raw1.bin").write_bytes(b"junk")
+    (capture / "thumbs").mkdir()
+    (capture / "thumbs" / "t1.jpg").write_bytes(b"junk")
+    # LesionAnalysis-shaped clutter dir with the wanted dexi dir buried in it
+    lesion = root / "lesionAnalysis"
+    (lesion / "dexi").mkdir(parents=True)
+    (lesion / "dexi" / "meta.json").write_text("{}")
+    (lesion / "report.csv").write_text("a,b\n1,2\n")
+    (root / "loose_at_root.txt").write_text("junk")
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json]],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        ignore_paths=[".*"],
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<name>[^/]+)$", DirectoryOf[Json])
+        ],
+    )
+
+    assert len(sessions) == 1
+    assert set(sessions[0].scans) == {"analysis", "dexi"}
+
+
 def test_from_paths_recursive_raises_on_unlisted_type(tmp_path: Path) -> None:
     from fileformats.application import Json
     from fileformats.core.exceptions import FormatRecognitionError
@@ -566,6 +608,91 @@ def test_from_paths_recursive_rejects_bare_generic_directory(tmp_path: Path) -> 
             scan_field=[IDSpec("__datatype__")],
             recursive=True,
         )
+
+
+def _canfield_shaped_tree(root: Path) -> Path:
+    """A stripped-down stand-in for a Canfield Vectra export: a session directory
+    holding several 'capture' directories, each of which buries a nested analysis
+    directory (two different formats) among loose files, plus sibling clutter
+    directories and loose files at every level. Generic ``DirectoryOf`` types
+    stand in for the real vendor formats:
+
+    - ``DirectoryOf[Json]`` == the photogrammetry lesion-analysis dir (has a .json)
+    - ``DirectoryOf[Csv]``  == the dexi-analysis dir (has a .csv), 2 instances
+    """
+    session = root / "SESSION-abc"
+
+    # photogrammetry capture: loads of loose files + the wanted analysis dir + a
+    # non-wanted sibling 'calib' directory
+    photo = session / "20260805133937"
+    photo.mkdir(parents=True)
+    for name in ("a1A.CR2", "a1B.CR2", "f1A.CR2", "capture.cptr", "addtexture-log.txt"):
+        (photo / name).write_bytes(b"raw")
+    (photo / "analysis").mkdir()
+    (photo / "analysis" / "lesion_data.json").write_text("{}")
+    (photo / "analysis" / "exitstatus.txt").write_text("ok")  # not descended -> unseen
+    (photo / "calib").mkdir()
+    (photo / "calib" / "a1A.sfcm").write_bytes(b"cal")  # unrecognised, in a clutter dir
+
+    # two dexi captures, each burying a DexiData dir among loose files
+    for stamp in ("20260805135303357", "20260805135325459"):
+        dexi_capture = session / stamp
+        dexi_capture.mkdir()
+        (dexi_capture / "captureinfo_scope").write_bytes(b"info")
+        (dexi_capture / "XP.png").write_bytes(b"png")
+        (dexi_capture / "DexiData_2.1").mkdir()
+        (dexi_capture / "DexiData_2.1" / "result.csv").write_text("a,b\n1,2\n")
+        (dexi_capture / "DexiData_2.1" / "heatmap.jpg").write_bytes(b"jpg")  # unseen
+
+    # loose files hanging directly off the session dir, and a sibling of it
+    (session / "lesion.t2k").write_bytes(b"t2k")
+    (session / "DermX Report.pdf").write_bytes(b"pdf")
+    (root / "testExternalID.db").write_bytes(b"SQLite format 3\x00")
+    return root
+
+
+def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
+    tmp_path: Path,
+) -> None:
+    """End-to-end on the Canfield-shaped tree: two distinct nested directory
+    formats are pulled from wherever they are buried, one of them appearing more
+    than once, while every loose file and every non-matching directory (the
+    capture dirs, ``calib/``, the session dir, the sibling ``.db``) is left alone
+    via ``ignore_paths=['.*']`` - no ``ignore_datatypes`` enumeration."""
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    root = _canfield_shaped_tree(tmp_path / "raw")
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json], DirectoryOf[Csv]],
+        session_field=[IDSpec("session")],
+        scan_field=[IDSpec("capture")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        ignore_paths=[".*"],
+        path_metadata_regex=[
+            PathMetadataRegex(
+                r".*/(?P<session>SESSION-[^/]+)/(?P<capture>[^/]+)/(?P<name>[^/]+)$",
+                DirectoryOf,
+            )
+        ],
+    )
+
+    assert len(sessions) == 1
+    scans = sessions[0].scans
+    assert set(scans) == {"20260805133937", "20260805135303357", "20260805135325459"}
+    assert list(scans["20260805133937"].resources) == ["analysis"]
+    # '.' in 'DexiData_2.1' is escaped to '_' like any other ID/label
+    assert list(scans["20260805135303357"].resources) == ["DexiData_2_1"]
+    assert list(scans["20260805135325459"].resources) == ["DexiData_2_1"]
+    resources = [r for s in scans.values() for r in s.resources.values()]
+    assert {type(r.fileset).__name__ for r in resources} == {
+        DirectoryOf[Json].__name__,
+        DirectoryOf[Csv].__name__,
+    }
 
 
 CLASH_SCAN_ID = "1"
