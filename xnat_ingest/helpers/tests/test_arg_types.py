@@ -127,6 +127,25 @@ def test_directly_referencing_all_digit_key_raises_clearly() -> None:
         spec.get_value({"00100010": "private tag value"}, missing_ids={})
 
 
+def test_get_value_from_matching_spec_returns_default_on_no_match(
+    tmp_path: Path,
+) -> None:
+    """When no IDSpec's datatype matches the target, a supplied ``default`` is
+    returned instead of raising ``TypeError``."""
+    path = tmp_path / "a.txt"
+    path.write_text("x")
+    fileset = Plain(path)
+    # spec scoped to image/png -> never matches a text file
+    specs = [IDSpec("SomeField", "image/png")]
+
+    assert (
+        IDSpec.get_value_from_matching_spec(fileset, specs, default="fallback")
+        == "fallback"
+    )
+    with pytest.raises(TypeError, match="apply to a Plain"):
+        IDSpec.get_value_from_matching_spec(fileset, specs)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # --metadata-table feature
 # ══════════════════════════════════════════════════════════════════════════════
