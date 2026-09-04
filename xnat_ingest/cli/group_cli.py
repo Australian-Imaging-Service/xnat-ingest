@@ -17,7 +17,7 @@ from ..api.group_api import (
     group_orthanc,
 )
 from ..helpers.arg_types import (
-    ON_RESOURCE_CLASH,
+    ClashSpec,
     CollationSpec,
     Convert,
     CopyModeParamType,
@@ -25,7 +25,6 @@ from ..helpers.arg_types import (
     LoggerConfig,
     MetadataTable,
     MimeType,
-    OnResourceClash,
     PathMetadataRegex,
 )
 from ..helpers.logging import logger, set_logger_handling
@@ -124,26 +123,47 @@ are uploaded to XNAT
 )
 @click.option(
     "--on-resource-clash",
-    type=click.Choice(ON_RESOURCE_CLASH),
-    default="error",
+    type=ClashSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=(),
+    metavar="<policy> <scope>",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "Determines the behavior when a resource with the same name already exists in the scan. "
-        "Options are 'error' (default), 'avoid' (append a _2, _3 ... suffix), 'merge' (combine "
-        "into one SetOf resource), 'overwrite' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "How to handle two filesets resolving to the same scan/resource name: a <policy> "
+        "('avoid' appends a _2/_3 suffix, 'merge' folds both into one SetOf, 'overwrite' "
+        "replaces) plus the datatype <scope> it applies to (a mime-like, a '|'-union, or "
+        "'all'). Repeatable. A clash is resolved by the first spec whose scope covers BOTH "
+        "filesets; a clash no spec covers raises. (XINGEST_ON_RESOURCE_CLASH env. var)"
     ),
 )
 @click.option(
-    "--ignore-path",
-    "ignore_paths",
+    "--allow-unrecognised",
+    "--allow-unrecognized",
+    "allow_unrecognised",
     type=str,
     default=(),
     multiple=True,
-    envvar="XINGEST_IGNORE_PATH",
+    envvar="XINGEST_ALLOW_UNRECOGNISED",
     help=(
-        "Regular expressions to match paths that should be ignored when grouping files into sessions. "
-        "If None, no paths will be ignored. To ignore all paths by default, use '.*' as the value "
-        "for this parameter. (XINGEST_IGNORE env. var)"
+        "Regular expressions matched against the basename of any input path that no --datatype "
+        "recognised; matches are skipped instead of raising. Use '.*' to tolerate all "
+        "unrecognised files. Does not affect recognised filesets. (XINGEST_ALLOW_UNRECOGNISED "
+        "env. var)"
+    ),
+)
+@click.option(
+    "--exclude-path",
+    "exclude_paths",
+    type=str,
+    default=(),
+    multiple=True,
+    envvar="XINGEST_EXCLUDE_PATH",
+    help=(
+        "Glob patterns matched against each input path relative to <input-dir>, applied before "
+        "classification so a match is dropped even if a --datatype would claim it (e.g. a vendor "
+        "thumbnail that is a valid image/png). '*' does not cross '/', '**' does. Repeatable. "
+        "(XINGEST_EXCLUDE_PATH env. var)"
     ),
 )
 @click.option(
@@ -157,7 +177,7 @@ are uploaded to XNAT
         "Datatypes expected in the input but not wanted: recognised files of these types are "
         "dropped instead of raising, and with --recursive a matching directory is skipped "
         "without descending into it. A path matching neither --datatype nor --ignore-datatype "
-        "nor --ignore-path still raises. (XINGEST_IGNORE_DATATYPE env. var)"
+        "nor --allow-unrecognised/--exclude-path still raises. (XINGEST_IGNORE_DATATYPE env. var)"
     ),
 )
 @click.option(
@@ -305,8 +325,9 @@ def group_cmd(
     loggers: list[LoggerConfig],
     additional_loggers: list[str],
     raise_errors: bool,
-    on_resource_clash: OnResourceClash,
-    ignore_paths: list[str] | None,
+    on_resource_clash: tuple[ClashSpec, ...],
+    allow_unrecognised: tuple[str, ...],
+    exclude_paths: tuple[str, ...],
     ignore_datatypes: tuple[MimeType, ...],
     loop: int,
     wait_period: int,
@@ -341,9 +362,10 @@ def group_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            ignore_paths=ignore_paths,
+            allow_unrecognised=allow_unrecognised,
+            exclude_paths=exclude_paths,
             ignore_datatypes=[dt.datatype for dt in ignore_datatypes],
-            on_resource_clash=on_resource_clash,
+            on_resource_clash=list(on_resource_clash),
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,

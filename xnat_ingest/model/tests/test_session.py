@@ -29,11 +29,17 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from xnat_ingest.helpers.arg_types import (
+    AssociatedFiles,
+    ClashSpec,
+    IDSpec,
+    PathMetadataRegex,
+)
 from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.model.session import (
     ImagingScan,
     ImagingSession,
+    _glob_to_regex,
     _metadata_diff,
     _type_name_resource_label,
 )
@@ -534,11 +540,11 @@ def test_from_paths_recursive_pulls_nested_directory_datatype(tmp_path: Path) ->
     assert set(scans) == {"analysis", "deep"}
 
 
-def test_from_paths_recursive_ignore_path_wildcard_pulls_only_wanted_dirs(
+def test_from_paths_recursive_allow_unrecognised_wildcard_pulls_only_wanted_dirs(
     tmp_path: Path,
 ) -> None:
     """The wanted directory formats are nested inside larger 'clutter' directories
-    whose internal structure we don't want to track. ``ignore_paths=['.*']`` mops
+    whose internal structure we don't want to track. ``allow_unrecognised=['.*']`` mops
     up every non-matching path so only the requested nested dirs come through - no
     ``ignore_datatypes`` enumeration needed."""
     from fileformats.application import Json
@@ -566,7 +572,7 @@ def test_from_paths_recursive_ignore_path_wildcard_pulls_only_wanted_dirs(
         scan_field=[IDSpec("name")],
         resource_field=[IDSpec("name")],
         recursive=True,
-        ignore_paths=[".*"],
+        allow_unrecognised=[".*"],
         path_metadata_regex=[
             PathMetadataRegex(r".*/(?P<name>[^/]+)$", DirectoryOf[Json])
         ],
@@ -608,6 +614,54 @@ def test_from_paths_recursive_rejects_bare_generic_directory(tmp_path: Path) -> 
             scan_field=[IDSpec("__datatype__")],
             recursive=True,
         )
+
+
+@pytest.mark.parametrize(
+    "pattern, path, matches",
+    [
+        ("*/*/*.png", "a/b/c.png", True),
+        ("*/*/*.png", "a/c.png", False),
+        ("*/*/*.png", "w/x/y/z.png", False),
+        ("**/*.png", "a.png", True),
+        ("**/*.png", "a/b/c.png", True),
+        ("**/*.png", "a/b/c.txt", False),
+        ("**/[XY]P.png", "u/2026/XP.png", True),
+        ("**/[XY]P.png", "u/2026/ZP.png", False),
+        ("*.txt", "a.txt", True),
+        ("*.txt", "a/b.txt", False),
+    ],
+)
+def test_glob_to_regex(pattern: str, path: str, matches: bool) -> None:
+    assert bool(_glob_to_regex(pattern).match(path)) is matches
+
+
+def test_from_paths_exclude_path_drops_recognised_by_relative_depth(
+    tmp_path: Path,
+) -> None:
+    """--exclude-path matches the path *relative to the input dir* and is applied
+    before classification, so it drops a file even though a --datatype claims it
+    (a 3-deep .txt here) while sparing the same type 2 deep."""
+    from fileformats.generic import File
+
+    root = tmp_path / "root"
+    (root / "subject").mkdir(parents=True)
+    (root / "subject" / "shallow.txt").write_text("keep")  # relative depth 2
+    (root / "uuid" / "stamp").mkdir(parents=True)
+    (root / "uuid" / "stamp" / "deep.txt").write_text("drop")  # relative depth 3
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        exclude_paths=["*/*/*.txt"],
+        path_metadata_regex=[PathMetadataRegex(r".*/(?P<name>[^/]+)\.txt$", File)],
+    )
+
+    resources = [r for s in sessions for sc in s.scans.values() for r in sc.resources]
+    assert resources == ["shallow"]
 
 
 def _canfield_shaped_tree(root: Path) -> Path:
@@ -658,7 +712,7 @@ def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
     formats are pulled from wherever they are buried, one of them appearing more
     than once, while every loose file and every non-matching directory (the
     capture dirs, ``calib/``, the session dir, the sibling ``.db``) is left alone
-    via ``ignore_paths=['.*']`` - no ``ignore_datatypes`` enumeration."""
+    via ``allow_unrecognised=['.*']`` - no ``ignore_datatypes`` enumeration."""
     from fileformats.application import Json
     from fileformats.generic import DirectoryOf
     from fileformats.text import Csv
@@ -672,7 +726,7 @@ def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
         scan_field=[IDSpec("capture")],
         resource_field=[IDSpec("name")],
         recursive=True,
-        ignore_paths=[".*"],
+        allow_unrecognised=[".*"],
         path_metadata_regex=[
             PathMetadataRegex(
                 r".*/(?P<session>SESSION-[^/]+)/(?P<capture>[^/]+)/(?P<name>[^/]+)$",
@@ -1011,6 +1065,152 @@ def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
         reloaded_resource.checksums
         == saved.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].checksums
     )
+
+
+def _png(path: Path) -> Path:
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    return path
+
+
+def _jpg(path: Path) -> Path:
+    path.write_bytes(
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    )
+    return path
+
+
+def _png_clash_session(tmp_path: Path) -> tuple[ImagingSession, ty.Any]:
+    from fileformats.image.raster import Png
+
+    fileset1 = Png(_png(tmp_path / "a.png"))
+    session = ImagingSession(
+        uid="12345",
+        project_id="P",
+        subject_id="S",
+        session_id="V",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: fileset1},
+            )
+        ],
+    )
+    return session, fileset1
+
+
+def test_add_resource_clash_spec_union_scope_merges_cross_type(tmp_path: Path) -> None:
+    """A Png clashing with a Jpeg is merged into ``SetOf[Png, Jpeg]`` when a single
+    ``ClashSpec`` scope (``image/png|image/jpeg``) covers both."""
+    from fileformats.generic import SetOf
+    from fileformats.image.raster import Jpeg, Png
+
+    session, _ = _png_clash_session(tmp_path)
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=Jpeg(_jpg(tmp_path / "b.jpg")),
+        on_clash=[ClashSpec("merge", "image/png|image/jpeg")],
+    )
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset
+    assert isinstance(merged, SetOf)
+    assert set(merged.content_types) == {Png, Jpeg}
+
+
+def test_add_resource_clash_spec_separate_specs_raise_cross_type(
+    tmp_path: Path,
+) -> None:
+    """Two single-type ``ClashSpec``s don't jointly cover a Png-vs-Jpeg clash - no
+    single spec's scope covers both, so it raises."""
+    from fileformats.image.raster import Jpeg
+
+    session, _ = _png_clash_session(tmp_path)
+    with pytest.raises(KeyError, match="no --on-resource-clash spec"):
+        session.add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=Jpeg(_jpg(tmp_path / "b.jpg")),
+            on_clash=[
+                ClashSpec("merge", "image/png"),
+                ClashSpec("merge", "image/jpeg"),
+            ],
+        )
+
+
+def test_add_resource_clash_spec_no_covering_spec_raises(tmp_path: Path) -> None:
+    from fileformats.image.raster import Png
+
+    session, _ = _png_clash_session(tmp_path)
+    with pytest.raises(KeyError, match="no --on-resource-clash spec"):
+        session.add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=Png(_png(tmp_path / "b.png")),
+            on_clash=[ClashSpec("avoid", "image/jpeg")],
+        )
+
+
+def test_add_resource_clash_spec_avoid_within_scope(tmp_path: Path) -> None:
+    from fileformats.image.raster import Png
+
+    session, _ = _png_clash_session(tmp_path)
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=Png(_png(tmp_path / "b.png")),
+        on_clash=[ClashSpec("avoid", "image/png|image/jpeg")],
+    )
+    assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
+        CLASH_RESOURCE_NAME,
+        CLASH_RESOURCE_NAME + "__2",
+    ]
+
+
+def test_add_resource_clash_spec_remerge_into_existing_setof(tmp_path: Path) -> None:
+    """A 3rd fileset merged into an existing ``SetOf[Png, Jpeg]`` is still covered by
+    an ``image/png|image/jpeg`` scope (``_fileset_in_scope`` checks content types)."""
+    from fileformats.generic import SetOf
+    from fileformats.image.raster import Jpeg, Png
+
+    session, _ = _png_clash_session(tmp_path)
+    spec = [ClashSpec("merge", "image/png|image/jpeg")]
+    session.add_resource(
+        CLASH_SCAN_ID,
+        CLASH_SCAN_TYPE,
+        CLASH_RESOURCE_NAME,
+        Jpeg(_jpg(tmp_path / "b.jpg")),
+        on_clash=spec,
+    )
+    session.add_resource(
+        CLASH_SCAN_ID,
+        CLASH_SCAN_TYPE,
+        CLASH_RESOURCE_NAME,
+        Png(_png(tmp_path / "c.png")),
+        on_clash=spec,
+    )
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset
+    assert isinstance(merged, SetOf)
+    assert len(merged.fspaths) == 3
 
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
