@@ -1,4 +1,3 @@
-import glob as glob_mod
 import hashlib
 import inspect
 import json
@@ -165,6 +164,48 @@ def _type_name_resource_label(type_name: str) -> str:
     return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
 
 
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    r"""Anchored regex for a ``/``-aware glob: ``*`` / ``?`` / ``[...]`` do not cross
+    ``/``, ``**`` (optionally followed by ``/``) matches across directory levels.
+    Equivalent to ``glob.translate(pattern, recursive=True)`` (py3.13+), spelled out
+    so 3.11/3.12 work too.
+    """
+    i, n = 0, len(pattern)
+    out = ["(?s:"]
+    while i < n:
+        c = pattern[i]
+        i += 1
+        if c == "*":
+            if i < n and pattern[i] == "*":
+                i += 1
+                if i < n and pattern[i] == "/":
+                    i += 1
+                    out.append("(?:[^/]*/)*")  # '**/' -> zero or more segments
+                else:
+                    out.append(".*")
+            else:
+                out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            j = i + 1 if i < n and pattern[i] in "!^" else i
+            j = j + 1 if j < n and pattern[j] == "]" else j
+            while j < n and pattern[j] != "]":
+                j += 1
+            if j >= n:
+                out.append(r"\[")
+            else:
+                inner = pattern[i:j]
+                i = j + 1
+                if inner[:1] in ("!", "^"):
+                    inner = "^" + inner[1:]
+                out.append("[" + inner + "]")
+        else:
+            out.append(re.escape(c))
+    out.append(r")\Z")
+    return re.compile("".join(out))
+
+
 def _drop_excluded_paths(
     fspaths: ty.Sequence[Path],
     input_dirs: ty.Sequence[Path],
@@ -179,10 +220,7 @@ def _drop_excluded_paths(
     """
     if not exclude_globs:
         return list(fspaths)
-    matchers = [
-        re.compile(glob_mod.translate(g, recursive=True, include_hidden=True))
-        for g in exclude_globs
-    ]
+    matchers = [_glob_to_regex(g) for g in exclude_globs]
     kept: list[Path] = []
     for p in fspaths:
         rels: list[str] = []
