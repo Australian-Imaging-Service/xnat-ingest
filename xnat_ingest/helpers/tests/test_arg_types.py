@@ -10,6 +10,7 @@ from fileformats.text import Csv, Plain, Tsv
 
 from xnat_ingest.exceptions import ImagingSessionParseError
 from xnat_ingest.helpers.arg_types import (
+    SEMICOLON_LIST,
     ClashSpec,
     IDSpec,
     JoinExpr,
@@ -349,6 +350,40 @@ def test_clash_spec_cli_option_nargs_two() -> None:
         catch_exceptions=False,
     )
     assert res.output.strip() == f"merge:{Png | Jpeg}"
+
+
+# ── SEMICOLON_LIST env-var splitting ──────────────────────────────────────
+
+
+def test_semicolon_list_splits_env_var_on_semicolon() -> None:
+    assert SEMICOLON_LIST.split_envvar_value("*/*/*.png;*/*/*.jpg") == [
+        "*/*/*.png",
+        "*/*/*.jpg",
+    ]
+
+
+def test_semicolon_list_keeps_spaces_within_a_value_and_drops_blanks() -> None:
+    assert SEMICOLON_LIST.split_envvar_value(" a/b c/*.png ;; d/*.jpg ") == [
+        "a/b c/*.png",
+        "d/*.jpg",
+    ]
+
+
+def test_semicolon_list_option_accepts_repeated_flags_and_env_var() -> None:
+    @click.command()
+    @click.option(
+        "--exclude-path", type=SEMICOLON_LIST, multiple=True, default=(), envvar="XP"
+    )
+    def cmd(exclude_path: tuple[str, ...]) -> None:
+        click.echo("|".join(exclude_path))
+
+    from_flags = CliRunner().invoke(
+        cmd, ["--exclude-path", "a b/*.png", "--exclude-path", "c/*.jpg"]
+    )
+    assert from_flags.output.strip() == "a b/*.png|c/*.jpg"
+
+    from_env = CliRunner().invoke(cmd, [], env={"XP": "a b/*.png;c/*.jpg"})
+    assert from_env.output.strip() == "a b/*.png|c/*.jpg"
 
 
 # ── row_frequency_converter ────────────────────────────────────────────────

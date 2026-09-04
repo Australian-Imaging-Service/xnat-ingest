@@ -17,6 +17,7 @@ from ..api.group_api import (
     group_orthanc,
 )
 from ..helpers.arg_types import (
+    SEMICOLON_LIST,
     ClashSpec,
     CollationSpec,
     Convert,
@@ -141,29 +142,29 @@ are uploaded to XNAT
     "--allow-unrecognised",
     "--allow-unrecognized",
     "allow_unrecognised",
-    type=str,
+    type=SEMICOLON_LIST,
     default=(),
     multiple=True,
     envvar="XINGEST_ALLOW_UNRECOGNISED",
     help=(
         "Regular expressions matched against the basename of any input path that no --datatype "
         "recognised; matches are skipped instead of raising. Use '.*' to tolerate all "
-        "unrecognised files. Does not affect recognised filesets. (XINGEST_ALLOW_UNRECOGNISED "
-        "env. var)"
+        "unrecognised files. Does not affect recognised filesets. Repeatable; the "
+        "XINGEST_ALLOW_UNRECOGNISED env. var takes a ';'-separated list."
     ),
 )
 @click.option(
     "--exclude-path",
     "exclude_paths",
-    type=str,
+    type=SEMICOLON_LIST,
     default=(),
     multiple=True,
     envvar="XINGEST_EXCLUDE_PATH",
     help=(
         "Glob patterns matched against each input path relative to <input-dir>, applied before "
         "classification so a match is dropped even if a --datatype would claim it (e.g. a vendor "
-        "thumbnail that is a valid image/png). '*' does not cross '/', '**' does. Repeatable. "
-        "(XINGEST_EXCLUDE_PATH env. var)"
+        "thumbnail that is a valid image/png). '*' does not cross '/', '**' does. Repeatable; the "
+        "XINGEST_EXCLUDE_PATH env. var takes a ';'-separated list."
     ),
 )
 @click.option(
