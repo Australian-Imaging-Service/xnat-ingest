@@ -21,8 +21,8 @@ flowchart LR
     Upload -.-> CheckUpload["check-upload"]
 
     Extra(["files without\nsorting metadata"]) -.-> Associate["associate (optional)"]
-    Assign -.-> Associate
-    Associate -.-> Deidentify
+    Group -.-> Associate
+    Associate -.-> Assign
 ```
 
 
