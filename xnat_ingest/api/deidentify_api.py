@@ -162,7 +162,7 @@ def deidentify(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
-    reid_dir: Path,
+    reid_dir: Path | None = None,
     on_resource_clash: OnResourceClash = "error",
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
@@ -174,11 +174,22 @@ def deidentify(
     """
     Parameters
     ----------
+    reid_dir : Path, optional
+        the directory to write the re-identification metadata to, one JSON file per
+        session. If not given, the re-identification metadata is discarded rather than
+        written to disk (use this when retaining the original<->deidentified mapping
+        would itself be a security concern).
     max_workers : int, optional
         the number of threads handed to a resource's own deidentify implementation to
         parallelise work within that resource (e.g. the per-file loop for a DICOM
         series). Ignored by formats that don't support it.
     """
+
+    if reid_encrypt_key is not None and reid_dir is None:
+        logger.warning(
+            "--reid-encrypt-key was provided but no --reid-dir; the re-identification "
+            "metadata is being discarded, so the key has no effect"
+        )
 
     sessions: list[LocalSessionListing] = [
         LocalSessionListing(d) for d in list_session_dirs(input_dir)
@@ -192,7 +203,8 @@ def deidentify(
 
     # Ensure the output and reid directories exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    reid_dir.mkdir(parents=True, exist_ok=True)
+    if reid_dir is not None:
+        reid_dir.mkdir(parents=True, exist_ok=True)
 
     errors: list[str] = []
     n_skeletons = 0
@@ -465,23 +477,26 @@ def deidentify(
                         n_out,
                         n_in,
                     )
-            reid_document = {
-                "session_uid": session.uid,
-                "changed_fields": reid_mdata,
-            }
-            # default=str handles values that aren't natively JSON-serialisable but
-            # have a sensible string representation, e.g. pydicom's PersonName
-            # (kept as a rich object elsewhere in metadata for .family_name/
-            # .given_name access, see xnat_ingest.helpers.metadata.Metadata.save).
-            reid_mdata_json = json.dumps(reid_document, indent=2, default=str).encode()
-            if reid_encrypt_key is not None:
-                reid_fspath = reid_dir / f"{session_listing.name}.json.enc"
-                reid_fspath.write_bytes(
-                    Fernet(reid_encrypt_key).encrypt(reid_mdata_json)
-                )
-            else:
-                reid_fspath = reid_dir / f"{session_listing.name}.json"
-                reid_fspath.write_bytes(reid_mdata_json)
+            if reid_dir is not None:
+                reid_document = {
+                    "session_uid": session.uid,
+                    "changed_fields": reid_mdata,
+                }
+                # default=str handles values that aren't natively JSON-serialisable but
+                # have a sensible string representation, e.g. pydicom's PersonName
+                # (kept as a rich object elsewhere in metadata for .family_name/
+                # .given_name access, see xnat_ingest.helpers.metadata.Metadata.save).
+                reid_mdata_json = json.dumps(
+                    reid_document, indent=2, default=str
+                ).encode()
+                if reid_encrypt_key is not None:
+                    reid_fspath = reid_dir / f"{session_listing.name}.json.enc"
+                    reid_fspath.write_bytes(
+                        Fernet(reid_encrypt_key).encrypt(reid_mdata_json)
+                    )
+                else:
+                    reid_fspath = reid_dir / f"{session_listing.name}.json"
+                    reid_fspath.write_bytes(reid_mdata_json)
         except Exception as e:
             if raise_errors:
                 raise

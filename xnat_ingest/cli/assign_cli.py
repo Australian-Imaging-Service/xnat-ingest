@@ -79,18 +79,22 @@ manually reviewed/reprocessed rather than silently lost.
     "scan_field",
     type=str,
     default="SeriesDescription",
-    envvar="XINGEST_SCAN_DESC",
+    envvar="XINGEST_SCAN",
     help=(
         "The keyword of the metadata field to extract a description for each scan from. "
         "Scans for which the field can't be resolved are left without a description "
-        "(XINGEST_SCAN_DESC env. var)"
+        "(XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
     "--constant-project-id",
     type=str,
     default=None,
-    help=("Fix the project ID as a constant for all data matched by this command"),
+    envvar="XINGEST_CONSTANT_PROJECT_ID",
+    help=(
+        "Fix the project ID as a constant for all data matched by this command "
+        "(XINGEST_CONSTANT_PROJECT_ID env. var)"
+    ),
 )
 @click.option(
     "--include",

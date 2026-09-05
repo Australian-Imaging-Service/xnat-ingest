@@ -4,21 +4,24 @@ Deidentification
 For sites where the ``assign``-ed sessions still contain identifiable data (e.g. a
 clinical scanner staging DICOMs before upload), insert a ``deidentify`` step between
 ``assign`` and ``upload``. It strips patient-identifying fields from each session and
-writes both the deidentified copy and a re-identification mapping (so the process can
-be reversed later if needed, e.g. to look up a scan for a clinical follow-up).
+writes the deidentified copy, and — only if ``--reid-dir`` is given — a
+re-identification mapping so the process can be reversed later if needed (e.g. to look
+up a scan for a clinical follow-up).
 
 .. code-block:: console
 
     $ xnat-ingest deidentify /data/staging/assigned /data/staging/deidentified \
-        /etc/xnat-ingest/deid-specs /data/staging/reid
+        /etc/xnat-ingest/deid-specs --reid-dir /data/staging/reid
 
 * ``INPUT_DIR`` — the ``assign`` output directory (``XINGEST_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where deidentified sessions are written; point ``upload`` at this
   directory instead of the ``assign`` output (``XINGEST_OUTPUT_DIR``)
 * ``SPEC_DIR`` — the deidentification specs, one directory per project (see below)
   (``XINGEST_SPEC_DIR``)
-* ``REID_DIR`` — where the re-identification mappings are written, one JSON file per
-  session (``XINGEST_REID_DIR``)
+* ``--reid-dir`` — optional; where the re-identification mappings are written, one
+  JSON file per session (``XINGEST_REID_DIR``). Omit it to discard the mapping rather
+  than persist it, which is the safer choice when holding an
+  original\ ↔\ deidentified lookup on disk is itself a concern.
 
 As with ``assign``, ``--unlink-source all``/``--unlink-source keep-metadata`` clean up
 the ``assign`` output once a session's been deidentified — see
@@ -68,9 +71,11 @@ match.
 Re-identifying data later
 ------------------------------
 
-Each session's original identifying values (before they were stripped) are written to
-``REID_DIR`` as ``<session_id>.json``. If ``--reid-encrypt-key`` is set to a
-URL-safe base64-encoded 32-byte key (e.g. from ``Fernet.generate_key()`` in the
-``cryptography`` package), the file is written encrypted instead, as
-``<session_id>.json.enc``, and can only be read back with that same key — keep it
-somewhere separate from ``REID_DIR`` itself.
+If ``--reid-dir`` is given, each session's original identifying values (before they
+were stripped) are written there as ``<session_id>.json``. If ``--reid-encrypt-key``
+is also set to a URL-safe base64-encoded 32-byte key (e.g. from
+``Fernet.generate_key()`` in the ``cryptography`` package), the file is written
+encrypted instead, as ``<session_id>.json.enc``, and can only be read back with that
+same key — keep it somewhere separate from the ``--reid-dir`` directory itself.
+Without ``--reid-dir`` the mapping is never written and the deidentification cannot be
+reversed (``--reid-encrypt-key`` then has no effect and is warned about).

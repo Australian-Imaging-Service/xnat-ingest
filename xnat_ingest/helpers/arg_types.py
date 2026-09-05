@@ -529,6 +529,24 @@ class CollationSpec(MultiCliTyped):
         return FileSet.CopyCollation[self.collation.lower()]
 
 
+class SemicolonListType(click.types.StringParamType):
+    """A plain string option (used with ``multiple=True``) whose environment-variable
+    value is split on ``;`` rather than on whitespace, with surrounding whitespace
+    stripped and empty entries dropped.
+
+    This keeps ``--allow-unrecognised`` / ``--exclude-path`` consistent with the other
+    list-valued ``XINGEST_*`` env vars and lets an individual value (e.g. a glob with a
+    space in a path component) contain whitespace."""
+
+    name = "text"
+
+    def split_envvar_value(self, envvar: str) -> ty.Sequence[str]:
+        return [entry.strip() for entry in envvar.split(";") if entry.strip()]
+
+
+SEMICOLON_LIST = SemicolonListType()
+
+
 class CopyModeParamType(click.ParamType):
     name = "copy_mode"
 
