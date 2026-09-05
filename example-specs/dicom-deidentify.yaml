@@ -1,0 +1,40 @@
+# Like minimal-dicom.yaml, with a deidentify stage inserted between assign and
+# upload. --reid-dir is deliberately omitted: the original<->deidentified mapping
+# is computed and then discarded rather than written to disk. Add reid_dir (and
+# optionally reid_encrypt_key) back if re-identifying data later needs to be
+# possible - see docs/source/how_to/deidentify.rst.
+
+name: dicom-deidentify
+
+work_dir: /var/lib/xnat-ingest/work/dicom-deidentify
+
+xnat:
+  server: https://xnat.example.org
+  user: ${XNAT_USER}
+  password: ${XNAT_PASSWORD}
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: [/data/scanner-export]
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      project: StudyComments
+      subject: PatientID
+      session: AccessionNumber
+
+  - name: deidentify
+    command: deidentify
+    input: assign
+    args:
+      spec_dir: /etc/xnat-ingest/deid-specs
+      # reid_dir: /var/lib/xnat-ingest/reid   # uncomment to keep the mapping
+      # reid_encrypt_key: ${REID_ENCRYPT_KEY} # only meaningful alongside reid_dir
+
+  - name: upload
+    command: upload
+    input: deidentify
