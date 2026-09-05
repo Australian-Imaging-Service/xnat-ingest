@@ -11,8 +11,26 @@ from unittest.mock import patch
 
 import pytest
 
+from xnat_ingest.workflow.runner import resolve_work_dir
 from xnat_ingest.workflow.spec import StageSpec, WorkflowSpec
 from xnat_ingest.workflow.stages import STAGES
+
+
+def test_resolve_work_dir_override_namespaced_by_spec_name(tmp_path: Path) -> None:
+    spec = WorkflowSpec(name="acemid-lesion", stages=[], source=tmp_path / "spec.yaml")
+    assert (
+        resolve_work_dir(spec, tmp_path / "work") == tmp_path / "work" / "acemid-lesion"
+    )
+
+
+def test_resolve_work_dir_defaults_next_to_spec_file(tmp_path: Path) -> None:
+    spec = WorkflowSpec(name="acemid-lesion", stages=[], source=tmp_path / "spec.yaml")
+    assert resolve_work_dir(spec, None) == tmp_path / ".xnat-ingest-acemid-lesion"
+
+
+def test_resolve_work_dir_defaults_to_cwd_without_source(tmp_path: Path) -> None:
+    spec = WorkflowSpec(name="acemid-lesion", stages=[])
+    assert resolve_work_dir(spec, None) == Path.cwd() / ".xnat-ingest-acemid-lesion"
 
 
 class _FakeTask:
@@ -58,13 +76,11 @@ def fake_prefect(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     return module
 
 
-def _spec(tmp_path: Path, stages: list[StageSpec], xnat: ty.Any = None) -> WorkflowSpec:
+def _spec(tmp_path: Path, stages: list[StageSpec]) -> WorkflowSpec:
     return WorkflowSpec(
         name="test-wf",
         stages=stages,
-        work_dir=tmp_path / "work",
         source=tmp_path / "spec.yaml",
-        xnat=xnat,
     )
 
 
@@ -95,13 +111,13 @@ def test_run_workflow_calls_stages_in_order_and_wires_dirs(
     ):
         from xnat_ingest.workflow.runner import run_workflow
 
-        errors = run_workflow(spec)
+        errors = run_workflow(spec, work_dir=tmp_path / "work")
 
     assert errors == {}
     assert [c[0] for c in calls] == ["group", "assign"]
     grp_output = calls[0][2]
     asn_input = calls[1][1]
-    assert grp_output == tmp_path / "work" / "grp"
+    assert grp_output == tmp_path / "work" / "test-wf" / "grp"
     assert asn_input == grp_output  # assign's input is group's output dir
 
 
@@ -122,8 +138,6 @@ def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
         calls.append(("upload", input_dir))
         return []
 
-    from xnat_ingest.workflow.spec import XnatConnectionSpec
-
     stages = [
         StageSpec(
             name="asn", command="assign", args={"input_dir": str(tmp_path / "in")}
@@ -135,9 +149,14 @@ def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
             args={"spec_dir": "/specs"},
             enabled=False,
         ),
-        StageSpec(name="up", command="upload", input="deid"),
+        StageSpec(
+            name="up",
+            command="upload",
+            input="deid",
+            args={"server": "https://x"},
+        ),
     ]
-    spec = _spec(tmp_path, stages, xnat=XnatConnectionSpec(server="https://x"))
+    spec = _spec(tmp_path, stages)
 
     with (
         patch.object(STAGES["assign"], "api_fn", fake_assign),
@@ -229,7 +248,6 @@ def test_serve_workflow_passes_schedule_as_cron(
     spec = WorkflowSpec(
         name="scheduled-wf",
         stages=stages,
-        work_dir=tmp_path / "work",
         schedule="0 2 * * *",
         source=tmp_path / "spec.yaml",
     )
@@ -237,8 +255,8 @@ def test_serve_workflow_passes_schedule_as_cron(
     with patch.object(STAGES["group"], "api_fn", fake_group):
         from xnat_ingest.workflow.runner import build_flow, serve_workflow
 
-        flow = build_flow(spec)
-        serve_workflow(spec)
+        flow = build_flow(spec, work_dir=tmp_path / "work")
+        serve_workflow(spec, work_dir=tmp_path / "work")
 
     assert flow.name == "scheduled-wf"
 

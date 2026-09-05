@@ -1,19 +1,28 @@
 """Loading and validating ``xnat-ingest workflow`` YAML specs.
 
 Deliberately NOT a general orchestration language: no expressions, no shell steps,
-no templating beyond ``${ENV_VAR}`` interpolation for secrets. A spec is a flat list
-of xnat-ingest stages (one of ``group``/``assign``/``deidentify``/``associate``/
-``upload``) chained by ``input:``/``after:`` references; everything else under a
-stage's ``args:`` is exactly the keyword arguments of the matching
-``xnat_ingest.api.*`` function, expressed as YAML instead of CLI tokens or
-``;``-packed env vars - see ``workflow.coerce`` for how each YAML shape maps onto
-the underlying (mostly ``attrs``) argument types.
+no templating beyond ``${NAME}`` placeholders resolved against declared ``params:``,
+``--param``/``-p`` CLI overrides, and the environment - see :func:`_resolve_param`
+for the exact precedence. A spec is a flat list of xnat-ingest stages (one of
+``group``/``assign``/``deidentify``/``associate``/``upload``) chained by
+``input:``/``after:`` references; everything else under a stage's ``args:`` is
+exactly the keyword arguments of the matching ``xnat_ingest.api.*`` function,
+expressed as YAML instead of CLI tokens or ``;``-packed env vars - see
+``workflow.coerce`` for how each YAML shape maps onto the underlying (mostly
+``attrs``) argument types.
 
-``load_spec()`` fully validates a spec - including resolving 'extends', dependency
-cycles, unknown stage references, and (by dry-running each stage's kwarg builder)
-unknown/malformed ``args:`` - without touching Prefect or the filesystem beyond
-reading the YAML file(s) themselves. That's what backs ``xnat-ingest workflow
-check``.
+There is deliberately no spec-level concept of "the" backend to upload to (no
+top-level ``xnat:`` block auto-wired into every stage that needs one): credentials
+are plain ``args:`` on the ``upload`` stage(s) that need them, like any other
+argument, resolved through the same ``params:`` mechanism as everything else. That
+keeps the schema backend-agnostic - a future non-XNAT upload stage just declares
+its own ``args:`` shape, with no spec format change needed.
+
+``load_spec()`` fully validates a spec - including resolving 'extends', param/env
+placeholders, stage dependency cycles, unknown stage references, and (by
+dry-running each stage's kwarg builder) unknown/malformed ``args:`` - without
+touching Prefect or the filesystem beyond reading the YAML file(s) themselves.
+That's what backs ``xnat-ingest workflow check``.
 """
 
 from __future__ import annotations
@@ -33,13 +42,17 @@ from .stages import STAGE_NAMES, STAGES, StageContext
 
 __all__ = [
     "WorkflowSpecError",
-    "XnatConnectionSpec",
+    "ParamSpec",
     "StageSpec",
     "WorkflowSpec",
     "load_spec",
 ]
 
-_ENV_VAR_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}")
+_PLACEHOLDER_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}")
+
+# Sentinel distinguishing "no default given" (-> the param is required) from a real
+# falsy default such as `None`/`""`.
+_NO_DEFAULT: ty.Any = object()
 
 # Dummy paths used only to dry-run a stage's kwarg builder at validation time - never
 # touched on disk, since build_kwargs functions are pure (no I/O of their own).
@@ -47,24 +60,95 @@ _DUMMY_INPUT = Path("__xnat_ingest_check__/input")
 _DUMMY_OUTPUT = Path("__xnat_ingest_check__/output")
 
 
-def _interpolate_env(value: ty.Any, path: str) -> ty.Any:
+@attrs.define
+class ParamSpec:
+    """A workflow parameter declared under the top-level ``params:`` block - purely
+    documentation plus an optional default; it doesn't change how ``${NAME}`` is
+    written anywhere else in the spec, just what a reference to ``NAME`` resolves to
+    and how clear the error is when it can't."""
+
+    name: str
+    description: ty.Optional[str] = None
+    default: ty.Any = _NO_DEFAULT
+    secret: bool = False
+
+    @property
+    def required(self) -> bool:
+        return self.default is _NO_DEFAULT
+
+
+def _parse_params(raw: ty.Any) -> ty.Dict[str, ParamSpec]:
+    if not raw:
+        return {}
+    raw = _require_mapping(raw, "$.params")
+    params = {}
+    for name, entry in raw.items():
+        entry = _require_mapping(entry or {}, f"$.params.{name}")
+        params[name] = ParamSpec(
+            name=name,
+            description=entry.get("description"),
+            default=entry.get("default", _NO_DEFAULT),
+            secret=bool(entry.get("secret", False)),
+        )
+    return params
+
+
+def _resolve_param(
+    name: str,
+    params: ty.Dict[str, ParamSpec],
+    overrides: ty.Dict[str, str],
+    path: str,
+) -> str:
+    """Resolve one ``${NAME}`` reference: an explicit ``--param``/``-p`` override
+    wins outright, then a same-named environment variable (so a plain env var - a
+    k8s Secret mounted via ``env:``/``envFrom:`` - Just Works with no CLI flag
+    needed), then a declared param's ``default:``, else a clear error naming what's
+    missing. A name with no ``params:`` entry at all still resolves via
+    ``--param``/the environment - declaring it just adds a default and a better
+    error message."""
+    if name in overrides:
+        return overrides[name]
+    if name in os.environ:
+        return os.environ[name]
+    spec = params.get(name)
+    if spec is not None and not spec.required:
+        return spec.default
+    if spec is not None:
+        hint = f" ({spec.description})" if spec.description else ""
+        raise WorkflowSpecError(
+            f"{path}: required parameter '{name}' was not supplied{hint} - pass "
+            f"--param {name}=<value>, set the {name} environment variable, or add "
+            f"a 'default:' to its 'params: {name}:' entry"
+        )
+    raise WorkflowSpecError(
+        f"{path}: references undefined parameter/environment variable "
+        f"'${{{name}}}' (declare it under 'params:' for a default or a clearer "
+        "error)"
+    )
+
+
+def _resolve_placeholders(
+    value: ty.Any,
+    path: str,
+    params: ty.Dict[str, ParamSpec],
+    overrides: ty.Dict[str, str],
+) -> ty.Any:
     if isinstance(value, str):
 
         def _sub(match: "re.Match[str]") -> str:
-            name = match.group("name")
-            try:
-                return os.environ[name]
-            except KeyError:
-                raise WorkflowSpecError(
-                    f"{path}: references undefined environment variable "
-                    f"'${{{name}}}'"
-                ) from None
+            return _resolve_param(match.group("name"), params, overrides, path)
 
-        return _ENV_VAR_RE.sub(_sub, value)
+        return _PLACEHOLDER_RE.sub(_sub, value)
     if isinstance(value, list):
-        return [_interpolate_env(v, f"{path}[{i}]") for i, v in enumerate(value)]
+        return [
+            _resolve_placeholders(v, f"{path}[{i}]", params, overrides)
+            for i, v in enumerate(value)
+        ]
     if isinstance(value, dict):
-        return {k: _interpolate_env(v, f"{path}.{k}") for k, v in value.items()}
+        return {
+            k: _resolve_placeholders(v, f"{path}.{k}", params, overrides)
+            for k, v in value.items()
+        }
     return value
 
 
@@ -103,14 +187,6 @@ def _load_raw(path: Path, _seen: ty.Tuple[Path, ...] = ()) -> dict:
 
 
 @attrs.define
-class XnatConnectionSpec:
-    server: str
-    user: ty.Optional[str] = None
-    password: ty.Optional[str] = None
-    verify_ssl: bool = True
-
-
-@attrs.define
 class StageSpec:
     name: str
     command: str
@@ -126,10 +202,13 @@ class StageSpec:
 class WorkflowSpec:
     name: str
     stages: ty.List[StageSpec]
-    work_dir: ty.Optional[Path] = None
-    xnat: ty.Optional[XnatConnectionSpec] = None
     schedule: ty.Optional[str] = None
     source: ty.Optional[Path] = None
+    params: ty.Dict[str, ParamSpec] = attrs.field(factory=dict)
+    # Deliberately no 'work_dir' here: it's per-host scratch space, not part of
+    # what the pipeline does, so it's a --work-dir CLI/API argument (see
+    # workflow.runner.resolve_work_dir) rather than something declared in the
+    # spec's own YAML/params.
 
 
 def _require_mapping(value: ty.Any, path: str) -> dict:
@@ -180,21 +259,34 @@ def _stage_spec(raw: ty.Any, index: int) -> StageSpec:
     )
 
 
+def _strip_reserved(kwargs: dict) -> dict:
+    """Drop the internal, leading-underscore keys a stage's build_kwargs() may
+    return (e.g. 'upload's '_xnat_connection') before checking the rest against
+    its API function's real parameters - these are consumed by run_stage(), not
+    passed to the API function itself."""
+    return {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
+
 def _validate_stage_args(stage: StageSpec) -> None:
     """Dry-run the stage's kwarg builder against placeholder paths (no filesystem
     or network I/O) to catch bad composite args (an unrecognised mime-type, an
-    invalid --on-resource-clash policy, ...) and unknown 'args:' keys at load time
-    rather than only surfacing them when the workflow actually runs."""
+    invalid --on-resource-clash policy, a missing upload 'server', ...) and unknown
+    'args:' keys at load time rather than only surfacing them when the workflow
+    actually runs."""
     reg = STAGES[stage.command]
-    dummy_ctx = StageContext(
-        input_path=_DUMMY_INPUT, output_path=_DUMMY_OUTPUT, xnat=None
-    )
+    dummy_ctx = StageContext(input_path=_DUMMY_INPUT, output_path=_DUMMY_OUTPUT)
     try:
         kwargs = reg.build_kwargs(dict(stage.args), dummy_ctx)
     except Exception as e:
         raise WorkflowSpecError(f"stages ('{stage.name}').args: {e}") from e
+    if reg.needs_xnat and "_xnat_connection" not in kwargs:
+        raise WorkflowSpecError(
+            f"stages ('{stage.name}'), command '{stage.command}': needs 'server' "
+            "(and usually 'user'/'password') under its own 'args:'"
+        )
+    checked = _strip_reserved(kwargs)
     sig_params = set(inspect.signature(reg.api_fn).parameters)
-    unknown = set(kwargs) - sig_params
+    unknown = set(checked) - sig_params
     if unknown:
         raise WorkflowSpecError(
             f"stages ('{stage.name}').args: unknown argument(s) for command "
@@ -202,27 +294,31 @@ def _validate_stage_args(stage: StageSpec) -> None:
         )
 
 
-def load_spec(path: ty.Union[str, Path]) -> WorkflowSpec:
+def load_spec(
+    path: ty.Union[str, Path],
+    param_overrides: ty.Optional[ty.Dict[str, str]] = None,
+) -> WorkflowSpec:
     """Load and fully validate a workflow YAML spec: resolves any 'extends' chain,
-    '${ENV_VAR}' interpolation, stage dependency cycles/unknown references, and
-    (via a dry run of each stage's kwarg builder) unknown/malformed 'args:'.
-    Raises WorkflowSpecError on anything malformed. Never imports Prefect."""
+    'params:'/'--param'/environment placeholders, stage dependency cycles/unknown
+    references, and (via a dry run of each stage's kwarg builder) unknown/malformed
+    'args:'. Raises WorkflowSpecError on anything malformed. Never imports Prefect.
+
+    Parameters
+    ----------
+    param_overrides
+        Values for ``${NAME}`` placeholders supplied via ``--param``/``-p`` on the
+        CLI, taking priority over any same-named environment variable or declared
+        default - see :func:`_resolve_param`.
+    """
     path = Path(path)
     raw = _load_raw(path)
-    raw = _interpolate_env(raw, "$")
+
+    params = _parse_params(raw.pop("params", None))
+    overrides = dict(param_overrides or {})
+    raw = _resolve_placeholders(raw, "$", params, overrides)
 
     name = raw.pop("name", path.stem)
-    work_dir = raw.pop("work_dir", None)
     schedule = raw.pop("schedule", None)
-
-    xnat_raw = raw.pop("xnat", None)
-    xnat = None
-    if xnat_raw is not None:
-        xnat_raw = _require_mapping(xnat_raw, "$.xnat")
-        try:
-            xnat = XnatConnectionSpec(**xnat_raw)
-        except TypeError as e:
-            raise WorkflowSpecError(f"$.xnat: {e}") from None
 
     stages_raw = raw.pop("stages", None)
     if not stages_raw:
@@ -254,17 +350,11 @@ def load_spec(path: ty.Union[str, Path]) -> WorkflowSpec:
 
     for stage in stages:
         _validate_stage_args(stage)
-        if STAGES[stage.command].needs_xnat and xnat is None:
-            raise WorkflowSpecError(
-                f"stages ('{stage.name}'), command '{stage.command}': needs a "
-                "top-level 'xnat:' block (server/user/password) in the workflow spec"
-            )
 
     return WorkflowSpec(
         name=name,
         stages=stages,
-        work_dir=Path(work_dir) if work_dir else None,
-        xnat=xnat,
         schedule=schedule,
         source=path,
+        params=params,
     )

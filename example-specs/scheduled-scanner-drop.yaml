@@ -1,20 +1,26 @@
 # A continuously-running clinical-scanner drop folder: 'xnat-ingest workflow serve
-# scheduled-scanner-drop.yaml' runs this on the 'schedule:' cron below rather than
-# each stage looping independently (contrast with the plain CLI's per-command
-# --loop). Per-stage 'retries:' cover a flaky XNAT connection or a transiently
-# locked scanner export without failing the whole run.
+# scheduled-scanner-drop.yaml' (or 'workflow deploy' against a Prefect server)
+# runs this on the 'schedule:' cron below rather than each stage looping
+# independently (contrast with the plain CLI's per-command --loop). Per-stage
+# 'retries:' cover a flaky XNAT connection or a transiently locked scanner
+# export without failing the whole run.
 
 name: scheduled-scanner-drop
 
-work_dir: /var/lib/xnat-ingest/work/scheduled-scanner-drop
+params:
+  input_dir:
+    description: "Scanner drop folder to watch"
+    default: /mnt/scanner-drop
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 # Every 10 minutes.
 schedule: "*/10 * * * *"
-
-xnat:
-  server: https://xnat.example.org
-  user: ${XNAT_USER}
-  password: ${XNAT_PASSWORD}
 
 stages:
   - name: group
@@ -22,7 +28,7 @@ stages:
     retries: 2
     retry_delay_seconds: 30
     args:
-      input_paths: [/mnt/scanner-drop]
+      input_paths: ["${input_dir}"]
       # Only touch sessions whose files haven't been modified in the last 5
       # minutes, so a session still being written by the scanner is left for
       # the next scheduled run rather than staged half-finished.
@@ -47,3 +53,6 @@ stages:
     retry_delay_seconds: 60
     args:
       wait_period: 60
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"
