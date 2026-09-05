@@ -59,7 +59,10 @@ def _stage(input_dir: Path, name: str) -> Path:
 
 
 def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
-    return self.new_empty(), dict(REID_MDATA)
+    new_sess = self.new_empty()
+    # add something to the session so it isn't empty
+    new_sess.add_session_resource("report", File.sample(seed=42))
+    return new_sess, dict(REID_MDATA)
 
 
 def _mock_deidentify_passthrough(
