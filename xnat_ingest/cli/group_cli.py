@@ -334,7 +334,7 @@ def group_cmd(
     recursive: bool,
     copy_mode: FileSet.CopyMode,
     collate_resources: tuple[CollationSpec, ...],
-    conversions: tuple[MimeType, ...],
+    conversions: tuple[Convert, ...],
     metadata_tables: tuple[MetadataTable, ...],
 ) -> None:
 
@@ -370,7 +370,7 @@ def group_cmd(
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
-            conversion_map={c.src: c.tgt for c in conversions},
+            conversion_map={c.source: c.target for c in conversions},
             metadata_tables=metadata_tables,
         )
         if errors:

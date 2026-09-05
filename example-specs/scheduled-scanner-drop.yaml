@@ -1,0 +1,49 @@
+# A continuously-running clinical-scanner drop folder: 'xnat-ingest workflow serve
+# scheduled-scanner-drop.yaml' runs this on the 'schedule:' cron below rather than
+# each stage looping independently (contrast with the plain CLI's per-command
+# --loop). Per-stage 'retries:' cover a flaky XNAT connection or a transiently
+# locked scanner export without failing the whole run.
+
+name: scheduled-scanner-drop
+
+work_dir: /var/lib/xnat-ingest/work/scheduled-scanner-drop
+
+# Every 10 minutes.
+schedule: "*/10 * * * *"
+
+xnat:
+  server: https://xnat.example.org
+  user: ${XNAT_USER}
+  password: ${XNAT_PASSWORD}
+
+stages:
+  - name: group
+    command: group
+    retries: 2
+    retry_delay_seconds: 30
+    args:
+      input_paths: [/mnt/scanner-drop]
+      # Only touch sessions whose files haven't been modified in the last 5
+      # minutes, so a session still being written by the scanner is left for
+      # the next scheduled run rather than staged half-finished.
+      wait_period: 300
+      unlink_source: all
+
+  - name: assign
+    command: assign
+    input: group
+    retries: 2
+    retry_delay_seconds: 30
+    args:
+      project: StudyComments
+      subject: PatientID
+      session: AccessionNumber
+      unlink_source: all
+
+  - name: upload
+    command: upload
+    input: assign
+    retries: 3
+    retry_delay_seconds: 60
+    args:
+      wait_period: 60

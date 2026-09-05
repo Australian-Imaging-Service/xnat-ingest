@@ -1,0 +1,9 @@
+# Shared config for the two ACEMID workflows (acemid-lesion.yaml,
+# acemid-wholebody-internal.yaml) - pulled in via 'extends: common.yaml' so both
+# stay independent, separately-deployable specs without duplicating credentials.
+# Not runnable on its own (no 'stages:').
+
+xnat:
+  server: https://xnat.acemid.example.org
+  user: ${XNAT_USER}
+  password: ${XNAT_PASSWORD}
