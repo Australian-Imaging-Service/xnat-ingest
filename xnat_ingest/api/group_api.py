@@ -117,7 +117,7 @@ def group(
     on_resource_clash: OnResourceClash or Sequence[ClashSpec]
         Behaviour when two filesets resolve to the same scan/resource name. A bare policy
         string ("error"/"avoid"/"merge"/"overwrite") applies to any clash. A sequence of
-        ``ClashSpec`` (policy + datatype scope) resolves each clash with the first spec whose
+        ``ClashSpec`` (policy + datatype) resolves each clash with the first spec whose
         scope covers *both* filesets - a clash no spec covers raises. "avoid" suffixes,
         "merge" folds into one ``SetOf``, "overwrite" replaces. Default "error".
     recursive: bool
@@ -128,7 +128,7 @@ def group(
         The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or
         TSV from the file extension; a different format can be forced by appending its mime-type in square
         brackets, e.g. 'path/to/table.dat[text/csv]'.
-        The "row frequency" arg specifies what each row in the
+        The "rows" arg specifies what each row in the
         metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource',
         'fileset', 'fileset[<mime-type>]'. When one or more mime-types are given in square brackets after
         'fileset' they restrict the join to input files of those types (multiple mime-types can be '|'-separated,
@@ -144,14 +144,14 @@ def group(
                 ...,
                 path_metadata_regex=[
                     PathMetadataRegex(
-                        regex=r".*/(?P<relpath>[\\w-]+/[\\w-]+\\.(?:png|jpg))",
+                        pattern=r".*/(?P<relpath>[\\w-]+/[\\w-]+\\.(?:png|jpg))",
                         datatype="image/png|image/jpeg",
                     )
                 ],
                 metadata_tables=[
                     MetadataTable(
                         table_file="path/to/table.csv[text/csv]",
-                        row_frequency="fileset[image/png|image/jpeg]",
+                        rows="fileset[image/png|image/jpeg]",
                         join_exprs='ImagePath=HYPERLINK("{relpath}")',
                     )
                 ],

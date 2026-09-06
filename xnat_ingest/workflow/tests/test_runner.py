@@ -3,6 +3,7 @@ module (no real Prefect install needed) plus mocked stage API functions, so thes
 stay fast and dependency-free while still exercising the real dependency-order /
 input-output wiring / error-aggregation code."""
 
+import inspect
 import sys
 import types
 import typing as ty
@@ -10,10 +11,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from xnat_ingest.workflow.runner import resolve_work_dir
-from xnat_ingest.workflow.spec import StageSpec, WorkflowSpec
+from xnat_ingest.workflow.spec import StageSpec, WorkflowSpec, load_spec
 from xnat_ingest.workflow.stages import STAGES
+
+
+def _write_spec(tmp_path: Path, content: dict) -> Path:
+    path = tmp_path / "spec.yaml"
+    path.write_text(yaml.safe_dump(content))
+    return path
 
 
 def test_resolve_work_dir_override_namespaced_by_spec_name(tmp_path: Path) -> None:
@@ -50,13 +58,19 @@ class _FakeFlow:
     def __call__(self, *args: ty.Any, **kwargs: ty.Any) -> ty.Any:
         return self.fn(*args, **kwargs)
 
-    def serve(self, name: str | None = None, cron: str | None = None) -> None:
-        self.served = {"name": name, "cron": cron}
+    def serve(
+        self,
+        name: str | None = None,
+        cron: str | None = None,
+        parameters: dict | None = None,
+    ) -> None:
+        self.served = {"name": name, "cron": cron, "parameters": parameters}
 
 
 @pytest.fixture
 def fake_prefect(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     module = types.ModuleType("prefect")
+    created_flows: list[_FakeFlow] = []
 
     def task(*_a: ty.Any, **_kw: ty.Any) -> ty.Callable:
         def decorator(fn: ty.Callable) -> _FakeTask:
@@ -66,12 +80,15 @@ def fake_prefect(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
     def flow(*_a: ty.Any, **kw: ty.Any) -> ty.Callable:
         def decorator(fn: ty.Callable) -> _FakeFlow:
-            return _FakeFlow(fn, name=kw.get("name", fn.__name__))
+            f = _FakeFlow(fn, name=kw.get("name", fn.__name__))
+            created_flows.append(f)
+            return f
 
         return decorator
 
     module.task = task  # type: ignore[attr-defined]
     module.flow = flow  # type: ignore[attr-defined]
+    module.created_flows = created_flows  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "prefect", module)
     return module
 
@@ -278,3 +295,142 @@ def test_missing_prefect_raises_clear_import_error(
 
     with pytest.raises(ImportError, match="xnat-ingest\\[workflow\\]"):
         run_workflow(spec)
+
+
+# ── deferred (Prefect-native) params: dynamic flow signature + substitution ──
+
+
+def test_build_flow_declares_one_parameter_per_deferred_default(
+    fake_prefect: types.ModuleType, tmp_path: Path
+) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "params": {
+                "input_dir": {"default": "/data/in"},
+                "xnat_server": {},
+            },
+            "stages": [
+                {
+                    "name": "grp",
+                    "command": "group",
+                    "args": {
+                        "input_paths": ["${input_dir}"],
+                        "unlink_source": "${xnat_server}",
+                    },
+                }
+            ],
+        },
+    )
+    spec = load_spec(spec_path, param_overrides={"xnat_server": "https://x"})
+
+    from xnat_ingest.workflow.runner import build_flow
+
+    flow = build_flow(spec)
+    sig = inspect.signature(flow.fn)
+    assert set(sig.parameters) == {"input_dir", "xnat_server"}
+    assert sig.parameters["input_dir"].default == "/data/in"
+    assert sig.parameters["xnat_server"].default == "https://x"
+
+
+def test_run_workflow_substitutes_deferred_param_into_stage_args(
+    fake_prefect: types.ModuleType, tmp_path: Path
+) -> None:
+    calls = []
+
+    def fake_group(input_paths, output_dir, **kw):  # type: ignore[no-untyped-def]
+        calls.append(input_paths)
+        return []
+
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "params": {"input_dir": {}},
+            "stages": [
+                {
+                    "name": "grp",
+                    "command": "group",
+                    "args": {"input_paths": ["${input_dir}"]},
+                }
+            ],
+        },
+    )
+    spec = load_spec(spec_path, param_overrides={"input_dir": "/real/data"})
+
+    with patch.object(STAGES["group"], "api_fn", fake_group):
+        from xnat_ingest.workflow.runner import run_workflow
+
+        run_workflow(spec, work_dir=tmp_path / "work")
+
+    assert calls == [["/real/data"]]
+
+
+def test_run_workflow_required_deferred_param_raises_before_running(
+    fake_prefect: types.ModuleType, tmp_path: Path
+) -> None:
+    calls = []
+
+    def fake_group(input_paths, output_dir, **kw):  # type: ignore[no-untyped-def]
+        calls.append(input_paths)
+        return []
+
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "params": {"input_dir": {}},
+            "stages": [
+                {
+                    "name": "grp",
+                    "command": "group",
+                    "args": {"input_paths": ["${input_dir}"]},
+                }
+            ],
+        },
+    )
+    spec = load_spec(spec_path)  # no override/env - input_dir stays required
+
+    with patch.object(STAGES["group"], "api_fn", fake_group):
+        from xnat_ingest.workflow.runner import run_workflow
+
+        with pytest.raises(ValueError, match="input_dir"):
+            run_workflow(spec, work_dir=tmp_path / "work")
+
+    assert calls == []  # never got as far as actually running anything
+
+
+def test_serve_workflow_passes_resolved_deferred_params_only(
+    fake_prefect: types.ModuleType, tmp_path: Path
+) -> None:
+    def fake_group(input_paths, output_dir, **kw):  # type: ignore[no-untyped-def]
+        return []
+
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "params": {
+                "input_dir": {"default": "/data/in"},
+                "extra_required": {},
+            },
+            "stages": [
+                {
+                    "name": "grp",
+                    "command": "group",
+                    "args": {
+                        "input_paths": ["${input_dir}"],
+                        "wait_period": "${extra_required}",
+                    },
+                }
+            ],
+        },
+    )
+    spec = load_spec(spec_path)  # 'extra_required' left with no resolvable value
+
+    with patch.object(STAGES["group"], "api_fn", fake_group):
+        from xnat_ingest.workflow.runner import serve_workflow
+
+        serve_workflow(spec)
+
+    (flow,) = fake_prefect.created_flows  # type: ignore[attr-defined]
+    # only the resolved deferred param is passed as a deployment default -
+    # 'extra_required' (NO_DEFAULT) is left for Prefect to ask for at trigger time.
+    assert flow.served["parameters"] == {"input_dir": "/data/in"}

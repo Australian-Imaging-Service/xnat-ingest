@@ -80,10 +80,20 @@ worker (`prefect worker start --pool xnat-ingest`) must be running against that
 same work pool, somewhere with network access to the input/work/XNAT paths, for a
 deployment to actually execute anything.
 
-`-p`/`--param` values given here are resolved once, at deploy time, and baked into
-each deployment's flow closure - never passed through Prefect's own parameter/
-orchestration layer, so a secret like `xnat_password` never ends up stored in, or
-visible via, the Prefect API/UI. Rotating a value means redeploying with a new
-`-p`. The same overrides apply to every spec matched in one `deploy` call, so a
-batch that genuinely needs different values per spec (different sites'
+Every `secret: true` param (`xnat_password`, `orthanc_password`) is resolved once
+at deploy time and baked into that deployment's flow closure - never passed
+through Prefect's own parameter/orchestration layer, so it never ends up stored
+in, or visible via, the Prefect API/UI. Rotating one means redeploying with a new
+`-p`/environment value.
+
+Every other (non-secret, plain-argument) param - `input_dir`, `xnat_server`,
+`orthanc_url`, ... - becomes a genuine Prefect deployment parameter instead: the
+value resolved at deploy time becomes its default, but it's then a normal,
+named/typed Prefect parameter - editable and re-triggerable later from Prefect's
+own UI/API with no redeploy needed, and visible in run history like any other
+flow's parameters. Run `check` with `-p` values supplied to see which params ended
+up which way - each is marked `[secret]` or `[prefect-param]`.
+
+The same `-p`/`--param` overrides apply to every spec matched in one `deploy`
+call, so a batch that genuinely needs different values per spec (different sites'
 credentials, say) should be deployed with separate `deploy` invocations.

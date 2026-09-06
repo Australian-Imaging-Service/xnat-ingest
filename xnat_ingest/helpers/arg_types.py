@@ -185,20 +185,20 @@ class Convert(MultiCliTyped):
 @attrs.define
 class PathMetadataRegex(MultiCliTyped):
 
-    regex: str
+    pattern: str
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
 
 @attrs.define
 class ClashSpec(MultiCliTyped):
-    """A ``--on-resource-clash`` entry: a policy plus the datatype scope it applies
-    to. A resource-name clash between two filesets is resolved by the first
-    ``ClashSpec`` whose ``scope`` covers *both* of them; anything not covered
-    raises. ``scope`` accepts a mime-like, a ``|``-union of them, or ``all``.
+    """A ``--on-resource-clash`` entry: a policy plus the datatype it applies to.
+    A resource-name clash between two filesets is resolved by the first
+    ``ClashSpec`` whose ``datatype`` covers *both* of them; anything not covered
+    raises. ``datatype`` accepts a mime-like, a ``|``-union of them, or ``all``.
     """
 
     policy: str = attrs.field(validator=attrs.validators.in_(ON_RESOURCE_CLASH))
-    scope: ty.Union[ty.Type[FileSet], types.UnionType] = attrs.field(
+    datatype: ty.Union[ty.Type[FileSet], types.UnionType] = attrs.field(
         converter=datatype_converter
     )
 
@@ -273,7 +273,7 @@ class _PlaceholderStr(str):
 @attrs.define
 class IDSpec(MultiCliTyped):
     """Extract an ID to sort the data with (e.g. project, subject, session, scan,...)
-    from the resource's metadata. 'specifier' is either:
+    from the resource's metadata. 'expr' is either:
 
     - the name of a metadata field, optionally with a '[index]' or '[start:end]' slice
       suffix to select part of a list/string value, e.g. 'SeriesNumber' or
@@ -281,7 +281,7 @@ class IDSpec(MultiCliTyped):
     - a Python format string over the metadata fields, to compose an ID from more
       than one field and/or apply formatting, e.g.
       '{PatientID}_{AcquisitionDate:%Y%m%d}' (detected by the presence of '{' in the
-      specifier). Fields with a strftime-style ('%...') format spec are parsed from
+      expr). Fields with a strftime-style ('%...') format spec are parsed from
       plain strings into dates first if needed (via `dateutil`), since metadata that
       has round-tripped through JSON (e.g. reloaded in a later pipeline stage) loses
       its original date/datetime typing. Only named fields can be referenced this way
@@ -293,16 +293,16 @@ class IDSpec(MultiCliTyped):
     FileSet, i.e. any type).
     """
 
-    specifier: str = attrs.field()
+    expr: str = attrs.field()
     datatype: ty.Type[FileSet] = attrs.field(
         converter=datatype_converter, default=FileSet
     )
 
     @property
-    def specifier_name(self) -> str:
+    def field_name(self) -> str:
         """The plain metadata field name, with any '[index]' suffix stripped off"""
-        match = re.match(r"(\w+)\[[\-\d:]+\]$", self.specifier)
-        return match.group(1) if match else self.specifier
+        match = re.match(r"(\w+)\[[\-\d:]+\]$", self.expr)
+        return match.group(1) if match else self.expr
 
     def get_value(
         self,
@@ -336,7 +336,7 @@ class IDSpec(MultiCliTyped):
         """
         if not isinstance(metadata, ty.Mapping):
             metadata = metadata.metadata
-        if "{" in self.specifier:
+        if "{" in self.expr:
             value = self._get_formatted_value(metadata, missing_ids=missing_ids)
         else:
             value = self._get_field_value(metadata, missing_ids=missing_ids)
@@ -373,8 +373,8 @@ class IDSpec(MultiCliTyped):
         metadata: ty.Mapping[str, ty.Any],
         missing_ids: dict[str, str] | None,
     ) -> str:
-        """Handles today's plain 'FieldName' / 'FieldName[index]' specifier syntax"""
-        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.specifier):
+        """Handles today's plain 'FieldName' / 'FieldName[index]' expr syntax"""
+        if match := re.match(r"(\w+)\[([\-\d:]+)\]", self.expr):
             _, index = match.groups()
             if ":" in index:
                 index = slice(*(int(d) if d else None for d in index.split(":")))
@@ -383,12 +383,12 @@ class IDSpec(MultiCliTyped):
         else:
             index = None
         try:
-            value = metadata[self.specifier_name]
+            value = metadata[self.field_name]
         except KeyError:
             value = ""
         if not value:
             value = self._missing_field_placeholder(
-                self.specifier_name, metadata, missing_ids
+                self.field_name, metadata, missing_ids
             )
         if index is not None:
             value = value[index]
@@ -404,10 +404,10 @@ class IDSpec(MultiCliTyped):
         metadata: ty.Mapping[str, ty.Any],
         missing_ids: dict[str, str] | None,
     ) -> str:
-        """Handles the '{Field}_{OtherField:spec}'-style format-string specifier
+        """Handles the '{Field}_{OtherField:spec}'-style format-string expr
         syntax, composing an ID from one or more metadata fields"""
         values: dict[str, ty.Any] = {}
-        for _, field_name, format_spec, _ in string.Formatter().parse(self.specifier):
+        for _, field_name, format_spec, _ in string.Formatter().parse(self.expr):
             if not field_name or field_name.isdigit():
                 # Skip literal text segments and positional ('{}'/'{0}') fields,
                 # which aren't meaningful for metadata-field lookups
@@ -427,7 +427,7 @@ class IDSpec(MultiCliTyped):
                     pass
             values[base_name] = value
         try:
-            return str(self.specifier.format(**values))
+            return str(self.expr.format(**values))
         except IndexError:
             # An all-digit field name (e.g. '{00100010}', as DICOM falls back to for
             # private/unnamed tags) is always parsed by str.format as a *positional*
@@ -435,9 +435,9 @@ class IDSpec(MultiCliTyped):
             # so it can't be supported directly. Fail clearly rather than let a raw,
             # confusing IndexError propagate.
             raise ImagingSessionParseError(
-                f"Specifier '{self.specifier}' references an all-digit field name, "
+                f"Expr '{self.expr}' references an all-digit field name, "
                 "which can't be resolved from metadata directly (only named fields "
-                "are supported in format-string specifiers) - use "
+                "are supported in format-string exprs) - use "
                 "'--path-metadata-regex' to give it a proper name first if needed"
             ) from None
 
@@ -604,15 +604,15 @@ def table_file_converter(value: str | Path | FileSet) -> FileSet:
     )
 
 
-def row_frequency_converter(
+def rows_converter(
     value: str | type[FileSet] | types.UnionType | ty.Iterable[type[FileSet] | str],
 ) -> str | type[FileSet] | types.UnionType:
-    """Normalise the ``--metadata-table`` row-frequency arg. The hierarchy levels
-    'session', 'scan' and 'resource' are returned as-is; 'fileset' and a
-    'fileset[<mime-like>]' spec (or an iterable of ``FileSet`` types / mime-like
-    strings) are resolved to the ``FileSet`` type (or ``|``-union of types) they name -
-    'fileset' itself becomes the base ``FileSet`` class - ready to be used directly
-    with ``isinstance()``."""
+    """Normalise the ``--metadata-table`` rows arg (what each row corresponds to).
+    The hierarchy levels 'session', 'scan' and 'resource' are returned as-is;
+    'fileset' and a 'fileset[<mime-like>]' spec (or an iterable of ``FileSet``
+    types / mime-like strings) are resolved to the ``FileSet`` type (or ``|``-union
+    of types) they name - 'fileset' itself becomes the base ``FileSet`` class -
+    ready to be used directly with ``isinstance()``."""
     if isinstance(value, str):
         value = value.lower()
         if value in {"session", "scan", "resource"}:
@@ -621,7 +621,7 @@ def row_frequency_converter(
             return FileSet
         if not (value.startswith("fileset[") and value.endswith("]")):
             raise ValueError(
-                f"Invalid frequency '{value}'. Must be one of 'session', 'scan', "
+                f"Invalid rows '{value}'. Must be one of 'session', 'scan', "
                 "'resource', 'fileset', 'fileset[<mime-type>]' (multiple mime-types "
                 "can be '|'-separated, e.g. 'fileset[image/png|image/jpeg]')."
             )
@@ -630,7 +630,7 @@ def row_frequency_converter(
             return from_mime(mime_like)  # type: ignore[return-value]
         except FormatRecognitionError as e:
             raise ValueError(
-                f"Invalid row_frequency '{value}'. Could not recognise mime type "
+                f"Invalid rows '{value}'. Could not recognise mime type "
                 f"'{mime_like}'"
             ) from e
     if isinstance(value, types.UnionType) or (
@@ -646,14 +646,14 @@ def row_frequency_converter(
                 resolved.append(from_mime(v.lower()))  # type: ignore[arg-type]
             else:
                 raise TypeError(
-                    f"Invalid entry in row_frequency list: {v!r}. "
+                    f"Invalid entry in rows list: {v!r}. "
                     "Expected a mime-like str or a FileSet subclass."
                 )
         if not resolved:
-            raise ValueError("row_frequency iterable must not be empty")
+            raise ValueError("rows iterable must not be empty")
         return functools.reduce(operator.or_, resolved)  # type: ignore[return-value]
     raise TypeError(
-        f"Invalid type for row_frequency: {type(value).__name__}. "
+        f"Invalid type for rows: {type(value).__name__}. "
         "Expected a str or an iterable of str/FileSet subclasses."
     )
 
@@ -682,7 +682,7 @@ class MetadataTable(MultiCliTyped):
     table_file : FileSet | str | Path
         The metadata table file. A str/Path is auto-detected as CSV or TSV from its
         extension; append '[<mime-type>]' to force a format, e.g. 'table.dat[text/csv]'.
-    row_frequency : str | type[FileSet] | types.UnionType
+    rows : str | type[FileSet] | types.UnionType
         What each row corresponds to: one of 'session', 'scan', 'resource', 'fileset'
         or 'fileset[<mime-like>]'. 'fileset' resolves to the base ``FileSet`` class and
         'fileset[<mime-like>]' to the named ``FileSet`` type (or '|'-union of types), so
@@ -696,9 +696,7 @@ class MetadataTable(MultiCliTyped):
     """
 
     table_file: FileSet = attrs.field(converter=table_file_converter)
-    row_frequency: str | type[FileSet] | types.UnionType = attrs.field(
-        converter=row_frequency_converter
-    )
+    rows: str | type[FileSet] | types.UnionType = attrs.field(converter=rows_converter)
     join_exprs: list[JoinExpr] = attrs.field(converter=parse_join_exprs)
     _table: ty.Any = attrs.field(default=None, init=False, eq=False, repr=False)
 
@@ -716,7 +714,7 @@ class MetadataTable(MultiCliTyped):
     ) -> None:
         """Merge the row of this table that matches ``target`` into its metadata.
 
-        Does nothing if ``target``'s type doesn't match ``row_frequency``, if no row
+        Does nothing if ``target``'s type doesn't match ``rows``, if no row
         matches the join expressions, or if a join field is absent from ``target``'s
         metadata. Raises ``ValueError`` if more than one row matches.
 
@@ -729,7 +727,7 @@ class MetadataTable(MultiCliTyped):
         from ..model.scan import ImagingScan
         from ..model.session import ImagingSession
 
-        rf = self.row_frequency
+        rf = self.rows
         if (
             (rf == "session" and isinstance(target, ImagingSession))
             or (rf == "scan" and isinstance(target, ImagingScan))
@@ -769,7 +767,7 @@ class MetadataTable(MultiCliTyped):
             target.metadata.update(
                 {column: values[row_id] for column, values in self.table.items()}
             )
-        # Pass and don't inject metadata if the row frequency doesn't match the target type
+        # Pass and don't inject metadata if 'rows' doesn't match the target type
 
     @property
     def table(self) -> ty.Mapping[str, list[ty.Any]]:

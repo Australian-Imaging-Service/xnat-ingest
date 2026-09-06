@@ -219,7 +219,7 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         nargs=2,
         multiple=True,
         default=[["ImageType[2:]", "all"]],
-        metavar="<specifier> <datatype>",
+        metavar="<expr> <datatype>",
         envvar="XINGEST_FIELD",
         help=(
             "The keywords of the metadata field to extract the XNAT imaging resource ID from "
@@ -229,12 +229,12 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     def test_cli_types(out_file: Path, field: ty.List[IDSpec]) -> None:
         with open(out_file, "w") as f:
             for field_spec in field:
-                f.write(f"{field_spec.specifier},{field_spec.datatype.mime_like}\n")
+                f.write(f"{field_spec.expr},{field_spec.datatype.mime_like}\n")
 
     out_file = tmp_path / "out.txt"
 
     # Patch the environment to set the XINGEST_FIELD variable using unittest.mock.
-    # Each entry provides <specifier> <datatype>, leaving the optional trailing
+    # Each entry provides <expr> <datatype>, leaving the optional trailing
     # <formatter> token to fall back to its attrs-level default (None)
 
     for val, expected in [
