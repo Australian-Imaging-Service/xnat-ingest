@@ -18,6 +18,7 @@ bytes are copied into the fake store_dir so checksums are genuine).
 """
 
 import hashlib
+import json
 import typing as ty
 from datetime import UTC, datetime
 from pathlib import Path
@@ -318,3 +319,56 @@ def test_from_orthanc_does_not_label_study_when_staged_session_is_invalid(
         )
 
     assert ("study-ready", "done") not in fake.labelled
+
+
+def test_from_orthanc_does_not_label_study_that_changes_during_staging(
+    tmp_path: Path,
+) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    original_load = ImagingSession.load
+
+    def load_then_update_study(session_dir: Path) -> ImagingSession:
+        session = original_load(session_dir)
+        fake.studies["study-ready"]["last_update"] = "20990101T000000"
+        return session
+
+    with (
+        _patch_requests(fake),
+        patch.object(ImagingSession, "load", side_effect=load_then_update_study),
+        pytest.raises(RuntimeError, match="changed while it was being staged"),
+    ):
+        ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=tmp_path / "staged",
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            **{"password": ORTHANC_PASSWORD},
+            to_process_label="ready",
+            processed_label="done",
+        )
+
+    assert ("study-ready", "done") not in fake.labelled
+
+
+def test_from_orthanc_retry_keeps_existing_files_in_manifest(tmp_path: Path) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+
+    for _ in range(2):
+        with _patch_requests(fake):
+            ImagingSession.from_orthanc(
+                url=ORTHANC_URL,
+                output_dir=output_dir,
+                store_dir=store_dir,
+                user=ORTHANC_USER,
+                **{"password": ORTHANC_PASSWORD},
+                to_process_label="ready",
+                processed_label=None,
+            )
+
+    manifests = list(output_dir.rglob("__MANIFEST__.json"))
+    assert len(manifests) == 1
+    with open(manifests[0]) as f:
+        manifest = json.load(f)
+    assert len(manifest["checksums"]) == 1
