@@ -1131,6 +1131,8 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
+            staged_session = cls.load(session_dir)
+
             if processed_label:
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
@@ -1139,7 +1141,7 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
-            staged.append(cls.load(session_dir))
+            staged.append(staged_session)
 
         return staged
 

@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
     get_image as get_topogram_image,  # type: ignore[import-untyped]
 )
@@ -291,4 +292,29 @@ def test_from_orthanc_waits_for_recent_studies(tmp_path: Path) -> None:
         )
 
     assert staged == []
+    assert ("study-ready", "done") not in fake.labelled
+
+
+def test_from_orthanc_does_not_label_study_when_staged_session_is_invalid(
+    tmp_path: Path,
+) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+
+    with (
+        _patch_requests(fake),
+        patch.object(
+            ImagingSession, "load", side_effect=RuntimeError("invalid staged session")
+        ),
+        pytest.raises(RuntimeError, match="invalid staged session"),
+    ):
+        ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=tmp_path / "staged",
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            **{"password": ORTHANC_PASSWORD},
+            to_process_label="ready",
+            processed_label="done",
+        )
+
     assert ("study-ready", "done") not in fake.labelled
