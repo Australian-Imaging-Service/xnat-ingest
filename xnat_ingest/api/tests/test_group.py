@@ -10,7 +10,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from xnat_ingest.api.group_api import BUILD_NAME_DEFAULT, group
-from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.helpers.arg_types import IDSpec, MetadataTable
 from xnat_ingest.model.resource import ImagingResource
 from xnat_ingest.model.session import ImagingSession
 
@@ -104,7 +104,7 @@ def test_group_collects_errors_without_raising(tmp_path: Path) -> None:
     assert errors == []
 
 
-def test_group_unrecognised_file_raises_without_ignore_paths(
+def test_group_unrecognised_file_raises_without_allow_unrecognised(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -124,7 +124,7 @@ def test_group_unrecognised_file_raises_without_ignore_paths(
         )
 
 
-def test_group_ignore_paths_skips_matching_unrecognised_files(
+def test_group_allow_unrecognised_skips_matching_files(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -140,7 +140,7 @@ def test_group_ignore_paths_skips_matching_unrecognised_files(
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        ignore_paths=[r"notes\.txt"],
+        allow_unrecognised=[r"notes\.txt"],
     )
 
     assert errors == []
@@ -150,7 +150,7 @@ def test_group_ignore_paths_skips_matching_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_ignore_paths_pattern_not_matching_still_raises(
+def test_group_allow_unrecognised_pattern_not_matching_still_raises(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -167,11 +167,11 @@ def test_group_ignore_paths_pattern_not_matching_still_raises(
             session=SESSION_FIELD,
             scan=SCAN_FIELD,
             resource=RESOURCE_FIELD,
-            ignore_paths=[r"unrelated-pattern"],
+            allow_unrecognised=[r"unrelated-pattern"],
         )
 
 
-def test_group_ignore_types_excludes_recognised_but_unwanted_files(
+def test_group_ignore_datatypes_excludes_recognised_but_unwanted_files(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -187,7 +187,7 @@ def test_group_ignore_types_excludes_recognised_but_unwanted_files(
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        ignore_types=[Json],
+        ignore_datatypes=[Json],
     )
 
     assert errors == []
@@ -200,7 +200,7 @@ def test_group_ignore_types_excludes_recognised_but_unwanted_files(
     assert not list(resource_dir.rglob("notes.json"))
 
 
-def test_group_without_ignore_types_raises_on_recognised_extra_type(
+def test_group_without_ignore_datatypes_raises_on_recognised_extra_type(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -220,7 +220,7 @@ def test_group_without_ignore_types_raises_on_recognised_extra_type(
         )
 
 
-def test_group_ignore_types_contradicting_datatype_raises(
+def test_group_ignore_datatypes_contradicting_datatype_raises(
     dicom_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "grouped"
@@ -234,7 +234,7 @@ def test_group_ignore_types_contradicting_datatype_raises(
             session=SESSION_FIELD,
             scan=SCAN_FIELD,
             resource=RESOURCE_FIELD,
-            ignore_types=[DicomSeries],
+            ignore_datatypes=[DicomSeries],
         )
 
 
@@ -254,6 +254,73 @@ def test_group_creates_build_dir(tmp_path: Path) -> None:
     )
 
     assert (output_dir / BUILD_NAME_DEFAULT).exists()
+
+
+@pytest.fixture
+def patient_id(dicom_dir: Path) -> str:
+    """The PatientID of the dummy dataset, discovered by a throwaway load so the
+    metadata-table tests don't have to hard-code it"""
+    sessions = ImagingSession.from_paths(
+        dicom_dir, [DicomSeries], SESSION_FIELD, SCAN_FIELD, RESOURCE_FIELD
+    )
+    resource = next(iter(next(iter(sessions[0].scans.values())).resources.values()))
+    return str(resource.fileset.metadata["PatientID"])
+
+
+def test_group_injects_session_metadata_from_table(
+    dicom_dir: Path, patient_id: str, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "grouped"
+    output_dir.mkdir()
+    table = tmp_path / "clinical.csv"
+    table.write_text(
+        "PatientID,StudyComment,Cohort\n"
+        f"{patient_id},injected-via-table,control\n"
+        "someone-else,should-not-be-used,case\n"
+    )
+
+    errors = group(
+        input_paths=[str(dicom_dir)],
+        output_dir=output_dir,
+        datatypes=[DicomSeries],
+        session=SESSION_FIELD,
+        scan=SCAN_FIELD,
+        resource=RESOURCE_FIELD,
+        metadata_tables=[
+            MetadataTable(str(table), "session", "PatientID=PatientID"),
+        ],
+    )
+
+    assert errors == []
+    session_dir = next(
+        d
+        for d in output_dir.iterdir()
+        if d.is_dir() and d.name.startswith(ImagingSession.PRE_ASSIGN_PREFIX)
+    )
+    reloaded = ImagingSession.load(session_dir)
+    assert reloaded.metadata["StudyComment"] == "injected-via-table"
+    assert reloaded.metadata["Cohort"] == "control"
+
+
+def test_from_paths_injects_resource_metadata_from_table(
+    dicom_dir: Path, patient_id: str, tmp_path: Path
+) -> None:
+    table = tmp_path / "clinical.csv"
+    table.write_text(f"PatientID,Radiotracer\n{patient_id},FDG\nother,ignored\n")
+
+    sessions = ImagingSession.from_paths(
+        dicom_dir,
+        [DicomSeries],
+        SESSION_FIELD,
+        SCAN_FIELD,
+        RESOURCE_FIELD,
+        metadata_tables=[
+            MetadataTable(str(table), "resource", "PatientID=PatientID"),
+        ],
+    )
+
+    resource = next(iter(next(iter(sessions[0].scans.values())).resources.values()))
+    assert resource.metadata["Radiotracer"] == "FDG"
 
 
 def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):

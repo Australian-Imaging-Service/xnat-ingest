@@ -85,7 +85,14 @@ class ImagingResource:
         return (scan_id, self.name) < (other_scan_id, other.name)
 
     def newer_than_or_equal(self, other: Self) -> bool:
-        return all(s >= m for s, m in zip(self.fileset.mtimes, other.fileset.mtimes))
+        """Whether this resource's files are at least as recent as `other`'s.
+
+        Compares the most recent modification time on each side. `FileSet.mtimes`
+        yields (path, mtime) pairs, so comparing those directly compares paths
+        before times, and zipping them drops files when the two sets differ in
+        length.
+        """
+        return self.fileset.last_modified >= other.fileset.last_modified
 
     def save(
         self,
@@ -138,12 +145,9 @@ class ImagingResource:
                 loaded = self.load(resource_dir, require_manifest=False)
                 if loaded.checksums == checksums:
                     return loaded
-                elif overwrite is None and not self.newer_than_or_equal(loaded):
-                    logger.warning(
-                        f"Resource '{self.name}' already exists in '{dest_dir}' but "
-                        "the files are not older than the ones to be be saved"
-                    )
-                elif overwrite:
+                elif overwrite or (
+                    overwrite is None and self.newer_than_or_equal(loaded)
+                ):
                     logger.warning(
                         f"Resource '{self.name}' already exists in '{dest_dir}', overwriting"
                     )

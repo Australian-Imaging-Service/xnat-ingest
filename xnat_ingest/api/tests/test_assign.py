@@ -30,13 +30,33 @@ def grouped_dir(tmp_path: Path) -> Path:
     return d
 
 
+def _mock_session(dirname: str = "PROJ.SUBJ.SESS") -> MagicMock:
+    """A mock session whose save() actually creates its output directory.
+
+    assign materialises a session that does not exist yet under __build__ and
+    renames it into place, so a save that writes nothing leaves nothing to
+    rename. The mock also has to answer staging_dirname(), which assign uses to
+    work out where the output WILL land before saving it.
+    """
+    mock = MagicMock()
+
+    def _save(dest_dir: Path, **kwargs):
+        saved_dir = Path(dest_dir) / dirname
+        saved_dir.mkdir(parents=True, exist_ok=True)
+        return mock, saved_dir
+
+    mock.staging_dirname.return_value = dirname
+    mock.save.side_effect = _save
+    return mock
+
+
 def test_assign_calls_load_assign_save_for_each_session(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session) as mock_load:
         errors = assign(
@@ -56,11 +76,67 @@ def test_assign_calls_load_assign_save_for_each_session(
         constant_project_id=None,
         scan_field=None,
     )
-    mock_session.save.assert_called_once_with(
-        dest_dir=output_dir,
-        copy_mode=FileSet.CopyMode.hardlink_or_copy,
-        include=(),
-    )
+    # save() is handed the BUILD directory, not the output directory: a session
+    # that does not exist yet is built under __build__ and renamed into place, so
+    # that a run which dies part-way cannot leave a partial session under its real
+    # name for upload to collect.
+    saved_kwargs = mock_session.save.call_args.kwargs
+    assert saved_kwargs["copy_mode"] == FileSet.CopyMode.hardlink_or_copy
+    assert saved_kwargs["include"] == ()
+    build_dir = saved_kwargs["dest_dir"]
+    assert build_dir.parent.name == "__build__"
+    assert build_dir.parent.parent == output_dir
+    # and the finished session is what actually appears in the output
+    assert (output_dir / "PROJ.SUBJ.SESS").is_dir()
+    assert not build_dir.parent.exists(), "the build directory was left behind"
+
+
+def test_assign_leaves_no_partial_session_under_its_real_name_when_save_dies(
+    grouped_dir: Path, tmp_path: Path
+) -> None:
+    """A run that dies part-way through save() must leave nothing collectable.
+
+    This is the live path. With de-identification done in Orthanc, which is how
+    every site is configured, `upload` reads the assigned directory DIRECTLY.
+    save() creates the session directory and then fills it one scan at a time, so
+    a crash used to leave a prefix of the scans under the session's real name.
+    Each surviving resource is internally consistent, so upload's per-resource
+    manifest and checksum checks all pass; there is no session-level completeness
+    check; the partial tree's mtimes go quiet and it satisfies the settle window
+    on both upload paths. The result is a partial session in XNAT, silently.
+    """
+    output_dir = tmp_path / "assigned"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    # ids resolve cleanly, so this session is headed for the real output
+    # directory and not the invalid one
+    mock_session.assign.return_value = {}
+
+    def dying_save(dest_dir: Path, **kwargs):
+        # a prefix of the session, exactly as an interrupted save would leave it
+        partial = Path(dest_dir) / "PROJ.SUBJ.SESS" / "1.scan" / "DICOM"
+        partial.mkdir(parents=True)
+        (partial / "inst.dcm").write_text("half a session")
+        raise RuntimeError("died part-way through save")
+
+    mock_session.save.side_effect = dying_save
+    with patch.object(ImagingSession, "load", return_value=mock_session):
+        errors = assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert len(errors) == 1
+    assert "died part-way through save" in errors[0]
+    collectable = [p for p in output_dir.iterdir() if not p.name.startswith("__")]
+    assert (
+        collectable == []
+    ), f"a partial session was left where upload would collect it: {collectable}"
+    assert not list(output_dir.rglob("inst.dcm")), "the partial data survived"
 
 
 def test_assign_routes_invalid_ids_to_invalid_subdir(
@@ -69,7 +145,7 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.return_value = {"PatientID": "INVALID_MISSING_PATIENTID_abc123"}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
@@ -82,18 +158,19 @@ def test_assign_routes_invalid_ids_to_invalid_subdir(
 
     assert len(errors) == 1
     assert "PatientID" in errors[0]
-    mock_session.save.assert_called_once_with(
-        dest_dir=output_dir / INVALID_DIRNAME,
-        copy_mode=FileSet.CopyMode.hardlink_or_copy,
-        include=(),
-    )
+    saved_kwargs = mock_session.save.call_args.kwargs
+    assert saved_kwargs["copy_mode"] == FileSet.CopyMode.hardlink_or_copy
+    assert saved_kwargs["include"] == ()
+    # built under the INVALID directory, and promoted into it
+    assert saved_kwargs["dest_dir"].parent.parent == output_dir / INVALID_DIRNAME
+    assert (output_dir / INVALID_DIRNAME / "PROJ.SUBJ.SESS").is_dir()
 
 
 def test_assign_passes_scan_field(grouped_dir: Path, tmp_path: Path) -> None:
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     with patch.object(ImagingSession, "load", return_value=mock_session):
         assign(
             input_dir=grouped_dir,
@@ -111,7 +188,7 @@ def test_assign_passes_constant_project_id(grouped_dir: Path, tmp_path: Path) ->
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     with patch.object(ImagingSession, "load", return_value=mock_session):
         assign(
             input_dir=grouped_dir,
@@ -133,7 +210,7 @@ def test_assign_collects_errors_without_raising(
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.side_effect = RuntimeError("simulated assign failure")
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
@@ -153,7 +230,7 @@ def test_assign_raise_errors_propagates(grouped_dir: Path, tmp_path: Path) -> No
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.side_effect = RuntimeError("simulated assign failure")
     with patch.object(ImagingSession, "load", return_value=mock_session):
         with pytest.raises(RuntimeError, match="simulated assign failure"):
@@ -175,7 +252,7 @@ def test_assign_deletes_source_dir_on_success_when_unlink_source_all(
     session_dir = next(grouped_dir.iterdir())
     (session_dir / "some_file.txt").write_text("data")
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
@@ -198,7 +275,7 @@ def test_assign_leaves_source_dir_when_unlink_source_none(
     output_dir.mkdir()
     session_dir = next(grouped_dir.iterdir())
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     with patch.object(ImagingSession, "load", return_value=mock_session):
         assign(
             input_dir=grouped_dir,
@@ -219,7 +296,7 @@ def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
     output_dir.mkdir()
     session_dir = next(grouped_dir.iterdir())
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.return_value = {}
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
@@ -246,7 +323,7 @@ def test_assign_does_not_delete_on_failure_even_if_unlink_source_all(
     output_dir.mkdir()
     session_dir = next(grouped_dir.iterdir())
 
-    mock_session = MagicMock()
+    mock_session = _mock_session()
     mock_session.assign.side_effect = RuntimeError("simulated assign failure")
     with patch.object(ImagingSession, "load", return_value=mock_session):
         assign(

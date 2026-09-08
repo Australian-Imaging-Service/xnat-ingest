@@ -4,17 +4,27 @@ import typing as ty
 from pathlib import Path
 
 import click
+from dateutil import tz
 from fileformats.core import FileSet
 
 from xnat_ingest.cli.base import cli
 
-from ..api.group_api import group, group_orthanc
+from ..api.group_api import (
+    DEFAULT_RESOURCE_FIELD,
+    DEFAULT_SCAN_FIELD,
+    DEFAULT_SESSION_FIELD,
+    group,
+    group_orthanc,
+)
 from ..helpers.arg_types import (
+    SEMICOLON_LIST,
+    ClashSpec,
     CollationSpec,
     Convert,
     CopyModeParamType,
     IDSpec,
     LoggerConfig,
+    MetadataTable,
     MimeType,
     PathMetadataRegex,
 )
@@ -42,12 +52,13 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=(("StudyInstanceUID", "all"),),
+    default=DEFAULT_SESSION_FIELD,
     envvar="XINGEST_SESSION",
     help=(
         "The metadata field used to group files into the same session before IDs are extracted "
-        "(XINGEST_SESSION env. var). Defaults to StudyInstanceUID. Can also be a Python format "
-        "string over several fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
+        "(XINGEST_SESSION env. var). Defaults to 'StudyInstanceUID' for DICOM collections; other "
+        "fileset types need an explicit spec. Can also be a Python format string over several "
+        "fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
     ),
 )
 @click.option(
@@ -55,12 +66,14 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=[["SeriesNumber", "all"]],
+    default=DEFAULT_SCAN_FIELD,
     metavar="<specifier> <datatype>",
     envvar="XINGEST_SCAN",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
-        "Python format string over several fields (see --session) (XINGEST_SCAN env. var)"
+        "Python format string over several fields (see --session). Defaults to 'SeriesNumber' "
+        "for DICOM collections (one scan per acquisition series); for any fileset type not "
+        "matched by a --scan spec the scan is named after the resource. (XINGEST_SCAN env. var)"
     ),
 )
 @click.option(
@@ -68,13 +81,15 @@ are uploaded to XNAT
     type=IDSpec.cli_type,
     nargs=2,
     multiple=True,
-    default=[["ImageType[2:]", "all"]],
+    default=DEFAULT_RESOURCE_FIELD,
     metavar="<specifier> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
         "for different datatypes (use `generic/file-set` as a catch-all if required), or a "
-        "Python format string over several fields (see --session). (XINGEST_RESOURCE env. var)"
+        "Python format string over several fields (see --session). If not given, each "
+        "resource is labelled with the mime-like rendering of its fileset type name, "
+        "e.g. 'vectra-export', 'sqlite3-db'. (XINGEST_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -108,38 +123,62 @@ are uploaded to XNAT
     ),
 )
 @click.option(
-    "--avoid-clashes/--allow-clashes",
-    type=bool,
-    default=True,
+    "--on-resource-clash",
+    type=ClashSpec.cli_type,
+    nargs=2,
+    multiple=True,
+    default=(),
+    metavar="<policy> <scope>",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "Whether to avoid clashes in resource names by appending _1, _2 etc. to the name until a "
-        "unique name is found (default: True)"
+        "How to handle two filesets resolving to the same scan/resource name: a <policy> "
+        "('avoid' appends a _2/_3 suffix, 'merge' folds both into one SetOf, 'overwrite' "
+        "replaces) plus the datatype <scope> it applies to (a mime-like, a '|'-union, or "
+        "'all'). Repeatable. A clash is resolved by the first spec whose scope covers BOTH "
+        "filesets; a clash no spec covers raises. (XINGEST_ON_RESOURCE_CLASH env. var)"
     ),
 )
 @click.option(
-    "--ignore-path",
-    "ignore_paths",
-    type=str,
+    "--allow-unrecognised",
+    "--allow-unrecognized",
+    "allow_unrecognised",
+    type=SEMICOLON_LIST,
     default=(),
     multiple=True,
-    envvar="XINGEST_IGNORE_PATH",
+    envvar="XINGEST_ALLOW_UNRECOGNISED",
     help=(
-        "Regular expressions to match paths that should be ignored when grouping files into sessions. "
-        "If None, no paths will be ignored. To ignore all paths by default, use '.*' as the value "
-        "for this parameter. (XINGEST_IGNORE env. var)"
+        "Regular expressions matched against the basename of any input path that no --datatype "
+        "recognised; matches are skipped instead of raising. Use '.*' to tolerate all "
+        "unrecognised files. Does not affect recognised filesets. Repeatable; the "
+        "XINGEST_ALLOW_UNRECOGNISED env. var takes a ';'-separated list."
     ),
 )
 @click.option(
-    "--ignore-type",
-    "ignore_types",
-    type=MimeType.cli_type,
-    default=None,
+    "--exclude-path",
+    "exclude_paths",
+    type=SEMICOLON_LIST,
+    default=(),
     multiple=True,
-    envvar="XINGEST_IGNORE_TYPE",
+    envvar="XINGEST_EXCLUDE_PATH",
     help=(
-        "Datatypes that should be ignored when grouping files into sessions. If None, paths "
-        "that aren't recognised as part of the requested datatypes or filtered using "
-        "ignore_paths will raise an error (XINGEST_IGNORE env. var)"
+        "Glob patterns matched against each input path relative to <input-dir>, applied before "
+        "classification so a match is dropped even if a --datatype would claim it (e.g. a vendor "
+        "thumbnail that is a valid image/png). '*' does not cross '/', '**' does. Repeatable; the "
+        "XINGEST_EXCLUDE_PATH env. var takes a ';'-separated list."
+    ),
+)
+@click.option(
+    "--ignore-datatype",
+    "ignore_datatypes",
+    type=MimeType.cli_type,
+    default=(),
+    multiple=True,
+    envvar="XINGEST_IGNORE_DATATYPE",
+    help=(
+        "Datatypes expected in the input but not wanted: recognised files of these types are "
+        "dropped instead of raising, and with --recursive a matching directory is skipped "
+        "without descending into it. A path matching neither --datatype nor --ignore-datatype "
+        "nor --allow-unrecognised/--exclude-path still raises. (XINGEST_IGNORE_DATATYPE env. var)"
     ),
 )
 @click.option(
@@ -151,7 +190,7 @@ are uploaded to XNAT
 )
 @click.option(
     "--wait-period",
-    type=int,
+    type=click.IntRange(min=0),
     default=0,
     envvar="XINGEST_WAIT_PERIOD",
     help=(
@@ -164,6 +203,7 @@ are uploaded to XNAT
     "--recursive/--not-recursive",
     type=bool,
     default=False,
+    envvar="XINGEST_RECURSIVE",
     help=("Whether to recursively search input directories for input files"),
 )
 @click.option(
@@ -243,21 +283,53 @@ are uploaded to XNAT
     envvar="XINGEST_CONVERT",
     help=("Convert resources of <src-mime-like> to <tgt-mime-like> during save. "),
 )
+@click.option(
+    "--metadata-table",
+    "metadata_tables",
+    multiple=True,
+    type=MetadataTable.cli_type,
+    envvar="XINGEST_METADATA_TABLES",
+    nargs=3,
+    default=(),
+    metavar="<path> <row-frequency> <join-exprs>",
+    help=(
+        "Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var). "
+        "The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or "
+        "TSV from the file extension; a different format can be forced by appending its mime-type in square "
+        "brackets, e.g. 'path/to/table.dat[text/csv]'. "
+        'The "row frequency" arg specifies what each row in the '
+        "metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource', "
+        "'fileset', 'fileset[<mime-type>]'. When one or more mime-types are given in square brackets after 'fileset' "
+        "they restrict the join to input files of those types (multiple mime-types can be '|'-separated, e.g. "
+        "'fileset[image/png|image/jpeg]'); a bare 'fileset' matches any input file. "
+        "The 'join-exprs' arg is a comma-separated list of '<column-name>=<cell-value>' expressions; a row is a "
+        "match when every expression holds. The '<cell-value>' is either the name of an existing metadata field or "
+        "a Python format string over one or more metadata fields, e.g. '{PatientID}_{SessionID}'. All columns of "
+        "the matched row are then merged into the target's metadata. "
+        "The example below extracts the relative path of an image file with `--path-metadata-regex` and uses it to "
+        "join a table whose 'ImagePath' column holds spreadsheet HYPERLINK() formulas.\n\n"
+        "    xnat-ingest group ...  \\\n"
+        "        --path-metadata-regex '.*/(?P<relpath>[\\w-]+/[\\w-]+\\.(?:png|jpg))' image/png|image/jpeg \\\n"
+        "        --metadata-table path/to/table.csv[text/csv] fileset[image/png|image/jpeg] "
+        "'ImagePath=HYPERLINK(\"{relpath}\")'\n"
+    ),
+)
 def group_cmd(
     input_paths: list[str],
     output_dir: Path,
-    session: list[IDSpec],
-    scan: list[IDSpec],
-    resource: list[IDSpec],
+    session: ty.Sequence[IDSpec],
+    scan: ty.Sequence[IDSpec],
+    resource: ty.Sequence[IDSpec],
     datatype: list[MimeType] | None,
     path_metadata_regex: list[PathMetadataRegex],
     unlink_source: str | None,
-    loggers: ty.List[LoggerConfig],
-    additional_loggers: ty.List[str],
+    loggers: list[LoggerConfig],
+    additional_loggers: list[str],
     raise_errors: bool,
-    avoid_clashes: bool,
-    ignore_paths: list[str] | None,
-    ignore_types: list[MimeType] | None,
+    on_resource_clash: tuple[ClashSpec, ...],
+    allow_unrecognised: tuple[str, ...],
+    exclude_paths: tuple[str, ...],
+    ignore_datatypes: tuple[MimeType, ...],
     loop: int,
     wait_period: int,
     recursive: bool,
@@ -279,7 +351,7 @@ def group_cmd(
 
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
-        start_time = datetime.datetime.now()
+        start_time = datetime.datetime.now(tz=tz.tzlocal())
         errors = group(
             input_paths=input_paths,
             output_dir=output_dir,
@@ -290,9 +362,10 @@ def group_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
-            ignore_paths=ignore_paths,
-            ignore_types=[dt.datatype for dt in ignore_types],
-            avoid_clashes=avoid_clashes,
+            allow_unrecognised=allow_unrecognised,
+            exclude_paths=exclude_paths,
+            ignore_datatypes=[dt.datatype for dt in ignore_datatypes],
+            on_resource_clash=list(on_resource_clash),
             wait_period=wait_period,
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,
@@ -309,9 +382,9 @@ def group_cmd(
             logger.info("Staging completed successfully")
         if loop < 0:
             break
-        end_time = datetime.datetime.now()
+        end_time = datetime.datetime.now(tz=tz.tzlocal())
         elapsed_seconds = (end_time - start_time).total_seconds()
-        sleep_time = loop - elapsed_seconds
+        sleep_time = max(loop - elapsed_seconds, 0)
         logger.info(
             "Group took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
@@ -319,7 +392,7 @@ def group_cmd(
             sleep_time,
             loop,
         )
-        time.sleep(loop)
+        time.sleep(sleep_time)
 
 
 @cli.command(
@@ -480,6 +553,7 @@ def group_orthanc_cmd(
             unlink_source=unlink_source,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
+            wait_period=wait_period,
         )
         if loop < 0:
             break

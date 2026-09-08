@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fileformats.core import from_mime
-from fileformats.generic import File
+from fileformats.generic import File, SetOf
 from fileformats.medimage import DicomSeries
 from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_CountRate,
@@ -29,9 +29,20 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from conftest import get_raw_data_files
-from xnat_ingest.helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from xnat_ingest.helpers.arg_types import (
+    AssociatedFiles,
+    ClashSpec,
+    IDSpec,
+    PathMetadataRegex,
+)
 from xnat_ingest.helpers.metadata import Metadata
-from xnat_ingest.model.session import ImagingScan, ImagingSession, _metadata_diff
+from xnat_ingest.model.session import (
+    ImagingScan,
+    ImagingSession,
+    _glob_to_regex,
+    _metadata_diff,
+    _type_name_resource_label,
+)
 from xnat_ingest.model.store import DummyAxes
 
 FIRST_NAME = "Given Name"
@@ -414,6 +425,384 @@ def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
         )
 
 
+def test_from_paths_injects_datatype_metadata_field(tmp_path: Path) -> None:
+    """The resolved fileset type name is exposed as the '__datatype__' metadata
+    field and is usable from an IDSpec (including a format string)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("sess")],
+        scan_field=[IDSpec("sess")],
+        resource_field=[IDSpec("res_{__datatype__}")],
+        path_metadata_regex=[PathMetadataRegex(r".*/(?P<sess>[^/]+)\.txt", File)],
+    )
+
+    scan = next(iter(sessions[0].scans.values()))
+    assert list(scan.resources) == ["res_File"]
+    resource = next(iter(scan.resources.values()))
+    assert resource.fileset.metadata["__datatype__"] == "File"
+
+
+def test_from_paths_resource_label_defaults_to_mime_like_type_name(
+    tmp_path: Path,
+) -> None:
+    """With no resource_field, each resource is labelled with the mime-like
+    rendering of its fileset's type name ('-' kept, '.'/'+' collapsed to '_')."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("__datatype__")],
+        # resource_field omitted -> mime-like(type_name)
+    )
+
+    assert list(next(iter(sessions[0].scans.values())).resources) == ["file"]
+
+
+@pytest.mark.parametrize(
+    "type_name, expected",
+    [
+        ("VectraExport", "vectra-export"),
+        ("Sqlite3Db", "sqlite3-db"),
+        ("SyngoMi_Vr20b_ListMode", "syngo-mi_vr20b_list-mode"),
+        ("Png___SetOf", "png_set-of"),
+    ],
+)
+def test_type_name_resource_label(type_name: str, expected: str) -> None:
+    assert _type_name_resource_label(type_name) == expected
+
+
+def _tree(root: Path) -> Path:
+    """A VectraExport-shaped tree for the recursive-directory tests:
+    ``analysis/`` holds a .json (the wanted nested dir), ``lesion/`` holds a .csv
+    (an ignored sibling dir), plus a loose file at the top."""
+    (root / "analysis").mkdir(parents=True)
+    (root / "analysis" / "result.json").write_text("{}")
+    (root / "analysis" / "notes.txt").write_text("inside the wanted dir")
+    (root / "lesion").mkdir()
+    (root / "lesion" / "data.csv").write_text("a,b\n1,2\n")
+    (root / "plain").mkdir()
+    (root / "plain" / "deep").mkdir()
+    (root / "plain" / "deep" / "result.json").write_text("{}")
+    (root / "scan.txt").write_text("a loose file")
+    return root
+
+
+def test_recursive_collect_prunes_on_match(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    from xnat_ingest.model.session import _recursive_collect
+
+    root = _tree(tmp_path / "export")
+    got = set(_recursive_collect(root, [DirectoryOf[Json]], [DirectoryOf[Csv]]))
+
+    assert got == {
+        root / "analysis",  # wanted dir: yielded whole, not descended
+        root / "plain" / "deep",  # found by descending the unmatched 'plain'
+        root / "scan.txt",  # loose file
+    }
+    # 'lesion/' matched an ignore_datatype -> skipped, its .csv never surfaces
+    # 'analysis/' not descended -> its own files never surface
+
+
+def test_from_paths_recursive_pulls_nested_directory_datatype(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv, Plain
+
+    root = _tree(tmp_path / "export")
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json]],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<name>[^/]+)$", DirectoryOf[Json])
+        ],
+        ignore_datatypes=[DirectoryOf[Csv], Plain],
+    )
+
+    assert len(sessions) == 1
+    scans = sessions[0].scans
+    # both DirectoryOf[Json] dirs (analysis/ and plain/deep/) pulled, nothing else
+    assert set(scans) == {"analysis", "deep"}
+
+
+def test_from_paths_recursive_allow_unrecognised_wildcard_pulls_only_wanted_dirs(
+    tmp_path: Path,
+) -> None:
+    """The wanted directory formats are nested inside larger 'clutter' directories
+    whose internal structure we don't want to track. ``allow_unrecognised=['.*']`` mops
+    up every non-matching path so only the requested nested dirs come through - no
+    ``ignore_datatypes`` enumeration needed."""
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+
+    root = tmp_path / "export"
+    # WholeBodyCapture-shaped clutter dir with the wanted analysis dir buried in it
+    capture = root / "WBcapture"
+    (capture / "analysis").mkdir(parents=True)
+    (capture / "analysis" / "result.json").write_text("{}")
+    (capture / "raw1.bin").write_bytes(b"junk")
+    (capture / "thumbs").mkdir()
+    (capture / "thumbs" / "t1.jpg").write_bytes(b"junk")
+    # LesionAnalysis-shaped clutter dir with the wanted dexi dir buried in it
+    lesion = root / "lesionAnalysis"
+    (lesion / "dexi").mkdir(parents=True)
+    (lesion / "dexi" / "meta.json").write_text("{}")
+    (lesion / "report.csv").write_text("a,b\n1,2\n")
+    (root / "loose_at_root.txt").write_text("junk")
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json]],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        allow_unrecognised=[".*"],
+        path_metadata_regex=[
+            PathMetadataRegex(r".*/(?P<name>[^/]+)$", DirectoryOf[Json])
+        ],
+    )
+
+    assert len(sessions) == 1
+    assert set(sessions[0].scans) == {"analysis", "dexi"}
+
+
+def test_from_paths_recursive_raises_on_unlisted_type(tmp_path: Path) -> None:
+    from fileformats.application import Json
+    from fileformats.core.exceptions import FormatRecognitionError
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    root = _tree(tmp_path / "export")
+    (root / "mystery.unknownext").write_text("not a recognised type")
+
+    with pytest.raises(FormatRecognitionError, match="mystery"):
+        ImagingSession.from_paths(
+            root,
+            datatypes=[DirectoryOf[Json]],
+            session_field=[IDSpec("__datatype__")],
+            scan_field=[IDSpec("__datatype__")],
+            recursive=True,
+            ignore_datatypes=[DirectoryOf[Csv]],  # doesn't cover the loose files
+        )
+
+
+def test_from_paths_recursive_rejects_bare_generic_directory(tmp_path: Path) -> None:
+    from fileformats.generic import Directory
+
+    root = _tree(tmp_path / "export")
+    with pytest.raises(ValueError, match="generic/directory"):
+        ImagingSession.from_paths(
+            root,
+            datatypes=[Directory],
+            session_field=[IDSpec("__datatype__")],
+            scan_field=[IDSpec("__datatype__")],
+            recursive=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "pattern, path, matches",
+    [
+        ("*/*/*.png", "a/b/c.png", True),
+        ("*/*/*.png", "a/c.png", False),
+        ("*/*/*.png", "w/x/y/z.png", False),
+        ("**/*.png", "a.png", True),
+        ("**/*.png", "a/b/c.png", True),
+        ("**/*.png", "a/b/c.txt", False),
+        ("**/[XY]P.png", "u/2026/XP.png", True),
+        ("**/[XY]P.png", "u/2026/ZP.png", False),
+        ("*.txt", "a.txt", True),
+        ("*.txt", "a/b.txt", False),
+    ],
+)
+def test_glob_to_regex(pattern: str, path: str, matches: bool) -> None:
+    assert bool(_glob_to_regex(pattern).match(path)) is matches
+
+
+def test_from_paths_exclude_path_drops_recognised_by_relative_depth(
+    tmp_path: Path,
+) -> None:
+    """--exclude-path matches the path *relative to the input dir* and is applied
+    before classification, so it drops a file even though a --datatype claims it
+    (a 3-deep .txt here) while sparing the same type 2 deep."""
+    from fileformats.generic import File
+
+    root = tmp_path / "root"
+    (root / "subject").mkdir(parents=True)
+    (root / "subject" / "shallow.txt").write_text("keep")  # relative depth 2
+    (root / "uuid" / "stamp").mkdir(parents=True)
+    (root / "uuid" / "stamp" / "deep.txt").write_text("drop")  # relative depth 3
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("name")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        exclude_paths=["*/*/*.txt"],
+        path_metadata_regex=[PathMetadataRegex(r".*/(?P<name>[^/]+)\.txt$", File)],
+    )
+
+    resources = [r for s in sessions for sc in s.scans.values() for r in sc.resources]
+    assert resources == ["shallow"]
+
+
+def _canfield_shaped_tree(root: Path) -> Path:
+    """A stripped-down stand-in for a Canfield Vectra export: a session directory
+    holding several 'capture' directories, each of which buries a nested analysis
+    directory (two different formats) among loose files, plus sibling clutter
+    directories and loose files at every level. Generic ``DirectoryOf`` types
+    stand in for the real vendor formats:
+
+    - ``DirectoryOf[Json]`` == the photogrammetry lesion-analysis dir (has a .json)
+    - ``DirectoryOf[Csv]``  == the dexi-analysis dir (has a .csv), 2 instances
+    """
+    session = root / "SESSION-abc"
+
+    # photogrammetry capture: loads of loose files + the wanted analysis dir + a
+    # non-wanted sibling 'calib' directory
+    photo = session / "20260805133937"
+    photo.mkdir(parents=True)
+    for name in ("a1A.CR2", "a1B.CR2", "f1A.CR2", "capture.cptr", "addtexture-log.txt"):
+        (photo / name).write_bytes(b"raw")
+    (photo / "analysis").mkdir()
+    (photo / "analysis" / "lesion_data.json").write_text("{}")
+    (photo / "analysis" / "exitstatus.txt").write_text("ok")  # not descended -> unseen
+    (photo / "calib").mkdir()
+    (photo / "calib" / "a1A.sfcm").write_bytes(b"cal")  # unrecognised, in a clutter dir
+
+    # two dexi captures, each burying a DexiData dir among loose files
+    for stamp in ("20260805135303357", "20260805135325459"):
+        dexi_capture = session / stamp
+        dexi_capture.mkdir()
+        (dexi_capture / "captureinfo_scope").write_bytes(b"info")
+        (dexi_capture / "XP.png").write_bytes(b"png")
+        (dexi_capture / "DexiData_2.1").mkdir()
+        (dexi_capture / "DexiData_2.1" / "result.csv").write_text("a,b\n1,2\n")
+        (dexi_capture / "DexiData_2.1" / "heatmap.jpg").write_bytes(b"jpg")  # unseen
+
+    # loose files hanging directly off the session dir, and a sibling of it
+    (session / "lesion.t2k").write_bytes(b"t2k")
+    (session / "DermX Report.pdf").write_bytes(b"pdf")
+    (root / "testExternalID.db").write_bytes(b"SQLite format 3\x00")
+    return root
+
+
+def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
+    tmp_path: Path,
+) -> None:
+    """End-to-end on the Canfield-shaped tree: two distinct nested directory
+    formats are pulled from wherever they are buried, one of them appearing more
+    than once, while every loose file and every non-matching directory (the
+    capture dirs, ``calib/``, the session dir, the sibling ``.db``) is left alone
+    via ``allow_unrecognised=['.*']`` - no ``ignore_datatypes`` enumeration."""
+    from fileformats.application import Json
+    from fileformats.generic import DirectoryOf
+    from fileformats.text import Csv
+
+    root = _canfield_shaped_tree(tmp_path / "raw")
+
+    sessions = ImagingSession.from_paths(
+        root,
+        datatypes=[DirectoryOf[Json], DirectoryOf[Csv]],
+        session_field=[IDSpec("session")],
+        scan_field=[IDSpec("capture")],
+        resource_field=[IDSpec("name")],
+        recursive=True,
+        allow_unrecognised=[".*"],
+        path_metadata_regex=[
+            PathMetadataRegex(
+                r".*/(?P<session>SESSION-[^/]+)/(?P<capture>[^/]+)/(?P<name>[^/]+)$",
+                DirectoryOf,
+            )
+        ],
+    )
+
+    assert len(sessions) == 1
+    scans = sessions[0].scans
+    assert set(scans) == {"20260805133937", "20260805135303357", "20260805135325459"}
+    assert list(scans["20260805133937"].resources) == ["analysis"]
+    # '.' in 'DexiData_2.1' is escaped to '_' like any other ID/label
+    assert list(scans["20260805135303357"].resources) == ["DexiData_2_1"]
+    assert list(scans["20260805135325459"].resources) == ["DexiData_2_1"]
+    resources = [r for s in scans.values() for r in s.resources.values()]
+    assert {type(r.fileset).__name__ for r in resources} == {
+        DirectoryOf[Json].__name__,
+        DirectoryOf[Csv].__name__,
+    }
+
+
+def test_from_paths_scan_id_defaults_to_resource_label(tmp_path: Path) -> None:
+    """With no scan_field, each resource sits in a scan of the same name."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        # scan_field / resource_field omitted
+    )
+
+    scan = next(iter(sessions[0].scans.values()))
+    assert scan.id == "file"
+    assert list(scan.resources) == ["file"]
+
+
+def test_from_paths_datatype_scoped_scan_spec_falls_through(tmp_path: Path) -> None:
+    """A datatype-scoped --scan spec that doesn't apply to a fileset's type (the
+    DICOM 'SeriesNumber' default vs a plain File) names the scan after the resource
+    rather than raising."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    sessions = ImagingSession.from_paths(
+        src,
+        datatypes=[File],
+        session_field=[IDSpec("__datatype__")],
+        scan_field=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+    )
+
+    assert next(iter(sessions[0].scans.values())).id == "file"
+
+
+def test_from_paths_session_spec_not_matching_type_raises_clearly(
+    tmp_path: Path,
+) -> None:
+    """The session UID has no auto-fallback: a session spec whose datatype doesn't
+    apply to a fileset (the DICOM-scoped default vs a plain File) raises an
+    actionable error rather than a bare 'resource label' TypeError."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+
+    with pytest.raises(TypeError, match="apply to a File"):
+        ImagingSession.from_paths(
+            src,
+            datatypes=[File],
+            session_field=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        )
+
+
 CLASH_SCAN_ID = "1"
 CLASH_SCAN_TYPE = "a-type"
 CLASH_RESOURCE_NAME = "FILE"
@@ -487,7 +876,7 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        overwrite=True,
+        on_clash="overwrite",
     )
     assert "Overwriting existing resource" in caplog.text
 
@@ -519,13 +908,309 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
         scan_type=CLASH_SCAN_TYPE,
         resource_name=CLASH_RESOURCE_NAME,
         fileset=file2,
-        avoid_clashes=True,
+        on_clash="avoid",
     )
     assert "to avoid clash with existing resources" in caplog.text
     assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
         CLASH_RESOURCE_NAME,
         CLASH_RESOURCE_NAME + "__2",
     ]
+
+
+def _clash_session() -> ImagingSession:
+    return ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: File.sample(seed=1)},
+            )
+        ],
+    )
+
+
+def test_add_resource_clash_hint_in_error() -> None:
+    with pytest.raises(KeyError, match="auto-derived from its fileset type"):
+        _clash_session().add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=File.sample(seed=2),
+            on_clash="error",
+            clash_hint=(
+                "the --scan and --resource ID(s) for this resource were "
+                "auto-derived from its fileset type; pass explicit --scan / "
+                "--resource specifier(s) to control grouping"
+            ),
+        )
+
+
+def test_add_resource_clash_hint_in_avoid_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logging.getLogger("xnat-ingest").setLevel(logging.WARNING)
+    _clash_session().add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=File.sample(seed=2),
+        on_clash="avoid",
+        clash_hint="pass explicit --scan / --resource specifier(s) to control grouping",
+    )
+    assert "pass explicit --scan / --resource specifier(s)" in caplog.text
+
+
+def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
+
+    logger = logging.getLogger("xnat-ingest")
+    logger.setLevel(logging.DEBUG)
+
+    file1 = File.sample(seed=1)
+    file2 = File.sample(seed=2)
+
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: file1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=file2,
+        on_clash="merge",
+    )
+    assert "Merging resource" in caplog.text
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert isinstance(merged.fileset, SetOf)
+    assert merged.fileset.content_types == (File,)
+    assert set(merged.fileset.fspaths) == set(file1.fspaths) | set(file2.fspaths)
+
+
+def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
+    """A merged resource combines the files of both filesets into a single
+    ``SetOf[...]``, collates the members' metadata (scalar where they agree,
+    aligned list where they differ), and round-trips through ``save()``/``load()``."""
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    view1 = src_dir / "lesion-dermoscopy.dat"
+    view2 = src_dir / "lesion-clinical.dat"
+    view1.write_text("first view")
+    view2.write_text("second view")
+    fileset1 = File(view1)
+    fileset2 = File(view2)
+    # 'LesionID' agrees across the two views, 'View' differs
+    fileset1.metadata.update({"LesionID": "L1", "View": "dermoscopy"})
+    fileset2.metadata.update({"LesionID": "L1", "View": "clinical"})
+
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJECTID",
+        subject_id="SUBJECTID",
+        session_id="SESSIONID",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: fileset1},
+            )
+        ],
+    )
+
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=fileset2,
+        on_clash="merge",
+    )
+
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert isinstance(merged.fileset, SetOf)
+    assert merged.fileset.content_types == (File,)
+    assert sorted(p.name for p in merged.fileset.fspaths) == [
+        "lesion-clinical.dat",
+        "lesion-dermoscopy.dat",
+    ]
+    # agreed field stays scalar, differing field is collated into an aligned list
+    assert merged.metadata["LesionID"] == "L1"
+    assert merged.metadata["View"] == ["dermoscopy", "clinical"]
+
+    saved, _ = session.save(tmp_path / "staged")
+    session_dir = (tmp_path / "staged").joinpath(*session.staging_relpath)
+    reloaded = ImagingSession.load(session_dir)
+
+    reloaded_resource = reloaded.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
+    assert sorted(p.name for p in reloaded_resource.fileset.fspaths) == [
+        "lesion-clinical.dat",
+        "lesion-dermoscopy.dat",
+    ]
+    assert reloaded_resource.metadata["LesionID"] == "L1"
+    assert reloaded_resource.metadata["View"] == ["dermoscopy", "clinical"]
+    assert (
+        reloaded_resource.checksums
+        == saved.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].checksums
+    )
+
+
+def _png(path: Path) -> Path:
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    return path
+
+
+def _jpg(path: Path) -> Path:
+    path.write_bytes(
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    )
+    return path
+
+
+def _png_clash_session(tmp_path: Path) -> tuple[ImagingSession, ty.Any]:
+    from fileformats.image.raster import Png
+
+    fileset1 = Png(_png(tmp_path / "a.png"))
+    session = ImagingSession(
+        uid="12345",
+        project_id="P",
+        subject_id="S",
+        session_id="V",
+        scans=[
+            ImagingScan(
+                id=CLASH_SCAN_ID,
+                type=CLASH_SCAN_TYPE,
+                resources={CLASH_RESOURCE_NAME: fileset1},
+            )
+        ],
+    )
+    return session, fileset1
+
+
+def test_add_resource_clash_spec_union_scope_merges_cross_type(tmp_path: Path) -> None:
+    """A Png clashing with a Jpeg is merged into ``SetOf[Png, Jpeg]`` when a single
+    ``ClashSpec`` scope (``image/png|image/jpeg``) covers both."""
+    from fileformats.generic import SetOf
+    from fileformats.image.raster import Jpeg, Png
+
+    session, _ = _png_clash_session(tmp_path)
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=Jpeg(_jpg(tmp_path / "b.jpg")),
+        on_clash=[ClashSpec("merge", "image/png|image/jpeg")],
+    )
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset
+    assert isinstance(merged, SetOf)
+    assert set(merged.content_types) == {Png, Jpeg}
+
+
+def test_add_resource_clash_spec_separate_specs_raise_cross_type(
+    tmp_path: Path,
+) -> None:
+    """Two single-type ``ClashSpec``s don't jointly cover a Png-vs-Jpeg clash - no
+    single spec's scope covers both, so it raises."""
+    from fileformats.image.raster import Jpeg
+
+    session, _ = _png_clash_session(tmp_path)
+    with pytest.raises(KeyError, match="no --on-resource-clash spec"):
+        session.add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=Jpeg(_jpg(tmp_path / "b.jpg")),
+            on_clash=[
+                ClashSpec("merge", "image/png"),
+                ClashSpec("merge", "image/jpeg"),
+            ],
+        )
+
+
+def test_add_resource_clash_spec_no_covering_spec_raises(tmp_path: Path) -> None:
+    from fileformats.image.raster import Png
+
+    session, _ = _png_clash_session(tmp_path)
+    with pytest.raises(KeyError, match="no --on-resource-clash spec"):
+        session.add_resource(
+            scan_id=CLASH_SCAN_ID,
+            scan_type=CLASH_SCAN_TYPE,
+            resource_name=CLASH_RESOURCE_NAME,
+            fileset=Png(_png(tmp_path / "b.png")),
+            on_clash=[ClashSpec("avoid", "image/jpeg")],
+        )
+
+
+def test_add_resource_clash_spec_avoid_within_scope(tmp_path: Path) -> None:
+    from fileformats.image.raster import Png
+
+    session, _ = _png_clash_session(tmp_path)
+    session.add_resource(
+        scan_id=CLASH_SCAN_ID,
+        scan_type=CLASH_SCAN_TYPE,
+        resource_name=CLASH_RESOURCE_NAME,
+        fileset=Png(_png(tmp_path / "b.png")),
+        on_clash=[ClashSpec("avoid", "image/png|image/jpeg")],
+    )
+    assert sorted(session.scans[CLASH_SCAN_ID].resources) == [
+        CLASH_RESOURCE_NAME,
+        CLASH_RESOURCE_NAME + "__2",
+    ]
+
+
+def test_add_resource_clash_spec_remerge_into_existing_setof(tmp_path: Path) -> None:
+    """A 3rd fileset merged into an existing ``SetOf[Png, Jpeg]`` is still covered by
+    an ``image/png|image/jpeg`` scope (``_fileset_in_scope`` checks content types)."""
+    from fileformats.generic import SetOf
+    from fileformats.image.raster import Jpeg, Png
+
+    session, _ = _png_clash_session(tmp_path)
+    spec = [ClashSpec("merge", "image/png|image/jpeg")]
+    session.add_resource(
+        CLASH_SCAN_ID,
+        CLASH_SCAN_TYPE,
+        CLASH_RESOURCE_NAME,
+        Jpeg(_jpg(tmp_path / "b.jpg")),
+        on_clash=spec,
+    )
+    session.add_resource(
+        CLASH_SCAN_ID,
+        CLASH_SCAN_TYPE,
+        CLASH_RESOURCE_NAME,
+        Png(_png(tmp_path / "c.png")),
+        on_clash=spec,
+    )
+    merged = session.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME].fileset
+    assert isinstance(merged, SetOf)
+    assert len(merged.fspaths) == 3
 
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
@@ -766,8 +1451,9 @@ def _deidentify_test_impl(
     deidentified = fileset.copy(dest)
     # session.deidentify() now reconstructs reid metadata itself by diffing
     # `metadata` before/after calling deidentify(), so the stand-in "stripped"
-    # fileset needs to actually report different metadata to the original.
-    deidentified._explicit_metadata = {}
+    # fileset needs to actually report different metadata to the original. A fresh
+    # copy of a generic ``File`` has no metadata reader, so its metadata is already
+    # empty - nothing to strip here.
     return deidentified
 
 
@@ -775,14 +1461,14 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
     """Return a File instance with contains_phi=True and an injected deidentify().
 
     Setting contains_phi=True routes it through the deidentify branch in
-    session.deidentify(). expected_reid is set as the fileset's explicit metadata so
-    that session.deidentify()'s before/after diff reconstructs it. The injected
+    session.deidentify(). expected_reid is written to the fileset's metadata overlay
+    so that session.deidentify()'s before/after diff reconstructs it. The injected
     method is a functools.partial binding a module-level function (not a closure),
     just for consistency/reuse across the fixtures in this module.
     """
     f = File.sample(seed=seed)
     f.contains_phi = True
-    f._explicit_metadata = dict(expected_reid)
+    f.metadata.update(expected_reid)
     f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
 
@@ -882,3 +1568,66 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
     )
     _, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
     assert reid_mdata == {"PatientName": "Alice", "DOB": "19901201"}
+
+
+def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
+    """max_workers passed to session.deidentify() should reach each resource's
+    own FileSet.deidentify() call unchanged.
+    """
+    received_max_workers: list = []
+
+    def _capturing_deidentify_impl(
+        fileset: File,
+        out_dir: Path,
+        spec: ty.Any = None,
+        **kwargs: ty.Any,
+    ) -> File:
+        received_max_workers.append(kwargs.get("max_workers"))
+        return _deidentify_test_impl(fileset, out_dir, spec=spec, **kwargs)
+
+    f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
+    f.deidentify = functools.partial(_capturing_deidentify_impl, f)
+    session = ImagingSession(
+        uid="12345",
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
+        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+    )
+    session.deidentify(tmp_path / "dest", specs={File: {}}, max_workers=3)
+    assert received_max_workers == [3]
+
+
+def test_deidentify_carries_session_level_resources(tmp_path: Path) -> None:
+    """A resource attached to the SESSION must survive de-identification.
+
+    deidentify() builds its output from new_empty(), which copies the ids and
+    nothing else, and then walks self.scans. Session-level resources were in
+    neither, so they were silently dropped: not de-identified, not copied, and
+    nothing reported.
+
+    It is worse than a plain loss. The per-session completeness gate in
+    deidentify_api counts data files on both sides, so a session carrying one
+    comes out short, is reported incomplete, and correctly refuses to unlink its
+    input -- for ever, because the next run drops it again.
+    """
+    from xnat_ingest.model.scan import ImagingScan
+    from xnat_ingest.model.session import ImagingSession
+
+    session = ImagingSession(
+        uid="PROJ.SUBJ.SESS",
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
+        scans=[ImagingScan(id="1", type="T", resources={"RES": File.sample(seed=1)})],
+    )
+    session.add_session_resource("report", File.sample(seed=42))
+    assert "report" in session.session_resources
+
+    deid, _ = session.deidentify(tmp_path / "out", require_matching_spec=False)
+
+    assert "report" in deid.session_resources, (
+        "the session-level resource was dropped by deidentify(), so it never "
+        "reaches XNAT and the completeness gate refuses the unlink for ever"
+    )
+    assert set(deid.scans) == set(session.scans), "scans must be unaffected"

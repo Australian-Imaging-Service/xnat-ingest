@@ -17,10 +17,12 @@ from typing import Self
 import attrs
 import requests
 import yaml
+from dateutil.parser import isoparse
 from fileformats.application import Yaml
 from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
-from fileformats.generic import Directory
+from fileformats.generic import Directory, SetOf
 from fileformats.medimage import DicomCollection
 from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
@@ -28,12 +30,26 @@ from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
 from ..exceptions import ImagingSessionParseError, StagingError
-from ..helpers.arg_types import AssociatedFiles, IDSpec, PathMetadataRegex
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    AssociatedFiles,
+    ClashSpec,
+    IDSpec,
+    MetadataTable,
+    OnResourceClash,
+    PathMetadataRegex,
+)
 from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
 
 logger = logging.getLogger("xnat-ingest")
+
+Transform = ty.Callable[[ty.Mapping[str, ty.Any]], ty.Any]
+
+# Sentinel returned by ``IDSpec.get_value_from_matching_spec`` when no scan spec
+# applies to a fileset's type, signalling that the scan should take the resource's name
+_DERIVED_ID: ty.Any = object()
 
 _DATE_FORMATS = ["%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d", "%Y%m%d", "%m/%d/%y", "%m/%d/%Y"]
 _TIME_FORMATS = ["%H.%M.%S", "%H:%M:%S", "%H%M%S"]
@@ -103,6 +119,194 @@ def _metadata_diff(
     return diff
 
 
+def _expand_collated_metadata(
+    metadata: dict[str, ty.Any], num_members: int
+) -> list[dict[str, ty.Any]]:
+    """Reconstruct the per-member metadata dicts from a dict previously produced by
+    ``Metadata.collate`` for ``num_members`` members, so a further member can be
+    collated in without nesting the already-listed values.
+
+    A value is treated as per-member only when it is a list whose length matches
+    ``num_members``; with a single existing member there is nothing to expand.
+    """
+    if num_members <= 1:
+        return [dict(metadata)]
+    members: list[dict[str, ty.Any]] = [{} for _ in range(num_members)]
+    for key, value in metadata.items():
+        if isinstance(value, list) and len(value) == num_members:
+            for member, item in zip(members, value):
+                if item is not None:
+                    member[key] = item
+        else:
+            for member in members:
+                member[key] = value
+    return members
+
+
+def _set_content_types(fileset: FileSet) -> tuple[type[FileSet], ...]:
+    """The content types to classify ``fileset`` by when folding it into a merged
+    ``SetOf`` resource: the classifiers of an existing ``SetOf`` (from a previous
+    merge) or the fileset's own type otherwise.
+    """
+    content_types = getattr(type(fileset), "content_types", ())
+    return tuple(content_types) if content_types else (type(fileset),)
+
+
+def _type_name_resource_label(type_name: str) -> str:
+    """Fallback resource label for a fileset with no ``--resource`` spec: the
+    mime-like rendering of its type name, e.g. 'vectra-export', 'sqlite3-db',
+    run through the same ID/label escaping as session/scan IDs
+    (:attr:`IDSpec.xnat_id_escape_re`) so the '.'/'+' that ``to_mime_format_name``
+    emits for vendor/classifier type names (``SyngoMi_Vr20b_ListMode`` ->
+    ``syngo-mi.vr20b.list-mode``, ``Png___SetOf`` -> ``png+set-of``) collapse to
+    '_' while '-' is kept.
+    """
+    return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    r"""Anchored regex for a ``/``-aware glob: ``*`` / ``?`` / ``[...]`` do not cross
+    ``/``, ``**`` (optionally followed by ``/``) matches across directory levels.
+    Equivalent to ``glob.translate(pattern, recursive=True)`` (py3.13+), spelled out
+    so 3.11/3.12 work too.
+    """
+    i, n = 0, len(pattern)
+    out = ["(?s:"]
+    while i < n:
+        c = pattern[i]
+        i += 1
+        if c == "*":
+            if i < n and pattern[i] == "*":
+                i += 1
+                if i < n and pattern[i] == "/":
+                    i += 1
+                    out.append("(?:[^/]*/)*")  # '**/' -> zero or more segments
+                else:
+                    out.append(".*")
+            else:
+                out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            j = i + 1 if i < n and pattern[i] in "!^" else i
+            j = j + 1 if j < n and pattern[j] == "]" else j
+            while j < n and pattern[j] != "]":
+                j += 1
+            if j >= n:
+                out.append(r"\[")
+            else:
+                inner = pattern[i:j]
+                i = j + 1
+                if inner[:1] in ("!", "^"):
+                    inner = "^" + inner[1:]
+                out.append("[" + inner + "]")
+        else:
+            out.append(re.escape(c))
+    out.append(r")\Z")
+    return re.compile("".join(out))
+
+
+def _drop_excluded_paths(
+    fspaths: ty.Sequence[Path],
+    input_dirs: ty.Sequence[Path],
+    exclude_globs: ty.Sequence[str],
+) -> list[Path]:
+    """Drop every ``fspath`` whose path *relative to one of ``input_dirs``* matches
+    one of ``exclude_globs``. Unlike ``allow_unrecognised`` this fires before
+    classification, so it removes a path even if a ``--datatype`` would claim it
+    (e.g. a vendor thumbnail that is a valid ``image/png``). Globs use the standard
+    ``glob`` syntax - ``*`` does not cross ``/``, ``**`` does - and match the whole
+    relative path.
+    """
+    if not exclude_globs:
+        return list(fspaths)
+    matchers = [_glob_to_regex(g) for g in exclude_globs]
+    kept: list[Path] = []
+    for p in fspaths:
+        rels: list[str] = []
+        for base in input_dirs:
+            try:
+                rels.append(str(p.relative_to(base)))
+            except ValueError:
+                continue
+        if any(m.match(rel) for m in matchers for rel in rels):
+            logger.debug("Excluding '%s' (matched --exclude-path)", p)
+            continue
+        kept.append(p)
+    return kept
+
+
+def _fileset_in_scope(fileset: FileSet, scope: type[FileSet] | ty.Any) -> bool:
+    """Whether ``fileset`` falls within a ``ClashSpec`` scope - either it is an
+    instance of ``scope``, or it is a ``SetOf`` whose every content type is a
+    subclass of ``scope`` (so a re-merge into an existing ``SetOf[Png, Jpeg]``
+    still counts as covered by an ``image/png|image/jpeg`` scope).
+    """
+    if isinstance(fileset, scope):
+        return True
+    content_types = getattr(type(fileset), "content_types", ())
+    return bool(content_types) and all(issubclass(ct, scope) for ct in content_types)
+
+
+def _resolve_clash_policy(
+    specs: ty.Sequence[ClashSpec],
+    existing: FileSet,
+    incoming: FileSet,
+    where: str,
+) -> str:
+    """The clash policy for a name collision between ``existing`` and ``incoming``:
+    the first ``ClashSpec`` whose scope covers *both*. Raises if none does.
+    """
+    for spec in specs:
+        if _fileset_in_scope(existing, spec.scope) and _fileset_in_scope(
+            incoming, spec.scope
+        ):
+            return spec.policy
+    raise KeyError(
+        f"Resource-name clash between a {type(existing).__name__} and a "
+        f"{type(incoming).__name__} {where}, and no --on-resource-clash spec's "
+        "scope covers both. Add one (e.g. "
+        f"'--on-resource-clash avoid \"{to_mime(type(existing))}|{to_mime(type(incoming))}\"'), "
+        "or tighten --scan / --resource so the two don't collide."
+    )
+
+
+def _recursive_collect(
+    root: Path,
+    datatypes: ty.Sequence[type[FileSet]],
+    ignore_datatypes: ty.Sequence[type[FileSet]],
+) -> ty.Iterator[Path]:
+    """Walk ``root`` yielding paths for ``from_paths`` to classify.
+
+    A directory that validates as one of ``datatypes`` is yielded whole and *not*
+    descended into; a directory that validates only as an ``ignore_datatypes``
+    directory format is skipped whole (not yielded, not descended); any other
+    directory is descended. Every loose file is yielded, so an unlisted file type
+    still raises in ``from_paths`` as usual.
+
+    ``dt.matches()`` runs the datatype's full validation on each directory node,
+    which for rich directory formats (e.g. a Canfield export) is not free - fine
+    for the export-sized trees this is meant for.
+    """
+    want = tuple(d for d in datatypes if issubclass(d, Directory))
+    skip = tuple(d for d in ignore_datatypes if issubclass(d, Directory))
+    stack: list[Path] = [root]
+    seen: set[Path] = set()
+    while stack:
+        current = stack.pop()
+        resolved = current.resolve()
+        if resolved in seen:  # guard against symlink loops
+            continue
+        seen.add(resolved)
+        for child in sorted(current.iterdir()):
+            if not child.is_dir() or any(dt.matches(child) for dt in want):
+                yield child
+            elif any(dt.matches(child) for dt in skip):
+                continue
+            else:
+                stack.append(child)
+
+
 def _deidentify_or_copy_resource(
     fileset: FileSet,
     resource_name: str,
@@ -111,6 +315,7 @@ def _deidentify_or_copy_resource(
     spec: ty.Any,
     copy_mode: FileSet.CopyMode,
     max_workers: int | None,
+    transforms: dict[str, Transform] | None = None,
 ) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
     """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
     resource.
@@ -127,7 +332,10 @@ def _deidentify_or_copy_resource(
         )
     orig_metadata = dict(fileset.metadata)
     deid_resource = fileset.deidentify(
-        resource_dest_dir, spec=spec, max_workers=max_workers
+        resource_dest_dir,
+        spec=spec,
+        max_workers=max_workers,
+        transforms=transforms,
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
@@ -175,6 +383,10 @@ class ImagingSession:
     # Metadata key the originating session UID is stashed under when saving, so it can
     # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.SESSION
     UID_METADATA_KEY = "__uid__"
+    # Metadata key under which each fileset's resolved fileformats type name (e.g.
+    # 'VectraExport', 'Sqlite3Db') is stashed during grouping, so it can be
+    # referenced from --session/--scan/--resource specs (e.g. '{__datatype__}')
+    TYPE_METADATA_KEY = "__datatype__"
 
     def __attrs_post_init__(self) -> None:
         for scan in self.scans.values():
@@ -353,14 +565,16 @@ class ImagingSession:
         cls,
         files_path: str | Path | ty.Sequence[str | Path],
         datatypes: type[FileSet] | ty.Sequence[type[FileSet]],
-        session_field: list[IDSpec],
-        scan_field: list[IDSpec],
-        resource_field: list[IDSpec],
+        session_field: ty.Sequence[IDSpec],
+        scan_field: ty.Sequence[IDSpec] = (),
+        resource_field: ty.Sequence[IDSpec] = (),
         recursive: bool = False,
-        avoid_clashes: bool = True,
-        ignore_paths: list[str] | None = None,
-        ignore_types: list[type[FileSet]] | None = None,
+        on_resource_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
+        allow_unrecognised: ty.Sequence[str] | None = None,
+        exclude_paths: ty.Sequence[str] | None = None,
+        ignore_datatypes: ty.Sequence[type[FileSet]] | None = None,
         path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
+        metadata_tables: list[MetadataTable] | None = None,
     ) -> list[Self]:
         """Loads all imaging sessions from a list of DICOM files
 
@@ -372,28 +586,55 @@ class ImagingSession:
         datatypes : type or list[type]
             the fileformats to load from the paths, e.g. DicomSeries or
             [DicomSeries, NiftiGz]
-        session_field: list[IDSpec]
+        session_field: ty.Sequence[IDSpec]
             the metadata field that uniquely identifies the session, used to group files
             together before project/subject/visit IDs are extracted (e.g. StudyInstanceUID)
-        scan_field: list[IDSpec]
+        scan_field: ty.Sequence[IDSpec]
             the value of this field is used to group resources under single scans.
-        resource_field: list[IDSpec]
-            the value of this field is used to identify resources
+            For a fileset whose type is not matched by any spec here (including the
+            empty default), the scan is named after that fileset's resource.
+        resource_field: ty.Sequence[IDSpec]
+            the value of this field is used to identify resources. If empty, the
+            resource is labelled with the mime-like rendering of the fileset's type
+            name, e.g. 'vectra-export', 'sqlite3-db'
         recursive : bool, optional
-            recurse into directories passed as file paths (i.e. by appending ``**/*`` and running a glob),
-            by default False
-        avoid_clashes : bool, optional
-            if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
-        ignore_paths : list[str] or None, optional
-            regular expressions to match paths that should be ignored
-        ignore_types : list[type[FileSet]] or None, optional
-            types to be ignored
+            recurse into directories passed as file paths. For file datatypes this
+            flattens the tree; when any ``datatypes`` / ``ignore_datatypes`` entry is
+            a directory format the walk stops descending into a directory as soon as
+            it validates as one of them (yielding a ``datatypes`` match whole,
+            skipping an ``ignore_datatypes`` match whole). ``generic/directory`` and
+            ``generic/file-set`` cannot be used as ``datatypes`` with ``recursive``.
+            By default False
+        on_resource_clash : OnResourceClash or Sequence[ClashSpec], optional
+            how to handle two filesets resolving to the same scan/resource name.
+            A bare policy string ("error"/"avoid"/"merge"/"overwrite") applies to
+            any clash. A sequence of ``ClashSpec`` (policy + datatype scope) resolves
+            each clash with the first spec whose scope covers *both* filesets;
+            "merge" folds them into a ``SetOf``, "avoid" suffixes, "overwrite"
+            replaces; a clash no spec covers raises. Default "error".
+        allow_unrecognised : Sequence[str] or None, optional
+            regular expressions matched against the *basename* of any input path
+            that no datatype recognised - matches are skipped instead of raising
+            ``FormatRecognitionError``. Does not affect recognised filesets.
+        exclude_paths : Sequence[str] or None, optional
+            glob patterns matched against each input path *relative to its input
+            directory*, applied before classification so a match is dropped even if
+            a datatype would claim it (e.g. a vendor thumbnail that is a valid
+            ``image/png``). ``*`` does not cross ``/``, ``**`` does.
+        ignore_datatypes : ty.Sequence[type[FileSet]] or None, optional
+            datatypes that are expected in the input but not wanted: recognised
+            filesets of these types are dropped from the result rather than raising,
+            and (when ``recursive``) matching directories are skipped without
+            descending. An input path matching neither ``datatypes`` nor
+            ``ignore_datatypes`` (nor ``allow_unrecognised``/``exclude_paths``)
+            still raises.
         path_metadata_regex : ty.Sequence[PathMetadataRegex], optional
             Regular expressions to extract "metadata" values from resource file paths as named groups. The named
             groups are used as metadata fields for the resource files, and the extracted values will be used to populate
             the corresponding metadata fields to complement the metadata read from the file headers.
+        metadata_tables : list[MetadataTable] or None, optional
+            a list of MetadataTable objects that define how to extract metadata from input files (e.g. CSV files and spreadsheets)
+            and join them with the sessions. If None, no metadata tables will be used.
 
 
         Returns
@@ -408,22 +649,37 @@ class ImagingSession:
             DICOM files within the session
         """
 
-        if ignore_types:
-            if contradicting := set(datatypes) & set(ignore_types):
-                raise ValueError(
-                    "The following datatypes were listed for both inclusion (`datatypes`) and exclusion "
-                    f"(`ignore_types`): {list(contradicting)}"
-                )
-        else:
-            ignore_types = []
+        if not isinstance(datatypes, ty.Sequence):
+            datatypes = [datatypes]
+        datatypes = list(datatypes)
 
+        ignore_datatypes = list(ignore_datatypes or [])
+        if contradicting := set(datatypes) & set(ignore_datatypes):
+            raise ValueError(
+                "The following datatypes were listed for both inclusion (`datatypes`) and exclusion "
+                f"(`ignore_datatypes`): {list(contradicting)}"
+            )
+
+        # When recursing, a directory format among datatypes/ignore_datatypes makes
+        # the walk prune-on-match (see _recursive_collect) rather than flatten. The
+        # bare generic types match every directory / path so they can't be used.
+        recurse_into_dirs = False
         if recursive:
             if Directory in datatypes or FileSet in datatypes:
                 raise ValueError(
-                    "Cannot use `generic/directory` or `generic/file-set` datatypes with the `recursive` option. Please "
-                    "define a more specific directory datatype (datatypes={datatypes})"
+                    "Cannot use `generic/directory` or `generic/file-set` as a `--datatype` "
+                    "with `--recursive` (they match every directory / path at every depth). "
+                    f"Use a specific directory datatype instead (datatypes={datatypes})"
                 )
-            ignore_types.append(Directory)
+            recurse_into_dirs = any(
+                isinstance(d, type) and issubclass(d, Directory)
+                for d in (*datatypes, *ignore_datatypes)
+            )
+            if not recurse_into_dirs:
+                # file-only recursion: flatten everything, and let a generic
+                # Directory soak up the bare directory nodes so from_paths doesn't
+                # choke on them
+                ignore_datatypes.append(Directory)
 
         if isinstance(files_path, (Path, str)):
             files_path = [files_path]
@@ -432,6 +688,7 @@ class ImagingSession:
                 "Invalid type of 'files_path', must be a pathlib.Path, str or list of"
             )
         fspaths: list[Path] = []
+        input_dirs: list[Path] = []
         for fspath in files_path:
             logger.debug("Searching for file types in '%s'", str(fspath))
             if isinstance(fspath, Path) or "*" not in fspath:
@@ -441,7 +698,16 @@ class ImagingSession:
                         f"Provided file-system path '{fspath}' does not exist"
                     )
                 if fspath.is_dir():
-                    if recursive:
+                    input_dirs.append(fspath)
+                    if recurse_into_dirs:
+                        logger.debug(
+                            "Walking '%s' for directory datatypes (prune-on-match)",
+                            str(fspath),
+                        )
+                        fspaths.extend(
+                            _recursive_collect(fspath, datatypes, ignore_datatypes)
+                        )
+                    elif recursive:
                         logger.debug(
                             "Recursively searching for all paths '%s' directory",
                             str(fspath),
@@ -465,6 +731,9 @@ class ImagingSession:
 
         fspaths = [fix_long_path(p) for p in fspaths]
 
+        if exclude_paths:
+            fspaths = _drop_excluded_paths(fspaths, input_dirs, exclude_paths)
+
         if nonexistent := [str(p) for p in fspaths if not Path(p).exists()]:
             raise ValueError(
                 "The following paths do not exist:\n"
@@ -482,23 +751,51 @@ class ImagingSession:
             "%Y%m%d%H%M%S",
         )
 
-        if not isinstance(datatypes, ty.Sequence):
-            datatypes = [datatypes]
-
         from_paths_kwargs = {}
 
         # Sort loaded series by StudyInstanceUID (imaging session)
         logger.info(f"Loading {datatypes} from {files_path}...")
         filesets = from_paths(
             fspaths,
-            *(datatypes + ignore_types),
-            ignore="|".join(ignore_paths) if ignore_paths else None,
+            *(datatypes + ignore_datatypes),
+            ignore="|".join(allow_unrecognised) if allow_unrecognised else None,
             **from_paths_kwargs,  # type: ignore[arg-type]
         )
-        if ignore_types:
+        if ignore_datatypes:
+            # drop filesets of an ignored datatype, but never one that also matches
+            # an explicitly-requested datatype (a specific Directory subclass in
+            # `datatypes` would otherwise be filtered by the generic `Directory`
+            # added for file-only recursion)
             filesets = [
-                f for f in filesets if not any(isinstance(f, t) for t in ignore_types)
+                f
+                for f in filesets
+                if any(isinstance(f, d) for d in datatypes)
+                or not any(isinstance(f, t) for t in ignore_datatypes)
             ]
+
+        if path_metadata_regex:
+            for fileset in tqdm(
+                filesets,
+                "Extracting metadata from file paths...",
+            ):
+                for path_mdata in path_metadata_regex:
+                    if isinstance(fileset, path_mdata.datatype):
+                        fileset_path = str(getattr(fileset, "fspath", fileset.parent))
+                        match = re.match(path_mdata.regex, fileset_path)
+                        if match is None:
+                            raise ValueError(
+                                f"Could not extract metadata from path '{fileset_path}' "
+                                f"using pattern '{path_mdata.regex}'"
+                            )
+                        fileset.metadata.update(match.groupdict())
+
+        # Expose each fileset's resolved type name as a metadata field so it can be
+        # referenced from --session/--scan/--resource specs (setdefault so an
+        # explicit path-regex group of the same name still wins)
+        for fileset in filesets:
+            fileset.metadata.setdefault(cls.TYPE_METADATA_KEY, fileset.type_name)
+
+        MetadataTable.inject_list(metadata_tables, filesets)
 
         sessions: dict[tuple[str, str, str] | str, Self] = {}
 
@@ -507,9 +804,9 @@ class ImagingSession:
             "Sorting resources into XNAT tree structure...",
         ):
             session_uid = IDSpec.get_value_from_matching_spec(fileset, session_field)
-            scan_id = IDSpec.get_value_from_matching_spec(fileset, scan_field)
-            # XNAT requires DICOM datasets to have in 'DICOM' and 'secondary'
-            # resource labels otherwise some features don't work
+            # XNAT requires DICOM datasets to have 'DICOM'/'secondary' resource
+            # labels otherwise some features don't work
+            resource_derived = False
             if isinstance(fileset, DicomCollection):
                 try:
                     image_type = fileset.contents[0].metadata["ImageType"]
@@ -517,11 +814,39 @@ class ImagingSession:
                     resource_label = "DICOM"
                 else:
                     resource_label = dicom_image_type_to_resource_label(image_type)
-
+            elif not resource_field:
+                # No --resource spec given: label the resource with the mime-like
+                # rendering of the fileset's type name, e.g. 'vectra-export'
+                resource_label = _type_name_resource_label(fileset.type_name)
+                resource_derived = True
             else:
                 resource_label = IDSpec.get_value_from_matching_spec(
                     fileset, resource_field
                 )
+            # No --scan spec matches this fileset's type (e.g. the datatype-scoped
+            # 'SeriesNumber' default doesn't apply to a non-DICOM fileset): put the
+            # resource in a scan of the same name
+            scan_id = IDSpec.get_value_from_matching_spec(
+                fileset, scan_field, default=_DERIVED_ID
+            )
+            scan_derived = scan_id is _DERIVED_ID
+            if scan_derived:
+                scan_id = resource_label
+            derived_specs = [
+                spec
+                for spec, was_derived in (
+                    ("--scan", scan_derived),
+                    ("--resource", resource_derived),
+                )
+                if was_derived
+            ]
+            clash_hint = (
+                f"the {' and '.join(derived_specs)} ID(s) for this resource were "
+                f"auto-derived from its fileset type; pass explicit "
+                f"{' / '.join(derived_specs)} specifier(s) to control grouping"
+                if derived_specs
+                else None
+            )
             try:
                 session = sessions[session_uid]
             except KeyError:
@@ -536,25 +861,22 @@ class ImagingSession:
                 scan_id,
                 session_uid,
             )
-            metadata = None
-            for path_mdata in path_metadata_regex:
-                if isinstance(fileset, path_mdata.datatype):
-                    fileset_path = str(getattr(fileset, "fspath", fileset.parent))
-                    match = re.match(path_mdata.regex, fileset_path)
-                    if match is None:
-                        raise ValueError(
-                            f"Could not extract metadata from path '{fileset_path}' "
-                            f"using pattern '{path_mdata.regex}'"
-                        )
-                    metadata = match.groupdict()
             session.add_resource(
                 scan_id,
                 None,
                 resource_label,
                 fileset,
-                avoid_clashes=avoid_clashes,
-                metadata=metadata,
+                on_clash=on_resource_clash,
+                clash_hint=clash_hint,
             )
+        # Inject metadata from the metadata tables into the sessions, scans, and resources
+        MetadataTable.inject_list(metadata_tables, list(sessions.values()))
+        for session in sessions.values():
+            MetadataTable.inject_list(metadata_tables, list(session.scans.values()))
+            for scan in session.scans.values():
+                MetadataTable.inject_list(
+                    metadata_tables, list(scan.resources.values())
+                )
         return list(sessions.values())
 
     def assign(
@@ -633,6 +955,7 @@ class ImagingSession:
         to_process_label: str | None = None,
         processed_label: str = "xnat-sorted",
         max_workers: int | None = None,
+        wait_period: int = 0,
     ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
@@ -657,6 +980,9 @@ class ImagingSession:
             the number of threads to use to fetch per-instance attachment info from
             Orthanc concurrently. If None, defaults to
             `concurrent.futures.ThreadPoolExecutor`'s default.
+        wait_period : int, optional
+            Minimum number of seconds since Orthanc last updated a study before it is
+            staged, by default 0.
 
         Returns
         -------
@@ -713,6 +1039,25 @@ class ImagingSession:
         staged: list[ImagingSession] = []
         for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
             study = get_json(f"/studies/{study_id}")
+            if wait_period:
+                try:
+                    last_update = isoparse(study["LastUpdate"])
+                except (KeyError, TypeError, ValueError) as e:
+                    raise ValueError(
+                        f"Could not parse LastUpdate for Orthanc study '{study_id}'"
+                    ) from e
+                if last_update.tzinfo is None:
+                    last_update = last_update.replace(tzinfo=UTC)
+                age = (datetime.now(UTC) - last_update).total_seconds()
+                if age < wait_period:
+                    logger.info(
+                        "Skipping Orthanc study '%s' because it was updated %.0f "
+                        "seconds ago (wait period: %d seconds)",
+                        study_id,
+                        age,
+                        wait_period,
+                    )
+                    continue
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
@@ -720,6 +1065,7 @@ class ImagingSession:
             session_dir.mkdir(parents=True, exist_ok=True)
 
             modalities: set[str] = set()
+            staged_instance_ids: dict[str, set[str]] = {}
             for series_id in study["Series"]:
                 series = get_json(f"/series/{series_id}")
                 if modality := series["MainDicomTags"].get("Modality"):
@@ -738,20 +1084,21 @@ class ImagingSession:
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
+                staged_instance_ids[series_id] = {
+                    instance["ID"] for instance in instances
+                }
 
                 def _link_instance(
                     instance: ty.Mapping[str, ty.Any],
                     resource_dir: Path = resource_dir,
                     series_id: str = series_id,
-                ) -> tuple[str, str] | None:
+                ) -> tuple[str, str]:
                     instance_id = instance["ID"]
                     sop_uid = instance["MainDicomTags"].get(
                         "SOPInstanceUID", instance_id
                     )
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
-                    if dest_path.exists():
-                        return None
                     attachment = get_json(
                         f"/instances/{instance_id}/attachments/dicom/info"
                     )
@@ -761,14 +1108,15 @@ class ImagingSession:
                             "compressed in Orthanc — disable StorageCompression in the "
                             "Orthanc config to use hardlink sorting."
                         )
-                    uuid = attachment["Uuid"]
-                    src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
-                    os.link(src_path, dest_path)
+                    if not dest_path.exists():
+                        uuid = attachment["Uuid"]
+                        src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
+                        os.link(src_path, dest_path)
                     return fname, attachment["UncompressedMD5"]
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     linked = executor.map(_link_instance, instances)
-                checksums: dict[str, str] = dict(r for r in linked if r is not None)
+                checksums: dict[str, str] = dict(linked)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
                 with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
@@ -786,7 +1134,25 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
+            staged_session = cls.load(session_dir)
+
             if processed_label:
+                current_study = get_json(f"/studies/{study_id}")
+                current_series_ids = set(current_study["Series"])
+                if current_study.get("LastUpdate") != study.get(
+                    "LastUpdate"
+                ) or current_series_ids != set(staged_instance_ids):
+                    raise RuntimeError(
+                        f"Orthanc study '{study_id}' changed while it was being staged"
+                    )
+                for series_id, expected_instance_ids in staged_instance_ids.items():
+                    current_instances = get_json(f"/series/{series_id}/instances")
+                    if {instance["ID"] for instance in current_instances} != (
+                        expected_instance_ids
+                    ):
+                        raise RuntimeError(
+                            f"Orthanc study '{study_id}' changed while it was being staged"
+                        )
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
@@ -794,7 +1160,7 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
-            staged.append(cls.load(session_dir))
+            staged.append(staged_session)
 
         return staged
 
@@ -803,9 +1169,10 @@ class ImagingSession:
         dest_dir: Path,
         specs: dict[type[FileSet], ty.Any] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
-        avoid_clashes: bool = False,
+        on_resource_clash: OnResourceClash = "error",
         require_matching_spec: bool = True,
         max_workers: int | None = None,
+        transforms: dict[type[FileSet], dict[str, Transform]] | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -821,11 +1188,12 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
-        avoid_clashes : bool, optional
-            when copying a file that doesn't need to be deidentified, if a resource
-            with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
+        on_resource_clash : OnResourceClash, optional
+            when copying a file that doesn't need to be deidentified, if "avoid", if a resource with the same name already exists in the scan, increment the
+            resource name by appending _1, _2 etc. to the name until a unique name is found, by default "avoid"
+            if "merge", existing sessions with the same name will be merged.
+            if "error", an error will be raised if a session with the same name already exists in the staging directory.
+            if "overwrite", an existing resource with the same name will be overwritten.
         require_matching_spec : bool, optional
             whether to require a matching specification for each fileset, by default True
         max_workers : int, optional
@@ -835,6 +1203,11 @@ class ImagingSession:
             Formats that don't accept/use it just ignore it. Resources themselves are
             deidentified/copied sequentially, one at a time, to keep failures easy to
             trace back to the resource that caused them.
+        transforms : dict[type[FileSet], dict[str, Transform]], optional
+            per-format transforms that compute de-identification replacement values.
+            Keys are file-format types; values are dicts mapping transform names to
+            callables that accept a dataset/mapping and return a replacement value.
+            Passed through as ``variable_builders`` to ``FileSet.deidentify()``.
 
         Returns
         -------
@@ -846,6 +1219,8 @@ class ImagingSession:
         """
         if specs is None:
             specs = {}
+        if transforms is None:
+            transforms = {}
 
         def select_spec(fileset: FileSet) -> ty.Any:
             """Select the appropriate deidentification specification for the
@@ -865,6 +1240,25 @@ class ImagingSession:
                 )
             return next(iter(matching_specs.values()))
 
+        def select_transforms(
+            fileset: FileSet,
+        ) -> dict[str, Transform] | None:
+            """Select the transforms that match this fileset's type."""
+            matching = {k: v for k, v in transforms.items() if isinstance(fileset, k)}
+            if not matching:
+                return None
+            if len(matching) == 1:
+                return next(iter(matching.values()))
+            # Prefer the most specific type
+            for k in matching:
+                if all(issubclass(k, other_k) for other_k in matching):
+                    return matching[k]
+            # Fall back to merging all matching transforms
+            merged: dict[str, Transform] = {}
+            for v in matching.values():
+                merged.update(v)
+            return merged
+
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
 
@@ -874,8 +1268,10 @@ class ImagingSession:
                 resource_dest_dir = dest_dir / scan.id / resource_name
                 contains_phi = getattr(resource.fileset, "contains_phi", False)
                 resource_spec = None
+                resource_transforms = None
                 if contains_phi:
                     resource_spec = select_spec(resource.fileset)
+                    resource_transforms = select_transforms(resource.fileset)
                     if resource_spec is None:
                         msg = (
                             "No deidentification specification found for %s fileset in %s/%s resource. "
@@ -903,6 +1299,7 @@ class ImagingSession:
                     resource_spec,
                     copy_mode,
                     max_workers,
+                    transforms=resource_transforms,
                 )
                 if reid_mdata is not None:
                     reid_series.append(reid_mdata)
@@ -911,15 +1308,74 @@ class ImagingSession:
                     scan.type,
                     resource_name,
                     deid_resource,
-                    avoid_clashes=avoid_clashes,
+                    on_clash=on_resource_clash,
                 )
+        # SESSION-LEVEL RESOURCES, which this loop used to drop entirely.
+        #
+        # A session can carry resources attached to the SESSION rather than to a
+        # scan -- a report, a summary, anything added with add_session_resource.
+        # deidentified starts from new_empty(), which copies the ids and nothing
+        # else, and the loop above walks self.scans only, so those resources
+        # never reached the output. They were not de-identified, not copied, and
+        # nothing said so.
+        #
+        # save() has always handled them (included_session_resources), so this
+        # was a hole in deidentify alone, and it is worse than a plain data loss:
+        # the per-session completeness gate counts data files on both sides, so a
+        # session carrying one would come out short, be reported incomplete, and
+        # correctly refuse to unlink its input -- for ever, on every cycle,
+        # because the next run drops it again.
+        #
+        # They go at the top of dest_dir rather than under a scan id, which is
+        # where save() puts them and where load() looks for them.
+        for resource_name, resource in self.session_resources.items():
+            contains_phi = getattr(resource.fileset, "contains_phi", False)
+            resource_spec = None
+            resource_transforms = None
+            if contains_phi:
+                resource_spec = select_spec(resource.fileset)
+                resource_transforms = select_transforms(resource.fileset)
+                if resource_spec is None:
+                    msg = (
+                        "No deidentification specification found for %s fileset in the "
+                        "session-level %s resource. Please provide a project "
+                        "specification for %s in the file format hierarchy to "
+                        "deidentify this resource. Returning None and copying the files "
+                        "without deidentification, which may lead to PHI being uploaded "
+                        "to XNAT if the fileset contains PHI. Matching specifications "
+                        "found in project spec: %s"
+                    )
+                    msg_vars = (
+                        type(resource.fileset).__name__,
+                        resource_name,
+                        type(resource.fileset).__name__,
+                        list(specs),
+                    )
+                    if require_matching_spec:
+                        raise KeyError(msg % msg_vars)
+                    else:
+                        logger.warning(msg, *msg_vars)
+            deid_resource, reid_mdata = _deidentify_or_copy_resource(
+                resource.fileset,
+                resource_name,
+                dest_dir / resource_name,
+                contains_phi,
+                resource_spec,
+                copy_mode,
+                max_workers,
+                transforms=resource_transforms,
+            )
+            if reid_mdata is not None:
+                reid_series.append(reid_mdata)
+            deidentified.add_session_resource(resource_name, deid_resource)
+
         return deidentified, collate_metadata_series(reid_series)
 
     def associate_files(
         self,
         patterns: list[AssociatedFiles],
         spaces_to_underscores: bool = True,
-        avoid_clashes: bool = False,
+        on_resource_clash: OnResourceClash = "error",
     ) -> list[FileSet]:
         """Adds files associated with the primary files to the session
 
@@ -985,7 +1441,7 @@ class ImagingSession:
                     resource_name,
                     fspaths[0],
                     associated=associated_files,
-                    avoid_clashes=avoid_clashes,
+                    on_clash=on_resource_clash,
                 )
                 all_associated.extend(fspaths)
         return all_associated
@@ -996,10 +1452,10 @@ class ImagingSession:
         scan_type: str | None,
         resource_name: str,
         fileset: FileSet,
-        overwrite: bool = False,
         associated: AssociatedFiles | None = None,
-        avoid_clashes: bool = False,
+        on_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
         metadata: dict[str, ty.Any] | None = None,
+        clash_hint: str | None = None,
     ) -> None:
         """Adds a resource to the imaging session
 
@@ -1013,28 +1469,23 @@ class ImagingSession:
             the name of the resource to add
         fileset : FileSet
             the fileset to add as the resource
-        overwrite : bool
-            whether to overwrite existing resource
         associated : bool, optional
             whether the resource is primary or associated to a primary resource
-        avoid_clashes : bool, optional
-            if a resource with the same name already exists in the scan, increment the
-            resource name by appending _1, _2 etc. to the name until a unique name is found,
-            by default False
+        on_clash : OnResourceClash or Sequence[ClashSpec], optional
+            a bare policy ("error"/"avoid"/"merge"/"overwrite") applied to any
+            clash, or a sequence of ``ClashSpec`` (policy + datatype scope) where
+            the clash is resolved by the first spec whose scope covers *both* the
+            existing and incoming filesets - a clash no spec covers raises.
+            "avoid" suffixes the name, "merge" folds both into a ``SetOf``,
+            "overwrite" replaces the existing one, "error" raises. Default "error".
         metadata : dict[str, Any], optional
             Dictionary containing metadata values to update the resource with.
-
-        Raises
-        ------
-        KeyError
-            if a resource with the same name already exists in the scan and
-            `avoid_clashes` and `overwrite` are both False
+        clash_hint : str, optional
+            extra context appended to the message when a resource-name clash is
+            hit (raised for ``on_clash="error"``, logged for ``"avoid"``), e.g. to
+            note that the clashing IDs were auto-derived because no ``--scan``/
+            ``--resource`` spec was given.
         """
-        if overwrite and avoid_clashes:
-            raise ValueError(
-                "Cannot set both 'overwrite' and 'avoid_clashes' to True when adding a "
-                "resource"
-            )
         try:
             scan = self.scans[scan_id]
         except KeyError:
@@ -1070,7 +1521,17 @@ class ImagingSession:
                     existing,
                 )
                 return
-            elif overwrite:
+            if isinstance(on_clash, str):
+                policy = on_clash
+            else:
+                policy = _resolve_clash_policy(
+                    on_clash,
+                    existing.fileset,
+                    fileset,
+                    f"for resource '{resource_name}' in {scan_id} scan of "
+                    f"{self.name} session",
+                )
+            if policy == "overwrite":
                 logger.warning(
                     "Overwriting existing resource '%s' in %s scan in %s session",
                     resource_name,
@@ -1078,7 +1539,41 @@ class ImagingSession:
                     self.name,
                 )
                 del scan.resources[resource_name]
-            elif avoid_clashes:
+            elif policy == "merge":
+                logger.info(
+                    "Merging resource '%s' with existing resource in %s scan in %s session",
+                    resource_name,
+                    scan_id,
+                    self.name,
+                )
+                # Combine the members into a single ``SetOf[...]`` resource,
+                # classified by the union of their content types, and collate their
+                # metadata the same way a scan collates its resources' (see
+                # ``ImagingScan.metadata``): fields every member agrees on stay
+                # scalar, fields that differ (e.g. a per-file 'relpath' from
+                # ``--path-metadata-regex``) become a list aligned with the merged
+                # files.
+                existing_fspaths = list(existing.fileset.fspaths)
+                content_types = tuple(
+                    dict.fromkeys(
+                        _set_content_types(existing.fileset)
+                        + _set_content_types(fileset)
+                    )
+                )
+                merged_fileset = SetOf[content_types](
+                    [*existing_fspaths, *fileset.fspaths]
+                )
+                members = _expand_collated_metadata(
+                    dict(existing.fileset.metadata), len(existing_fspaths)
+                )
+                members.append(dict(fileset.metadata))
+                merged_fileset.metadata.update(Metadata.collate(members))
+                resource = ImagingResource(
+                    name=resource_name, fileset=merged_fileset, scan=scan
+                )
+                if metadata:
+                    resource.metadata.update(metadata)
+            elif policy == "avoid":
                 match = re.match(r"^(.*)__(\d+)$", resource_name)
                 if match:
                     base_name, num = match.groups()
@@ -1090,18 +1585,26 @@ class ImagingSession:
                     resource_name = f"{base_name}__{num}"
                     num += 1
                 logger.warning(
-                    "Incremented resource name to '%s' to avoid clash with existing resources",
+                    "Incremented resource name to '%s' to avoid clash with existing "
+                    "resources%s",
                     resource_name,
+                    f". {clash_hint}" if clash_hint else "",
                 )
                 resource = ImagingResource(
                     name=resource_name, fileset=fileset, scan=scan
                 )
-            else:
+            elif policy == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                    f"{self.name} session. Use 'overwrite=True' to overwrite the existing resource or "
-                    "'avoid_clashes=True' to increment the resource name",
+                    f"{self.name} session. Pass --on-resource-clash <policy> <scope> "
+                    "(policy one of 'avoid'/'merge'/'overwrite') with a scope covering "
+                    "the clashing datatype(s), or tighten --scan / --resource so they "
+                    "don't collide." + (f" {clash_hint}" if clash_hint else ""),
                 )
+            else:
+                assert (
+                    False
+                ), f"Invalid resource-clash policy: {policy} (should be one of {ON_RESOURCE_CLASH})"
         scan.resources[resource_name] = resource
 
     def add_session_resource(
@@ -1244,6 +1747,30 @@ class ImagingSession:
             session.uid = session.metadata.get(cls.UID_METADATA_KEY, None)
         return session
 
+    def staging_dirname(self, available_projects: list[str] | None = None) -> str:
+        """The directory name this session is saved under by :meth:`save`.
+
+        Split out of ``save`` so that a caller can work out where the session
+        WILL land before saving it. ``deidentify_api`` needs that to decide
+        whether an output already exists, and rebuilding the rule at the call
+        site would let the two drift: the name is not simply the input
+        directory's, because it is derived from the assigned ids, gains a
+        ``run_uid`` suffix when one is set and an invalid-project prefix when
+        the project is unrecognised.
+        """
+        if self.name is None:
+            # Project/subject/session IDs haven't been assigned yet, so flag the
+            # directory as not-yet-assigned rather than assuming they're set
+            return self.staging_relpath[0]
+        if available_projects is None or self.project_id in available_projects:
+            project_id = self.project_id
+        else:
+            project_id = "INVALID_UNRECOGNISED_" + self.project_id
+        session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
+        if self.run_uid:
+            session_dirname += f".{self.run_uid}"
+        return session_dirname
+
     def save(
         self,
         dest_dir: Path,
@@ -1304,19 +1831,7 @@ class ImagingSession:
             )
 
         saved = self.new_empty()
-        if self.name is None:
-            # Project/subject/session IDs haven't been assigned yet, so flag the
-            # directory as not-yet-assigned rather than assuming they're set
-            session_dirname = self.staging_relpath[0]
-        else:
-            if available_projects is None or self.project_id in available_projects:
-                project_id = self.project_id
-            else:
-                project_id = "INVALID_UNRECOGNISED_" + self.project_id
-            session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
-            if self.run_uid:
-                session_dirname += f".{self.run_uid}"
-        session_dir = dest_dir / session_dirname
+        session_dir = dest_dir / self.staging_dirname(available_projects)
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(included_scans, f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(

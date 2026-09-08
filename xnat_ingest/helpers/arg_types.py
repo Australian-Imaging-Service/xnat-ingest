@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import csv
+import functools
 import logging
+import operator
 import random
 import re
 import string
+import types
 import typing as ty
 from collections import Counter
 from pathlib import Path
@@ -13,7 +17,12 @@ from pathlib import Path
 import attrs
 import click.types
 from dateutil import parser as dateutil_parser
-from fileformats.core import DataType, FileSet, from_mime
+from fileformats.core import DataType, FileSet, from_mime, from_paths
+from fileformats.core.exceptions import FormatRecognitionError
+from fileformats.text import Csv, Tsv
+from fileformats.vendor.openxmlformats_officedocument.application import (
+    Spreadsheetml_Sheet,
+)
 
 from ..exceptions import ImagingSessionParseError
 
@@ -33,6 +42,15 @@ if ty.TYPE_CHECKING:
     ]
 
 logger = logging.getLogger("xnat-ingest")
+
+# Sentinel distinguishing "no default supplied" from a real ``None``/``""`` default
+_UNSET: ty.Any = object()
+
+# Define a type for the --on-resource-clash option, which can be one of "avoid", "merge", or "error".
+# The tuple is the single source of truth: it doubles as the click.Choice() options, while the
+# Literal (derived from it) is used for type-checking the parameter/argument annotations.
+ON_RESOURCE_CLASH = ("error", "avoid", "merge", "overwrite")
+OnResourceClash = ty.Literal["error", "avoid", "merge", "overwrite"]
 
 
 def datatype_converter(
@@ -70,13 +88,22 @@ class CliType(click.types.ParamType):
     ) -> ty.Any:
         if isinstance(value, self.type):
             return value
-        if len(attrs.fields(self.type)) == 1:
+        if len(self._init_fields(self.type)) == 1:
             return self.type(value)  # type: ignore[call-arg]
         return self.type(*value)
 
+    @staticmethod
+    def _init_fields(type_: type) -> list[ty.Any]:
+        """The attrs fields that are actually settable via ``__init__`` - i.e. the ones
+        the CLI needs to supply values for. Fields declared ``init=False`` (e.g. a lazily
+        populated cache) still show up in ``attrs.fields()`` but must be excluded from the
+        parameter arity and default-filling, otherwise the type is constructed with too
+        many positional args."""
+        return [f for f in attrs.fields(type_) if f.init]
+
     @property
     def arity(self) -> int:  # type: ignore[override]
-        return len(attrs.fields(self.type))
+        return len(self._init_fields(self.type))
 
     @property
     def name(self) -> str:  # type: ignore[override]
@@ -97,7 +124,7 @@ class CliType(click.types.ParamType):
             return self._add_defaults_for_missing_args(args, self.type)
 
     def _add_defaults_for_missing_args(self, args: list[str], type_: type) -> list[str]:
-        fields = attrs.fields(type_)
+        fields = self._init_fields(type_)
         if len(args) < len(fields):
             for field in fields[len(args) :]:
                 if field.default is not attrs.NOTHING:
@@ -160,6 +187,20 @@ class PathMetadataRegex(MultiCliTyped):
 
     regex: str
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+
+
+@attrs.define
+class ClashSpec(MultiCliTyped):
+    """A ``--on-resource-clash`` entry: a policy plus the datatype scope it applies
+    to. A resource-name clash between two filesets is resolved by the first
+    ``ClashSpec`` whose ``scope`` covers *both* of them; anything not covered
+    raises. ``scope`` accepts a mime-like, a ``|``-union of them, or ``all``.
+    """
+
+    policy: str = attrs.field(validator=attrs.validators.in_(ON_RESOURCE_CLASH))
+    scope: ty.Union[ty.Type[FileSet], types.UnionType] = attrs.field(
+        converter=datatype_converter
+    )
 
 
 @attrs.define
@@ -400,20 +441,24 @@ class IDSpec(MultiCliTyped):
                 "'--path-metadata-regex' to give it a proper name first if needed"
             ) from None
 
-    xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_]+")
+    # '-' is permitted in XNAT IDs/labels (and BIDS-style 'sub-01' labels rely on
+    # it); everything else outside [A-Za-z0-9_-] is collapsed to '_'
+    xnat_id_escape_re = re.compile(r"[^a-zA-Z0-9_-]+")
 
     @classmethod
     def get_value_from_matching_spec(
         cls,
         metadata: MetadataLike,
-        id_fields: list["IDSpec"],
+        id_fields: ty.Sequence["IDSpec"],
         missing_ids: dict[str, str] | None = None,
         escape: bool = True,
+        default: ty.Any = _UNSET,
     ) -> str:
         """
         Given a list of IDSpec objects, find the first one that matches the type of the
         resource and use it to extract the ID value from the resource's metadata. If no
-        matching IDSpec is found, raise a TypeError.
+        matching IDSpec is found, return ``default`` if one was supplied, otherwise
+        raise a TypeError.
 
         Parameters
         ----------
@@ -426,6 +471,9 @@ class IDSpec(MultiCliTyped):
             the field name
         escape: bool
             If True, the extracted value will be escaped to be a valid XNAT ID (alphanumeric and underscores only)
+        default: Any
+            If supplied, returned when no IDSpec's datatype matches the target
+            instead of raising ``TypeError``
 
         Returns
         -------
@@ -435,7 +483,7 @@ class IDSpec(MultiCliTyped):
         Raises
         ------
         TypeError
-            If no matching IDSpec is found for the resource's type
+            If no matching IDSpec is found for the resource's type and no ``default`` was supplied
         ImagingSessionParseError
             If the metadata field is not found and missing_ids is not provided
         """
@@ -446,9 +494,13 @@ class IDSpec(MultiCliTyped):
                 )
                 logger.debug("Using %s to extract ID from %s", id_field, metadata)
                 return value
+        if default is not _UNSET:
+            return default
+        specs = ", ".join(str(f) for f in id_fields) or "(none)"
         raise TypeError(
-            f"No resource label field specification matches type of {metadata}, "
-            f"provided {id_fields}"
+            f"None of the provided ID specifications [{specs}] apply to a "
+            f"{type(metadata).__name__}; supply a specification whose datatype matches "
+            f"this type (use 'all' to match any type)"
         )
 
 
@@ -477,6 +529,24 @@ class CollationSpec(MultiCliTyped):
         return FileSet.CopyCollation[self.collation.lower()]
 
 
+class SemicolonListType(click.types.StringParamType):
+    """A plain string option (used with ``multiple=True``) whose environment-variable
+    value is split on ``;`` rather than on whitespace, with surrounding whitespace
+    stripped and empty entries dropped.
+
+    This keeps ``--allow-unrecognised`` / ``--exclude-path`` consistent with the other
+    list-valued ``XINGEST_*`` env vars and lets an individual value (e.g. a glob with a
+    space in a path component) contain whitespace."""
+
+    name = "text"
+
+    def split_envvar_value(self, envvar: str) -> ty.Sequence[str]:
+        return [entry.strip() for entry in envvar.split(";") if entry.strip()]
+
+
+SEMICOLON_LIST = SemicolonListType()
+
+
 class CopyModeParamType(click.ParamType):
     name = "copy_mode"
 
@@ -493,3 +563,263 @@ class CopyModeParamType(click.ParamType):
             return FileSet.CopyMode[value.lower()]
         except KeyError:
             self.fail(f"{value!r} is not a valid copy mode", param, ctx)
+
+
+def parse_join_exprs(exprs: str | list[str] | list[JoinExpr]) -> list[JoinExpr]:
+    if isinstance(exprs, str):
+        exprs = [e.replace(r"\,", ",") for e in re.split(r"(?<!\\),", exprs)]
+    parsed = []
+    for expr in exprs:
+        if isinstance(expr, JoinExpr):
+            parsed.append(expr)
+        else:
+            try:
+                column_name, value_expr = expr.split("=", 1)
+                parsed.append(
+                    JoinExpr(
+                        column_name=column_name.strip(), value_expr=value_expr.strip()
+                    )
+                )
+            except ValueError:
+                raise ValueError(
+                    f"Invalid join expression format: '{expr}'. Expected 'column_name=value_expr'."
+                )
+    return parsed
+
+
+def table_file_converter(value: str | Path | FileSet) -> FileSet:
+    if isinstance(value, FileSet):
+        return value
+    if isinstance(value, (str, Path)):
+        if match := re.match(r"([^\[]+)\[(.*)\]", str(value).strip()):
+            return from_mime(match.group(2))(match.group(1))
+        filesets = from_paths([value], *MetadataTable.DEFAULT_FILE_TYPES)
+        if filesets:
+            return filesets[0]
+        raise ValueError(
+            f"No valid filesets found for value: {value} (from candidate types {MetadataTable.DEFAULT_FILE_TYPES})"
+        )
+    raise TypeError(
+        f"Invalid type for table_file: {type(value).__name__}. Expected str, Path, or FileSet."
+    )
+
+
+def row_frequency_converter(
+    value: str | type[FileSet] | types.UnionType | ty.Iterable[type[FileSet] | str],
+) -> str | type[FileSet] | types.UnionType:
+    """Normalise the ``--metadata-table`` row-frequency arg. The hierarchy levels
+    'session', 'scan' and 'resource' are returned as-is; 'fileset' and a
+    'fileset[<mime-like>]' spec (or an iterable of ``FileSet`` types / mime-like
+    strings) are resolved to the ``FileSet`` type (or ``|``-union of types) they name -
+    'fileset' itself becomes the base ``FileSet`` class - ready to be used directly
+    with ``isinstance()``."""
+    if isinstance(value, str):
+        value = value.lower()
+        if value in {"session", "scan", "resource"}:
+            return value
+        if value == "fileset":
+            return FileSet
+        if not (value.startswith("fileset[") and value.endswith("]")):
+            raise ValueError(
+                f"Invalid frequency '{value}'. Must be one of 'session', 'scan', "
+                "'resource', 'fileset', 'fileset[<mime-type>]' (multiple mime-types "
+                "can be '|'-separated, e.g. 'fileset[image/png|image/jpeg]')."
+            )
+        mime_like = value[len("fileset[") : -1]
+        try:
+            return from_mime(mime_like)  # type: ignore[return-value]
+        except FormatRecognitionError as e:
+            raise ValueError(
+                f"Invalid row_frequency '{value}'. Could not recognise mime type "
+                f"'{mime_like}'"
+            ) from e
+    if isinstance(value, types.UnionType) or (
+        isinstance(value, type) and issubclass(value, FileSet)
+    ):
+        return value  # already resolved (e.g. attrs re-running the converter)
+    if isinstance(value, ty.Iterable):
+        resolved: list[type[FileSet]] = []
+        for v in value:
+            if isinstance(v, type) and issubclass(v, FileSet):
+                resolved.append(v)
+            elif isinstance(v, str):
+                resolved.append(from_mime(v.lower()))  # type: ignore[arg-type]
+            else:
+                raise TypeError(
+                    f"Invalid entry in row_frequency list: {v!r}. "
+                    "Expected a mime-like str or a FileSet subclass."
+                )
+        if not resolved:
+            raise ValueError("row_frequency iterable must not be empty")
+        return functools.reduce(operator.or_, resolved)  # type: ignore[return-value]
+    raise TypeError(
+        f"Invalid type for row_frequency: {type(value).__name__}. "
+        "Expected a str or an iterable of str/FileSet subclasses."
+    )
+
+
+@attrs.define
+class JoinExpr(MultiCliTyped):
+
+    column_name: str
+    value_expr: str
+
+    def value(self, context: dict[str, ty.Any]) -> str:
+        if "{" in self.value_expr:
+            value = self.value_expr.format(**context)
+        else:
+            value = str(context[self.value_expr])
+        return value
+
+
+@attrs.define
+class MetadataTable(MultiCliTyped):
+    """A tabular metadata source (CSV/TSV) whose rows are joined onto the input data and
+    merged into the corresponding objects' metadata.
+
+    Parameters
+    ----------
+    table_file : FileSet | str | Path
+        The metadata table file. A str/Path is auto-detected as CSV or TSV from its
+        extension; append '[<mime-type>]' to force a format, e.g. 'table.dat[text/csv]'.
+    row_frequency : str | type[FileSet] | types.UnionType
+        What each row corresponds to: one of 'session', 'scan', 'resource', 'fileset'
+        or 'fileset[<mime-like>]'. 'fileset' resolves to the base ``FileSet`` class and
+        'fileset[<mime-like>]' to the named ``FileSet`` type (or '|'-union of types), so
+        the value is usable directly with ``isinstance()``.
+    join_exprs : list[JoinExpr] | str
+        One or more '<column-name>=<cell-value>' expressions (comma-separated in string
+        form). A row matches a target when every expression holds; '<cell-value>' is a
+        metadata field name or a Python format string over metadata fields
+        (e.g. '{PatientID}_{SessionID}'). On a match, all columns of that row are merged
+        into the target's metadata.
+    """
+
+    table_file: FileSet = attrs.field(converter=table_file_converter)
+    row_frequency: str | type[FileSet] | types.UnionType = attrs.field(
+        converter=row_frequency_converter
+    )
+    join_exprs: list[JoinExpr] = attrs.field(converter=parse_join_exprs)
+    _table: ty.Any = attrs.field(default=None, init=False, eq=False, repr=False)
+
+    DEFAULT_FILE_TYPES = (Csv, Tsv, Spreadsheetml_Sheet)
+
+    @join_exprs.validator
+    def _validate_join_exprs(
+        self, attribute: attrs.Attribute, value: list[JoinExpr]
+    ) -> None:
+        if not value:
+            raise ValueError("At least one join expression must be provided.")
+
+    def inject(
+        self, target: ImagingSession | ImagingScan | ImagingResource | FileSet
+    ) -> None:
+        """Merge the row of this table that matches ``target`` into its metadata.
+
+        Does nothing if ``target``'s type doesn't match ``row_frequency``, if no row
+        matches the join expressions, or if a join field is absent from ``target``'s
+        metadata. Raises ``ValueError`` if more than one row matches.
+
+        Parameters
+        ----------
+        target : ImagingSession | ImagingScan | ImagingResource | FileSet
+            The object whose metadata to inject into.
+        """
+        from ..model.resource import ImagingResource
+        from ..model.scan import ImagingScan
+        from ..model.session import ImagingSession
+
+        rf = self.row_frequency
+        if (
+            (rf == "session" and isinstance(target, ImagingSession))
+            or (rf == "scan" and isinstance(target, ImagingScan))
+            or (rf == "resource" and isinstance(target, ImagingResource))
+            # rf is a FileSet type (bare 'FileSet', a subclass, or a '|'-union of them)
+            # -> match raw filesets of it
+            or (not isinstance(rf, str) and isinstance(target, rf))
+        ):
+            row_ids: set[int] | None = None
+            for expr in self.join_exprs:
+                try:
+                    column = self.table[expr.column_name]
+                except KeyError:
+                    raise ValueError(
+                        f"Join column '{expr.column_name}' not found in metadata table "
+                        f"{self.table_file} (available columns: {list(self.table)})"
+                    ) from None
+                try:
+                    value = expr.value(context=target.metadata)
+                except KeyError:
+                    # A field referenced by the join expression isn't present in the
+                    # target's metadata, so this table simply can't match this target
+                    return
+                matching = {i for i, v in enumerate(column) if str(v) == str(value)}
+                row_ids = matching if row_ids is None else (row_ids & matching)
+                if not row_ids:
+                    return
+            if not row_ids:
+                return
+            if len(row_ids) > 1:
+                raise ValueError(
+                    f"Multiple rows ({sorted(i + 1 for i in row_ids)}) in metadata "
+                    f"table {self.table_file} match the join expressions for {target}"
+                )
+            row_id = next(iter(row_ids))
+            # Inject every column of the matched row, not just the join columns
+            target.metadata.update(
+                {column: values[row_id] for column, values in self.table.items()}
+            )
+        # Pass and don't inject metadata if the row frequency doesn't match the target type
+
+    @property
+    def table(self) -> ty.Mapping[str, list[ty.Any]]:
+        """The metadata table as a column-oriented mapping of column name to the list of
+        that column's cell values (one entry per row)."""
+        if self._table is None:
+            self._table = self._load_table()
+        return self._table
+
+    def _load_table(self) -> dict[str, list[ty.Any]]:
+        if isinstance(self.table_file, (Csv, Tsv)):
+            delimiter = "\t" if isinstance(self.table_file, Tsv) else ","
+            with open(self.table_file.fspath, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f, delimiter=delimiter)
+                fieldnames = list(reader.fieldnames or [])
+                columns: dict[str, list[ty.Any]] = {n: [] for n in fieldnames}
+                for row in reader:
+                    for name in fieldnames:
+                        columns[name].append(row.get(name))
+            return columns
+        # Fall back to the format's own loader (e.g. spreadsheets) and coerce whatever
+        # it returns into the same column-oriented shape
+        loaded = self.table_file.load()
+        if hasattr(loaded, "to_dict"):  # e.g. a pandas DataFrame
+            loaded = loaded.to_dict("list")
+        if isinstance(loaded, ty.Mapping):
+            return {str(k): list(v) for k, v in loaded.items()}
+        raise TypeError(
+            f"Could not interpret the loaded contents of {self.table_file} "
+            f"(type {type(loaded).__name__}) as a metadata table"
+        )
+
+    @classmethod
+    def inject_list(
+        cls,
+        tables: list[MetadataTable] | None,
+        targets: list[ImagingSession | ImagingScan | ImagingResource | FileSet],
+    ) -> None:
+        """
+        Inject metadata from a list of metadata tables into the target objects.
+
+        Parameters
+        ----------
+        tables : list[MetadataTable]
+            The list of metadata tables to inject metadata from.
+        targets : list[ImagingSession | ImagingScan | ImagingResource | FileSet]
+            The list of target objects to inject metadata into.
+        """
+        if tables is None:
+            return
+        for table in tables:
+            for target in targets:
+                table.inject(target)

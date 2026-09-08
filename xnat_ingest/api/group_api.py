@@ -4,32 +4,52 @@ import typing as ty
 from pathlib import Path
 
 from fileformats.core import FileSet
+from fileformats.medimage import DicomSeries
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec, PathMetadataRegex
+from ..helpers.arg_types import (
+    ClashSpec,
+    IDSpec,
+    MetadataTable,
+    OnResourceClash,
+    PathMetadataRegex,
+)
 from ..helpers.logging import logger
 from ..model.session import ImagingSession
 
 BUILD_NAME_DEFAULT = "__build__"
 
+# Default ID specs, shared verbatim with the ``xnat-ingest group`` CLI options in
+# ``group_cli.py`` so the API and CLI can never drift apart
+DEFAULT_SESSION_FIELD: tuple[IDSpec, ...] = (
+    IDSpec("StudyInstanceUID", "medimage/dicom-collection"),
+)
+DEFAULT_SCAN_FIELD: tuple[IDSpec, ...] = (
+    IDSpec("SeriesNumber", "medimage/dicom-collection"),
+)
+DEFAULT_RESOURCE_FIELD: tuple[IDSpec, ...] = ()
+_DEFAULT_DATATYPES: tuple[type[FileSet], ...] = (DicomSeries,)
+
 
 def group(
     input_paths: list[str],
     output_dir: Path,
-    datatypes: list[FileSet],
-    session: list[IDSpec],
-    scan: list[IDSpec],
-    resource: list[IDSpec],
+    datatypes: ty.Sequence[type[FileSet]] = _DEFAULT_DATATYPES,
+    session: ty.Sequence[IDSpec] = DEFAULT_SESSION_FIELD,
+    scan: ty.Sequence[IDSpec] = DEFAULT_SCAN_FIELD,
+    resource: ty.Sequence[IDSpec] = DEFAULT_RESOURCE_FIELD,
     path_metadata_regex: ty.Sequence[PathMetadataRegex] = (),
     unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    wait_period: int = 0,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
     conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
-    ignore_paths: list[str] | None = None,
-    ignore_types: list[type[FileSet]] = (),
-    wait_period: int = 0,
-    avoid_clashes: bool = True,
+    allow_unrecognised: ty.Sequence[str] = (),
+    exclude_paths: ty.Sequence[str] = (),
+    ignore_datatypes: ty.Sequence[type[FileSet]] = (),
+    on_resource_clash: OnResourceClash | ty.Sequence[ClashSpec] = "error",
+    metadata_tables: list[MetadataTable] | None = None,
     recursive: bool = False,
 ) -> list[str]:
     """Groups the input files into sessions/scans/resources and stages them into the
@@ -42,17 +62,23 @@ def group(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the grouped sessions will be saved. This should be a local path.
-    datatypes: list[MimeType]
-        List of datatypes to look for in the input files. Only files with these datatypes will be considered for staging.
-    session: list[IDSpec] | None
+    datatypes: ty.Sequence[type[FileSet]]
+        FileSet types to look for in the input files. Only files with these datatypes will be
+        considered for staging. Defaults to ``(DicomSeries,)`` to mirror the CLI.
+    session: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the session UIDs from the input files to group them into
-        separate sessions
-    scan: list[IDSpec]
+        separate sessions. Defaults to ``DEFAULT_SESSION_FIELD`` (``StudyInstanceUID``
+        scoped to DICOM collections; the same object backs the CLI's ``--session``);
+        other fileset types need an explicit spec.
+    scan: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the scan IDs from the input files to group them into
-        scans
-    resource: list[IDSpec]
+        scans. Defaults to ``DEFAULT_SCAN_FIELD`` (``SeriesNumber`` scoped to DICOM
+        collections; shared with the CLI's ``--scan``); for a fileset whose type is not
+        matched by any spec here the scan is named after that fileset's resource.
+    resource: ty.Sequence[IDSpec]
         List of field specifications to use for extracting the resource IDs from the input files to group them into
-        resources
+        resources. If empty, each resource is labelled with the mime-like rendering
+        of its fileset type name, e.g. 'vectra-export', 'sqlite3-db'
     path_metadata_regex: ty.Sequence[PathMetadataRegex]
         Regular expressions to extract "metadata" values from resource file paths as named groups. The named
         groups are used as metadata fields for the resource files, and the extracted values will be used to populate
@@ -72,21 +98,64 @@ def group(
         sessions. If None, the default collation behavior for each FileSet type will be used.
     conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
         A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
-    ignore_paths: list[str] | None
-        Regular expressions to match paths that should be ignored when grouping files into sessions. If None, no paths will be ignored.
-        To ignore all paths by default, use ".*" as the value for this parameter.
-    ignore_types: list[type[FileSet]] | None
-        Datatypes that should be ignored when grouping files into sessions. If None, paths that aren't recognised as part of the
-        requested datatypes or filtered using ignore_paths will raise an error
+    allow_unrecognised: ty.Sequence[str]
+        Regexes matched against the *basename* of any input path that no datatype recognised;
+        matches are skipped instead of raising ``FormatRecognitionError``. ``[".*"]`` tolerates
+        all unrecognised files. Does not affect recognised filesets.
+    exclude_paths: ty.Sequence[str]
+        Globs matched against each input path *relative to its input directory*, applied before
+        classification so a match is dropped even if a datatype would claim it (e.g. a vendor
+        thumbnail that is a valid ``image/png``). ``*`` does not cross ``/``, ``**`` does.
+    ignore_datatypes: ty.Sequence[type[FileSet]]
+        Datatypes expected in the input but not wanted: recognised filesets of these types are
+        dropped rather than raising, and (with ``recursive``) matching directories are skipped
+        without descending. A path matching neither ``datatypes`` nor ``ignore_datatypes`` (nor
+        ``allow_unrecognised`` / ``exclude_paths``) still raises.
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
-    avoid_clashes: bool
-        If True, if a session with the same name already exists in the staging directory, a suffix will be added to the session
-        name to avoid overwriting the existing session. If False, existing sessions with the same name will be overwritten.
+    on_resource_clash: OnResourceClash or Sequence[ClashSpec]
+        Behaviour when two filesets resolve to the same scan/resource name. A bare policy
+        string ("error"/"avoid"/"merge"/"overwrite") applies to any clash. A sequence of
+        ``ClashSpec`` (policy + datatype scope) resolves each clash with the first spec whose
+        scope covers *both* filesets - a clash no spec covers raises. "avoid" suffixes,
+        "merge" folds into one ``SetOf``, "overwrite" replaces. Default "error".
     recursive: bool
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
+    metadata_tables: list[MetadataTable] | None
+        Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var).
+        The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or
+        TSV from the file extension; a different format can be forced by appending its mime-type in square
+        brackets, e.g. 'path/to/table.dat[text/csv]'.
+        The "row frequency" arg specifies what each row in the
+        metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource',
+        'fileset', 'fileset[<mime-type>]'. When one or more mime-types are given in square brackets after
+        'fileset' they restrict the join to input files of those types (multiple mime-types can be '|'-separated,
+        e.g. 'fileset[image/png|image/jpeg]'); a bare 'fileset' matches any input file.
+        The 'join-exprs' arg is a comma-separated list of '<column-name>=<cell-value>' expressions; a row is a
+        match when every expression holds. The '<cell-value>' is either the name of an existing metadata field
+        or a Python format string over one or more metadata fields, e.g. '{PatientID}_{SessionID}'. All columns
+        of the matched row are then merged into the target's metadata.
+        The example below extracts the relative path of an image file with `path_metadata_regex` and uses it to
+        join a table whose 'ImagePath' column holds spreadsheet HYPERLINK() formulas::
+
+            group(
+                ...,
+                path_metadata_regex=[
+                    PathMetadataRegex(
+                        regex=r".*/(?P<relpath>[\\w-]+/[\\w-]+\\.(?:png|jpg))",
+                        datatype="image/png|image/jpeg",
+                    )
+                ],
+                metadata_tables=[
+                    MetadataTable(
+                        table_file="path/to/table.csv[text/csv]",
+                        row_frequency="fileset[image/png|image/jpeg]",
+                        join_exprs='ImagePath=HYPERLINK("{relpath}")',
+                    )
+                ],
+            )
     """
 
     errors = []
@@ -104,10 +173,12 @@ def group(
         scan_field=scan,
         resource_field=resource,
         recursive=recursive,
-        avoid_clashes=avoid_clashes,
-        ignore_paths=ignore_paths,
-        ignore_types=ignore_types,
+        on_resource_clash=on_resource_clash,
+        allow_unrecognised=allow_unrecognised,
+        exclude_paths=exclude_paths,
+        ignore_datatypes=ignore_datatypes,
         path_metadata_regex=path_metadata_regex,
+        metadata_tables=metadata_tables,
     )
 
     errors = save_sessions_to_dir(
@@ -140,6 +211,7 @@ def group_orthanc(
     unlink_source: str | None = None,
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
+    wait_period: int = 0,
 ) -> list[str]:
     """Groups the input files into sessions and stages them into the staging directory.
 
@@ -148,7 +220,7 @@ def group_orthanc(
     url: str
         Orthanc server to retrieve the DICOM resources from.
     output_dir: Path
-        Path to the staging directory where the grouped sessions will be saved. This should be
+        Path to the staging directory where the grouped sessions will be saved. This should be the final location for the grouped sessions.
     user: str
         Orthanc user to login with
     password: str
@@ -158,11 +230,11 @@ def group_orthanc(
     to_process_label: str | None
         The label externally applied to  sessions in Orthanc to signify that should be processed. If None,
         all sessions will be processed.
-    session_id: list[FieldSpec] | None
-        List of field specifications to use for extracting the session ID from the input files. If None, the
+    session_id: list[IDSpec] | None
+        List of ID specifications to use for extracting the session ID from the input files. If None, the
         session ID will be generated from the subject and visit IDs.
-    scan_id: list[FieldSpec]
-        List of field specifications to use for extracting the scan ID from the input files.
+    scan_id: list[IDSpec]
+        List of ID specifications to use for extracting the scan ID from the input files.
     unlink_source: str | None
         If "all" or "keep-metadata", the source studies in Orthanc will be unlinked after staging. Not yet
         implemented. If None, the source studies will be left in place.
@@ -202,6 +274,7 @@ def group_orthanc(
         password=password,
         to_process_label=to_process_label,
         processed_label=processed_label,
+        wait_period=wait_period,
     )
 
     # Should from_orthanc() not actually move the data, just reference it in place like from_paths()

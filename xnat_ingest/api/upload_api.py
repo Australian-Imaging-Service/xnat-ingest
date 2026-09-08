@@ -28,6 +28,7 @@ from xnat_ingest.helpers.remotes import (
 
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
+from ..helpers.metadata import Metadata
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 
@@ -198,9 +199,38 @@ def upload(
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
+                # SIGNAL, DO NOT REFUSE. A staged session with no session-level
+                # __METADATA__.json is one that no completed `save()` produced:
+                # staged by an older version, assembled by hand, or left behind by
+                # a run that died between writing the scans and writing the
+                # metadata. Refusing it was considered and rejected, because
+                # `ImagingSession.load` treats the file as optional by design and
+                # upstream ships `upload` to people whose staging directories we
+                # have never seen. A skip that waits for ever is worse than the
+                # partial upload it prevents, because a partial upload is at
+                # least visible.
+                #
+                # So it uploads, and says so. The event is what makes the case
+                # countable: without it the only trace is a session that behaves
+                # slightly differently from every other one, for no visible reason.
+                if not (session_listing.cache_path / Metadata.FNAME).exists():
+                    logger.warning(
+                        "Staged session '%s' has no session-level %s. Uploading it "
+                        "anyway, but nothing recorded what produced it, so its "
+                        "project/subject/session ids come from the directory name "
+                        "alone and cannot be cross-checked.",
+                        session_listing.session_id,
+                        Metadata.FNAME,
+                        extra={
+                            "event": "session_metadata_missing",
+                            "session": session_listing.session_id,
+                        },
+                    )
                 # Create corresponding session on XNAT
                 logger.debug(
                     "Creating XNAT session for '%s' in project '%s'",
+                    session.session_id,
+                    session.project_id,
                 )
                 xproject = xnat_repo.connection.projects[session.project_id]
 

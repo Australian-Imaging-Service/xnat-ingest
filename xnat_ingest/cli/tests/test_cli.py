@@ -1,14 +1,15 @@
 import json
 import os
 import shutil
+import struct
 import time
 import typing as ty
+import zlib
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import click
-import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json
 from fileformats.core import SampleFileGenerator, extra_implementation
@@ -792,7 +793,156 @@ def test_group_path_metadata_regex(
     assert mdata["cohort"] == "cohort-A"
 
 
-def test_group_ignore_path_option_skips_unrecognised_files(
+def _write_minimal_png(path: Path, *, rgb: tuple[int, int, int] = (0, 0, 0)) -> Path:
+    """Write a minimal but valid 1x1 PNG so fileformats recognises it as image/png."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00" + bytes(rgb))
+    path.write_bytes(
+        signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+    )
+    return path
+
+
+def test_group_metadata_table_detailed_example(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """End-to-end version of the worked example in ``xnat-ingest group --help``.
+
+    A directory tree of PNG images whose relative path is captured with
+    ``--path-metadata-regex`` and used to join a CSV metadata table
+    (``fileset[image/png|image/jpeg]`` row frequency). The joined table carries a
+    ``SubjectID`` column that groups/labels the session and a ``LesionID`` column
+    that both names the scan and collapses the multiple views of a lesion into a
+    single merged resource via ``--on-resource-clash merge``.
+    """
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    images_dir = tmp_path / "images"
+    rel_paths = [
+        "subj-01/lesionA-dermoscopy.png",
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionB-dermoscopy.png",
+        "subj-02/lesionC-dermoscopy.png",
+    ]
+    for i, rel in enumerate(rel_paths):
+        _write_minimal_png(images_dir / rel, rgb=(10 + i, 20 + i, 30 + i))
+
+    table = tmp_path / "clinical.csv"
+    table.write_text(
+        "relpath,SubjectID,LesionID,Diagnosis\n"
+        "subj-01/lesionA-dermoscopy.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionA-clinical.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionB-dermoscopy.png,subj-01,lesionB,nevus\n"
+        "subj-02/lesionC-dermoscopy.png,subj-02,lesionC,melanoma\n"
+    )
+
+    result = cli_runner(
+        group_cmd,
+        [
+            str(images_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+            "--datatype",
+            "image/png",
+            "--session",
+            "SubjectID",
+            "all",
+            "--scan",
+            "LesionID",
+            "all",
+            "--resource",
+            "LesionID",
+            "all",
+            "--on-resource-clash",
+            "merge",
+            "image/png|image/jpeg",
+            "--path-metadata-regex",
+            r".*/(?P<relpath>[\w-]+/[\w-]+\.(?:png|jpg))",
+            "image/png|image/jpeg",
+            "--metadata-table",
+            f"{table}[text/csv]",
+            "fileset[image/png|image/jpeg]",
+            "relpath=relpath",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    def resource_dirs(session_dir: Path) -> dict[str, Path]:
+        return {
+            res_dir.name: res_dir
+            for scan_dir in session_dir.iterdir()
+            if scan_dir.is_dir()
+            for res_dir in scan_dir.iterdir()
+            if res_dir.is_dir()
+        }
+
+    session_dirs = {d.name: d for d in list_session_dirs(sorted_dir)}
+    assert len(session_dirs) == 2
+    subj01_dir = next(d for n, d in session_dirs.items() if "subj-01" in n)
+    subj02_dir = next(d for n, d in session_dirs.items() if "subj-02" in n)
+
+    subj01_resources = resource_dirs(subj01_dir)
+    assert set(subj01_resources) == {"lesionA", "lesionB"}
+
+    # lesionA merged its two views into a single SetOf[Png] resource
+    assert sorted(p.name for p in subj01_resources["lesionA"].glob("*.png")) == [
+        "lesionA-clinical.png",
+        "lesionA-dermoscopy.png",
+    ]
+    lesion_a_manifest = json.loads(
+        (subj01_resources["lesionA"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_a_manifest["datatype"] == "image/png+set-of"
+    lesion_b_manifest = json.loads(
+        (subj01_resources["lesionB"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_b_manifest["datatype"] == "image/png"
+    lesion_a_mdata = json.loads(
+        (subj01_resources["lesionA"] / Metadata.FNAME).read_bytes()
+    )
+    # columns the two rows agree on stay scalar, the per-file 'relpath' is collated
+    # into a list aligned with the merged files
+    assert lesion_a_mdata["SubjectID"] == "subj-01"
+    assert lesion_a_mdata["LesionID"] == "lesionA"
+    assert lesion_a_mdata["Diagnosis"] == "melanoma"
+    assert sorted(lesion_a_mdata["relpath"]) == [
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionA-dermoscopy.png",
+    ]
+
+    # lesionB is a single-view resource, so it keeps its per-file metadata
+    lesion_b_mdata = json.loads(
+        (subj01_resources["lesionB"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_b_mdata["Diagnosis"] == "nevus"
+    assert lesion_b_mdata["relpath"] == "subj-01/lesionB-dermoscopy.png"
+
+    subj02_resources = resource_dirs(subj02_dir)
+    assert set(subj02_resources) == {"lesionC"}
+    lesion_c_mdata = json.loads(
+        (subj02_resources["lesionC"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_c_mdata["SubjectID"] == "subj-02"
+    assert lesion_c_mdata["Diagnosis"] == "melanoma"
+
+
+def test_group_allow_unrecognised_skips_unrecognised_files(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -812,7 +962,7 @@ def test_group_ignore_path_option_skips_unrecognised_files(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-path",
+            "--allow-unrecognised",
             r".*\.txt",
         ],
     )
@@ -822,7 +972,7 @@ def test_group_ignore_path_option_skips_unrecognised_files(
     assert len(session_dirs) == 1
 
 
-def test_group_without_ignore_path_fails_on_unrecognised_file(
+def test_group_without_allow_unrecognised_fails_on_unrecognised_file(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -848,7 +998,7 @@ def test_group_without_ignore_path_fails_on_unrecognised_file(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_path_pattern_not_matching_still_fails(
+def test_group_allow_unrecognised_pattern_not_matching_still_fails(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -868,7 +1018,7 @@ def test_group_ignore_path_pattern_not_matching_still_fails(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-path",
+            "--allow-unrecognised",
             r"unrelated-pattern",
         ],
     )
@@ -876,7 +1026,7 @@ def test_group_ignore_path_pattern_not_matching_still_fails(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_type_excludes_recognised_but_unwanted_files(
+def test_group_ignore_datatype_excludes_recognised_but_unwanted_files(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -896,7 +1046,7 @@ def test_group_ignore_type_excludes_recognised_but_unwanted_files(
             "--raise-errors",
             "--wait-period",
             "0",
-            "--ignore-type",
+            "--ignore-datatype",
             "application/json",
         ],
     )
@@ -906,7 +1056,7 @@ def test_group_ignore_type_excludes_recognised_but_unwanted_files(
     assert len(session_dirs) == 1
 
 
-def test_group_without_ignore_type_fails_on_recognised_extra_type(
+def test_group_without_ignore_datatype_fails_on_recognised_extra_type(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -932,7 +1082,7 @@ def test_group_without_ignore_type_fails_on_recognised_extra_type(
     assert isinstance(result.exception, FormatRecognitionError)
 
 
-def test_group_ignore_type_contradicting_datatype_fails(
+def test_group_ignore_datatype_contradicting_datatype_fails(
     cli_runner: ty.Any,
     tmp_path: Path,
 ) -> None:
@@ -953,7 +1103,7 @@ def test_group_ignore_type_contradicting_datatype_fails(
             "0",
             "--datatype",
             "medimage/dicom-series",
-            "--ignore-type",
+            "--ignore-datatype",
             "medimage/dicom-series",
         ],
     )
@@ -1269,6 +1419,10 @@ def test_check_upload_empty_scan(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1402,6 +1556,10 @@ def test_check_upload_missing_resource(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1533,6 +1691,10 @@ def test_check_upload_checksum_fail(
         env={
             "XINGEST_LOGGERS": "stream debug stdout",
             "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # non-DICOM test formats: the default DICOM-scoped --session/--scan
+            # specs don't apply, set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1621,12 +1783,6 @@ def test_check_upload_checksum_fail(
     assert "CHECKSUM FAIL" in logs
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Requires ImagingSession.deidentify to be implemented, but can be adapted to "
-        "test the full deidentification pipeline once that is done"
-    ),
-)
 def test_deidentify_cli_dicom(
     cli_runner: ty.Any,
     tmp_path: Path,
@@ -1642,8 +1798,13 @@ def test_deidentify_cli_dicom(
     STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
 
     DICOM_DEID_SPEC = """
-# Specification for de-identifying DICOM files for project PROJ goes here
-"""
+    FORMAT dicom
+
+    %header
+
+    ADD PatientIdentityRemoved YES
+    REPLACE PatientName var:anon_patient_name
+    """
 
     # 1. Generate DICOM test data for multiple scan types in subdirectories
     dicoms_dir = tmp_path / "dicoms"
@@ -1696,7 +1857,12 @@ def test_deidentify_cli_dicom(
     spec_dir = tmp_path / "spec"
     project_spec_dir = spec_dir / PROJECT_ID
     project_spec_dir.mkdir(parents=True)
-    (project_spec_dir / "medimage@dicom-series").write_text(DICOM_DEID_SPEC)
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
+    (medimage_dir / "dicom-series.transforms.py").write_text(
+        'TRANSFORMS = {"anon_patient_name": lambda ds: str(ds.get("PatientID", ""))}\n'
+    )
 
     # 4. Run deidentify_cli with the mock deidentify implementation
     output_dir = tmp_path / "deidentified"
@@ -1709,6 +1875,7 @@ def test_deidentify_cli_dicom(
             str(assigned_dir),
             str(output_dir),
             str(spec_dir),
+            "--reid-dir",
             str(reid_dir),
             "--raise-errors",
         ],
@@ -1724,8 +1891,10 @@ def test_deidentify_cli_dicom(
     reid_file = reid_dir / f"{session_name}.json"
     assert reid_file.exists(), f"Reid file missing: {reid_file}"
     reid = json.loads(reid_file.read_bytes())
-    assert reid.get("PatientID") == PATIENT_ID
-    assert reid.get("PatientName") != ""
+    assert reid.get("session_uid") == STUDY_UID.replace(".", "_")
+    changed_fields = reid.get("changed_fields", {})
+    #    assert changed_fields.get("PatientID") == PATIENT_ID
+    assert changed_fields.get("PatientName")
 
     # 7. Deidentified session directory contains files
     deid_session_root = output_dir / session_name
@@ -1733,6 +1902,81 @@ def test_deidentify_cli_dicom(
     assert any(
         p.is_file() for p in deid_session_root.rglob("*")
     ), f"No files found under {deid_session_root}"
+
+
+def test_deidentify_cli_dicom_missing_transform(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify fails when recipe references a var without a matching transform."""
+
+    PROJECT_ID = "TESTMISSINGTRANSFORM"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.2"
+
+    SPEC_WITH_MISSING_VAR = """
+    FORMAT dicom
+
+    %header
+
+    REPLACE PatientName var:anon_patient_name
+    """
+
+    # 1. Generate DICOM test data
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    # 2. Stage
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        group_cmd,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 3. Assign
+    assigned_dir = tmp_path / "assigned"
+    assigned_dir.mkdir()
+    result = cli_runner(
+        assign_cmd,
+        [str(staged_dir), str(assigned_dir)] + ASSIGN_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 4. Spec with var:anon_patient_name but NO transforms file
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir(parents=True)
+    (medimage_dir / "dicom-series").write_text(SPEC_WITH_MISSING_VAR)
+
+    # 5. Run deidentify — should fail due to missing transform
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    result = cli_runner(
+        deidentify_cmd,
+        [
+            str(assigned_dir),
+            str(output_dir),
+            str(spec_dir),
+            "--reid-dir",
+            str(reid_dir),
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code != 0, show_cli_trace(result)
+    assert "anon_patient_name" in result.output or "anon_patient_name" in str(
+        result.exception
+    ), f"Expected error about missing 'anon_patient_name' transform: {show_cli_trace(result)}"
 
 
 def test_deidentify_cli_dicom_encrypted_reid(
@@ -1784,7 +2028,9 @@ def test_deidentify_cli_dicom_encrypted_reid(
     spec_dir = tmp_path / "spec"
     project_spec_dir = spec_dir / PROJECT_ID
     project_spec_dir.mkdir(parents=True)
-    (project_spec_dir / "medimage@dicom-series").write_text("Dummy spec")
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text("Dummy spec")
 
     output_dir = tmp_path / "deidentified"
     reid_dir = tmp_path / "reid"
@@ -1792,7 +2038,20 @@ def test_deidentify_cli_dicom_encrypted_reid(
 
     def mock_deidentify(self, dest_dir, **kwargs):
         mock_session = MagicMock()
-        mock_session.save = MagicMock()
+
+        # save() returns (session, saved_dir) and creates that directory.
+        # deidentify materialises a session that does not exist yet under
+        # __build__ and renames it into place, so a save that returns nothing
+        # and writes nothing leaves nothing to rename.
+        session_dirname = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+
+        def _save(dest_dir, *args, **kwargs):
+            saved_dir = Path(dest_dir) / session_dirname
+            saved_dir.mkdir(parents=True, exist_ok=True)
+            return mock_session, saved_dir
+
+        mock_session.save = MagicMock(side_effect=_save)
+        mock_session.staging_dirname = MagicMock(return_value=session_dirname)
         return mock_session, {"PatientID": PATIENT_ID}
 
     with patch.object(ImagingSession, "deidentify", mock_deidentify):
@@ -1802,6 +2061,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
                 str(assigned_dir),
                 str(output_dir),
                 str(spec_dir),
+                "--reid-dir",
                 str(reid_dir),
                 "--raise-errors",
                 "--reid-encrypt-key",
@@ -1816,7 +2076,11 @@ def test_deidentify_cli_dicom_encrypted_reid(
     assert not (reid_dir / f"{session_name}.json").exists()
 
     decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
-    assert decrypted.get("PatientID") == PATIENT_ID
+    # session.uid is derived from StudyInstanceUID (dots -> underscores) once a
+    # session has been through real staging/assignment, not the project.subject.
+    # session directory name used for the mocked deidentify() fixtures elsewhere.
+    assert decrypted.get("session_uid") == STUDY_UID.replace(".", "_")
+    assert decrypted.get("changed_fields", {}).get("PatientID") == PATIENT_ID
 
 
 def transfer_to_source(

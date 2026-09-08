@@ -9,7 +9,12 @@ from fileformats.core import FileSet
 from xnat_ingest.cli.base import cli
 
 from ..api.deidentify_api import deidentify
-from ..helpers.arg_types import CopyModeParamType, LoggerConfig
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    CopyModeParamType,
+    LoggerConfig,
+    OnResourceClash,
+)
 from ..helpers.logging import logger, set_logger_handling
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
@@ -31,20 +36,19 @@ are uploaded to XNAT
 SPEC_DIR is the directory containing the project-specific deidentification specifications.
 It should contain one subdirectory per project, named <project_id>, plus an optional
 "__default__" subdirectory used as a fallback for projects that don't have their own.
-Within each of these subdirectories, there is one JSON spec file per file format that
-requires deidentification in that project, named after the format's MIME-like identifier
-with '/' replaced by '@' (e.g. 'medimage/dicom-series' -> 'medimage@dicom-series.json').
+Within each of these subdirectories, the directory structure mirrors the MIME-like
+hierarchy: a subdirectory per category containing one spec file per format
+(e.g. 'medimage/dicom-series'). Any file extension (or none) is accepted.
+Optionally, a transforms file named '<format>.transforms.py' (e.g.
+'medimage/dicom-series.transforms.py') can sit alongside the spec to define
+callable transforms for computed replacement values.
 Formats without a matching spec file are only deidentified if a spec is found for a
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').
 
-REID_DIR is the directory to save the re-identification metadata to, which can be used to
-re-identify the de-identified data if needed. The re-identification metadata is saved in
-JSON format, with one JSON file per session, containing a list of mappings from original
-to de-identified identifiers for each resource in the session, as well as any additional
-metadata needed for re-identification (e.g. DICOM tags that were modified during de-identification).
-The re-identification metadata files are named <session_id>.json (or <session_id>.json.enc if encrypted
-by --reid-encrypt-key option) and saved in the REID_DIR.
+The re-identification metadata (a mapping from original to de-identified identifiers for
+each resource in the session, plus any DICOM tags modified during de-identification) is
+only written if --reid-dir is given; see that option.
 """,
 )
 @click.argument(
@@ -60,10 +64,20 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     type=click.Path(path_type=Path, exists=True),
     envvar="XINGEST_SPEC_DIR",
 )
-@click.argument(
-    "reid_dir",
+@click.option(
+    "--reid-dir",
     type=click.Path(path_type=Path),
+    default=None,
     envvar="XINGEST_REID_DIR",
+    help=(
+        "The directory to save the re-identification metadata to, which can be used to "
+        "re-identify the de-identified data if needed. One JSON file is written per "
+        "session, named <session_id>.json (or <session_id>.json.enc if encrypted with "
+        "--reid-encrypt-key). If this option is not given, the re-identification "
+        "metadata is discarded rather than written to disk, which is the safer default "
+        "when retaining the original<->deidentified mapping would itself be a security "
+        "concern (XINGEST_REID_DIR env. var)"
+    ),
 )
 @click.option(
     "--unlink-source",
@@ -135,13 +149,14 @@ by --reid-encrypt-key option) and saved in the REID_DIR.
     help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
 )
 @click.option(
-    "--avoid-clashes/--dont-avoid-clashes",
-    default=False,
-    envvar="XINGEST_AVOID_CLASHES",
+    "--on-resource-clash",
+    type=click.Choice(ON_RESOURCE_CLASH),
+    default="error",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
-        "If a resource with the same name already exists in the scan, increment the "
-        "resource name by appending _1, _2 etc. to the name until a unique name is found "
-        "(XINGEST_AVOID_CLASHES env. var)"
+        "Determines the behavior when a resource with the same name already exists in the scan. "
+        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "Default: 'error'"
     ),
 )
 @click.option(
@@ -159,14 +174,14 @@ def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
     spec_dir: Path,
-    reid_dir: Path,
+    reid_dir: Path | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     require_manifest: bool,
     raise_errors: bool,
     copy_mode: FileSet.CopyMode,
     loop: int,
-    avoid_clashes: bool,
+    on_resource_clash: OnResourceClash,
     unlink_source: str | None,
     reid_encrypt_key: str | None = None,
 ) -> None:
@@ -190,18 +205,27 @@ def deidentify_cmd(
     # just run it once
     while True:
         start_time = datetime.datetime.now()
-        deidentify(
+        errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
             spec_dir=spec_dir,
             reid_dir=reid_dir,
-            avoid_clashes=avoid_clashes,
+            on_resource_clash=on_resource_clash,
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             require_manifest=require_manifest,
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
         )
+        # The return value was previously discarded, so a session that failed or was
+        # left incomplete produced no signal above this function at all. group_cmd and
+        # upload_cmd both summarise it the same way.
+        if errors:
+            logger.error(
+                "Deidentification completed with %s errors:\n\n%s",
+                len(errors),
+                "\n".join(errors),
+            )
         if loop < 0:
             break
         end_time = datetime.datetime.now()

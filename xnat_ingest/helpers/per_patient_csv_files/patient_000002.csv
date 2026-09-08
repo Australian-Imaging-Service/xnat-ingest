@@ -1,2 +1,0 @@
-PatientMRN,Gender,LesionID,CaptureDate,LesionNotes,CaptureDevice,LightingMode,PixelPerMM,ZoomLevel,SkinType,ScopeAttachment,ImagePath,DEXI Score,diameter1,diameter2,border,asymmetry,color
-000002,,1,7/7/2023 12:56 PM,,DS3 gen6,STD,137.871,-1,-1,-1,"=HYPERLINK(""0DD08D23-68E5-449D-BBC4-FBC36F056922/1B3B4475-6A01-49AA-8AC1-A686A7995363.png"")",0.916088,3.7,2.9146818716914367,5.3,6.5,7.5
