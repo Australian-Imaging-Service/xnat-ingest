@@ -22,6 +22,7 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection
 from tqdm import tqdm
 
+from ..exceptions import IncompleteCheckumsException
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
@@ -555,6 +556,18 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                     missing_paths,
                     extra_paths,
                 )
+                if missing_paths:
+                    # WE HOLD FILES XNAT DOES NOT. Returning None here would have
+                    # the caller log "already uploaded" and skip the resource for
+                    # good, so a partially uploaded scan is never repaired and the
+                    # session is still reported as fully uploaded. Raise instead,
+                    # so the caller can count it and withhold that claim.
+                    raise IncompleteCheckumsException(
+                        f"'{resource_name}' resource in '{resource.scan.path}' exists "
+                        f"on XNAT but is missing {len(missing_paths)} file(s) present "
+                        f"in the staged session: {sorted(missing_paths)[:10]}"
+                        + ("..." if len(missing_paths) > 10 else "")
+                    )
             else:
                 difference = {
                     k: (v, resource.checksums[k])
