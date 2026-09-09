@@ -26,6 +26,7 @@ from xnat_ingest.helpers.remotes import (
     list_session_dirs,
 )
 
+from ..exceptions import IncompleteCheckumsException
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
@@ -277,8 +278,18 @@ def upload(
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
                 to_upload: list[tuple[ImagingResource, ty.Any]] = []
+                incomplete_on_xnat: list[str] = []
                 for resource in selected_resources:
-                    xresource = get_xnat_resource(resource, xsession)
+                    try:
+                        xresource = get_xnat_resource(resource, xsession)
+                    except IncompleteCheckumsException as e:
+                        # The resource exists on XNAT but is SHORT. Skipping it
+                        # quietly is what turns a partial upload into permanent
+                        # data loss, so record it and let the session report as
+                        # not fully uploaded.
+                        logger.error("%s", e.msg)
+                        incomplete_on_xnat.append(resource.path)
+                        continue
                     if xresource is None:
                         logger.info(
                             "Skipping '%s' resource as it is already uploaded",
@@ -423,14 +434,26 @@ def upload(
                             )
                             resource_errors.append((resource, e))
 
-                if resource_errors:
-                    msg = (
-                        f"{len(resource_errors)} of {len(to_upload)} resource(s) "
-                        f"failed to upload in '{session.name}': "
-                        + ", ".join(r.path for r, _ in resource_errors)
+                if resource_errors or incomplete_on_xnat:
+                    parts = []
+                    if resource_errors:
+                        parts.append(
+                            f"{len(resource_errors)} of {len(to_upload)} resource(s) "
+                            "failed to upload: "
+                            + ", ".join(r.path for r, _ in resource_errors)
+                        )
+                    if incomplete_on_xnat:
+                        parts.append(
+                            f"{len(incomplete_on_xnat)} resource(s) already on XNAT "
+                            "but incomplete, and NOT repaired: "
+                            + ", ".join(incomplete_on_xnat)
+                            + ". Delete them on XNAT to allow re-upload."
+                        )
+                    msg = f"'{session.name}' did not upload cleanly: " + "; ".join(
+                        parts
                     )
                     errors.append(msg)
-                    if raise_errors:
+                    if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
                     logger.error(msg)
                 else:
