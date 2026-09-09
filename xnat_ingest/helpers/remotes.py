@@ -7,6 +7,7 @@ import os
 import pprint
 import shutil
 import tempfile
+import threading
 import typing as ty
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -198,9 +199,28 @@ class S3SessionListing(SessionListing):
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
     max_workers: ty.Optional[int] = None
+    _downloaded: bool = attrs.field(default=False, init=False)
+    _download_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
     @property
     def cache_path(self) -> Path:
+        """Download the session once and reuse it for the life of the listing.
+
+        api/upload_api.py reads this four times for a single upload. Downloading
+        inside a property meant each read re-fetched the whole session, so a
+        1.2 GB session was pulled from S3 four times over. The download is
+        guarded by a lock as well as the flag, because the property is reachable
+        from more than one thread and a bare flag would let two downloads write
+        the same paths concurrently, each opening them with mode "wb".
+        """
+        with self._download_lock:
+            if self._downloaded:
+                return self._cache_path
+            self._download_objects()
+            self._downloaded = True
+        return self._cache_path
+
+    def _download_objects(self) -> None:
         logger.info("Downloading session '%s' from S3 bucket", self.name)
 
         def _download(item: ty.Tuple[ty.List[str], ty.Any]) -> None:
@@ -219,7 +239,6 @@ class S3SessionListing(SessionListing):
                     desc=f"Downloading scans in '{self.name}' session from S3 bucket",
                 )
             )
-        return self._cache_path
 
     @property
     def resource_paths(self) -> set[str]:
