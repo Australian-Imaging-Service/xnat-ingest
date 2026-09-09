@@ -15,9 +15,6 @@ existence checks would look correct in a diff and restore the bug.
 """
 
 import typing as ty
-from unittest import mock
-
-import pytest
 
 from xnat_ingest.api.upload_api import upload
 
@@ -64,13 +61,11 @@ def test_cache_is_cleared_before_any_xnat_state_is_read(tmp_path: "ty.Any") -> N
     events: list[str] = []
     upload(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
 
-    assert events, "no events recorded at all"
-    reads = [i for i, e in enumerate(events) if e == "read_projects"]
-    clears = [i for i, e in enumerate(events) if e == "clearcache"]
-    assert clears, "cache was never cleared"
-    if reads:
-        assert clears[0] < reads[0], (
-            f"cache cleared at {clears[0]} but XNAT state was read at "
-            f"{reads[0]}: the first read would still be served from the "
-            f"stale snapshot. events={events}"
-        )
+    # Unconditional: the very first thing a pass does must be the invalidation.
+    # Asserting on events[0] rather than on relative indices avoids a branch that
+    # only runs when the input directory happens to contain sessions.
+    assert events and events[0] == "clearcache", (
+        f"the first action of a pass must be clearing the XNAT cache, otherwise "
+        f"the first existence check is served from the stale snapshot. "
+        f"events={events}"
+    )
