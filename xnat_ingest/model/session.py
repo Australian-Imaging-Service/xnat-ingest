@@ -236,16 +236,18 @@ def _drop_excluded_paths(
     return kept
 
 
-def _fileset_in_scope(fileset: FileSet, scope: type[FileSet] | ty.Any) -> bool:
-    """Whether ``fileset`` falls within a ``ClashSpec`` scope - either it is an
-    instance of ``scope``, or it is a ``SetOf`` whose every content type is a
-    subclass of ``scope`` (so a re-merge into an existing ``SetOf[Png, Jpeg]``
-    still counts as covered by an ``image/png|image/jpeg`` scope).
+def _fileset_matches_datatype(
+    fileset: FileSet, datatype: type[FileSet] | ty.Any
+) -> bool:
+    """Whether ``fileset`` falls within a ``ClashSpec.datatype`` - either it is an
+    instance of ``datatype``, or it is a ``SetOf`` whose every content type is a
+    subclass of ``datatype`` (so a re-merge into an existing ``SetOf[Png, Jpeg]``
+    still counts as covered by an ``image/png|image/jpeg`` datatype).
     """
-    if isinstance(fileset, scope):
+    if isinstance(fileset, datatype):
         return True
     content_types = getattr(type(fileset), "content_types", ())
-    return bool(content_types) and all(issubclass(ct, scope) for ct in content_types)
+    return bool(content_types) and all(issubclass(ct, datatype) for ct in content_types)
 
 
 def _resolve_clash_policy(
@@ -255,17 +257,17 @@ def _resolve_clash_policy(
     where: str,
 ) -> str:
     """The clash policy for a name collision between ``existing`` and ``incoming``:
-    the first ``ClashSpec`` whose scope covers *both*. Raises if none does.
+    the first ``ClashSpec`` whose datatype covers *both*. Raises if none does.
     """
     for spec in specs:
-        if _fileset_in_scope(existing, spec.scope) and _fileset_in_scope(
-            incoming, spec.scope
-        ):
+        if _fileset_matches_datatype(
+            existing, spec.datatype
+        ) and _fileset_matches_datatype(incoming, spec.datatype):
             return spec.policy
     raise KeyError(
         f"Resource-name clash between a {type(existing).__name__} and a "
         f"{type(incoming).__name__} {where}, and no --on-resource-clash spec's "
-        "scope covers both. Add one (e.g. "
+        "datatype covers both. Add one (e.g. "
         f"'--on-resource-clash avoid \"{to_mime(type(existing))}|{to_mime(type(incoming))}\"'), "
         "or tighten --scan / --resource so the two don't collide."
     )
@@ -608,7 +610,7 @@ class ImagingSession:
         on_resource_clash : OnResourceClash or Sequence[ClashSpec], optional
             how to handle two filesets resolving to the same scan/resource name.
             A bare policy string ("error"/"avoid"/"merge"/"overwrite") applies to
-            any clash. A sequence of ``ClashSpec`` (policy + datatype scope) resolves
+            any clash. A sequence of ``ClashSpec`` (policy + datatype) resolves
             each clash with the first spec whose scope covers *both* filesets;
             "merge" folds them into a ``SetOf``, "avoid" suffixes, "overwrite"
             replaces; a clash no spec covers raises. Default "error".
@@ -781,11 +783,11 @@ class ImagingSession:
                 for path_mdata in path_metadata_regex:
                     if isinstance(fileset, path_mdata.datatype):
                         fileset_path = str(getattr(fileset, "fspath", fileset.parent))
-                        match = re.match(path_mdata.regex, fileset_path)
+                        match = re.match(path_mdata.pattern, fileset_path)
                         if match is None:
                             raise ValueError(
                                 f"Could not extract metadata from path '{fileset_path}' "
-                                f"using pattern '{path_mdata.regex}'"
+                                f"using pattern '{path_mdata.pattern}'"
                             )
                         fileset.metadata.update(match.groupdict())
 
@@ -843,7 +845,7 @@ class ImagingSession:
             clash_hint = (
                 f"the {' and '.join(derived_specs)} ID(s) for this resource were "
                 f"auto-derived from its fileset type; pass explicit "
-                f"{' / '.join(derived_specs)} specifier(s) to control grouping"
+                f"{' / '.join(derived_specs)} expr(s) to control grouping"
                 if derived_specs
                 else None
             )
@@ -1473,7 +1475,7 @@ class ImagingSession:
             whether the resource is primary or associated to a primary resource
         on_clash : OnResourceClash or Sequence[ClashSpec], optional
             a bare policy ("error"/"avoid"/"merge"/"overwrite") applied to any
-            clash, or a sequence of ``ClashSpec`` (policy + datatype scope) where
+            clash, or a sequence of ``ClashSpec`` (policy + datatype) where
             the clash is resolved by the first spec whose scope covers *both* the
             existing and incoming filesets - a clash no spec covers raises.
             "avoid" suffixes the name, "merge" folds both into a ``SetOf``,
@@ -1596,7 +1598,7 @@ class ImagingSession:
             elif policy == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
-                    f"{self.name} session. Pass --on-resource-clash <policy> <scope> "
+                    f"{self.name} session. Pass --on-resource-clash <policy> <datatype> "
                     "(policy one of 'avoid'/'merge'/'overwrite') with a scope covering "
                     "the clashing datatype(s), or tighten --scan / --resource so they "
                     "don't collide." + (f" {clash_hint}" if clash_hint else ""),

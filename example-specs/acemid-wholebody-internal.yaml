@@ -1,0 +1,76 @@
+# The second, independent ACEMID pipeline: archives the whole Vectra export
+# directory plus its sidecar SQLite .db as single resources (no --recursive -
+# nothing here is pulled apart), converting the export to a .zip on the way in.
+# Deployed alongside acemid-lesion.yaml (e.g. both via
+# 'xnat-ingest workflow deploy example-specs/') but a fully separate
+# spec/deployment - each redeployable independently, each declaring its own
+# xnat_server/xnat_user/xnat_password (the small duplication between the two
+# files is deliberate: it keeps each spec self-contained and independently
+# readable rather than relying on an 'extends'-merged shared file).
+
+name: acemid-wholebody-internal
+
+params:
+  input_dir:
+    description: "Root of this site's Canfield Vectra export"
+  spec_dir:
+    description: "Directory of project-specific deidentification specs"
+    default: /etc/xnat-ingest/deid-specs
+  reid_dir:
+    description: "Directory to write the original<->deidentified mapping to"
+    default: /var/lib/xnat-ingest/reid
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: ["${input_dir}"]
+      datatypes:
+        - medimage/vnd.canfield.vectra-export
+        - application/vnd.sqlite3
+      session:
+        - expr: session_uid
+          # datatype omitted -> 'all'
+      path_metadata_regex:
+        - pattern: '.*/(?P<session_uid>[\w-]+)'
+          datatype: medimage/vnd.canfield.vectra-export
+        - pattern: '.*/(?P<SubjectID>[^/_]+)_(?P<session_uid>[\w-]+)'
+          datatype: application/vnd.sqlite3
+      # Needs the vectra-export -> +zip converter from fileformats-extras loaded
+      # in the image this runs in.
+      convert:
+        - source: medimage/vnd.canfield.vectra-export
+          target: medimage/vnd.canfield.vectra-export+zip
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      # assign() still requires a project field even when constant_project_id
+      # overrides the actual project assigned below - it's otherwise unused.
+      project: "all"
+      subject: SubjectID
+      session: session_uid
+      constant_project_id: ACEMID-Internal
+
+  - name: deidentify
+    command: deidentify
+    input: assign
+    args:
+      spec_dir: "${spec_dir}"
+      reid_dir: "${reid_dir}"
+
+  - name: upload
+    command: upload
+    input: deidentify
+    args:
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"

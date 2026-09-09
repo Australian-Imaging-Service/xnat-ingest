@@ -1,0 +1,67 @@
+# A continuously-running clinical-scanner drop folder: 'xnat-ingest workflow serve
+# scheduled-scanner-drop.yaml' (or 'workflow deploy' against a Prefect server)
+# runs this on the 'schedule:' cron below rather than each stage looping
+# independently (contrast with the plain CLI's per-command --loop). Per-stage
+# 'retries:' cover a flaky XNAT connection or a transiently locked scanner
+# export without failing the whole run.
+
+name: scheduled-scanner-drop
+
+params:
+  orthanc_url:
+    description: "URL of the Orthanc instance to pull DICOM sessions from"
+  orthanc_store_dir:
+    description: "Orthanc's StorageDirectory, as mounted in this container"
+  orthanc_user:
+    description: "Orthanc username"
+  orthanc_password:
+    description: "Orthanc password"
+    secret: true
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
+
+# Every 10 minutes.
+schedule: "*/10 * * * *"
+
+stages:
+  - name: group
+    command: group-orthanc
+    retries: 2
+    retry_delay_seconds: 30
+    args:
+      url: "${orthanc_url}"
+      store_dir: "${orthanc_store_dir}"
+      user: "${orthanc_user}"
+      password: "${orthanc_password}"
+      # Only touch sessions whose files haven't been modified in the last 5
+      # minutes, so a session still being written by the scanner is left for
+      # the next scheduled run rather than staged half-finished.
+      wait_period: 300
+      unlink_source: all
+
+  - name: assign
+    command: assign
+    input: group
+    retries: 2
+    retry_delay_seconds: 30
+    args:
+      project: StudyComments
+      subject: PatientID
+      session: AccessionNumber
+      unlink_source: all
+
+  - name: upload
+    command: upload
+    input: assign
+    retries: 3
+    retry_delay_seconds: 60
+    args:
+      wait_period: 60
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"
