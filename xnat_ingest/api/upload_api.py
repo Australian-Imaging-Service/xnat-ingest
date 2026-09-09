@@ -434,24 +434,13 @@ def upload(
                             )
                             resource_errors.append((resource, e))
 
-                if resource_errors or incomplete_on_xnat:
-                    parts = []
-                    if resource_errors:
-                        parts.append(
-                            f"{len(resource_errors)} of {len(to_upload)} resource(s) "
-                            "failed to upload: "
-                            + ", ".join(r.path for r, _ in resource_errors)
-                        )
-                    if incomplete_on_xnat:
-                        parts.append(
-                            f"{len(incomplete_on_xnat)} resource(s) already on XNAT "
-                            "but incomplete, and NOT repaired: "
-                            + ", ".join(incomplete_on_xnat)
-                            + ". Delete them on XNAT to allow re-upload."
-                        )
-                    msg = f"'{session.name}' did not upload cleanly: " + "; ".join(
-                        parts
-                    )
+                msg = session_upload_verdict(
+                    session_name=session.name,
+                    num_attempted=len(to_upload),
+                    failed_paths=[r.path for r, _ in resource_errors],
+                    incomplete_paths=incomplete_on_xnat,
+                )
+                if msg is not None:
                     errors.append(msg)
                     if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
@@ -514,3 +503,53 @@ def upload(
     else:
         logger.info("Upload completed successfully")
     return errors
+
+
+def session_upload_verdict(
+    session_name: str,
+    num_attempted: int,
+    failed_paths: ty.Sequence[str],
+    incomplete_paths: ty.Sequence[str],
+) -> ty.Optional[str]:
+    """Summarise how a session's upload went, or None if it went cleanly.
+
+    Kept separate from upload() because the SUCCESS branch is the one that
+    misled operators: resources skipped as "already uploaded" never entered
+    `to_upload`, so they could never reach `resource_errors`, so a session that
+    delivered a fraction of its files still logged "Successfully uploaded all
+    files". Returning None only when BOTH lists are empty makes that impossible
+    to reintroduce by accident, and makes the rule testable on its own.
+
+    Parameters
+    ----------
+    session_name : str
+        the session being reported on
+    num_attempted : int
+        how many resources were actually attempted
+    failed_paths : Sequence[str]
+        resources whose upload raised
+    incomplete_paths : Sequence[str]
+        resources already on XNAT but missing files held in staging, which this
+        uploader will not repair
+
+    Returns
+    -------
+    str or None
+        an operator-facing message, or None if nothing was wrong
+    """
+    if not failed_paths and not incomplete_paths:
+        return None
+    parts = []
+    if failed_paths:
+        parts.append(
+            f"{len(failed_paths)} of {num_attempted} resource(s) failed to upload: "
+            + ", ".join(failed_paths)
+        )
+    if incomplete_paths:
+        parts.append(
+            f"{len(incomplete_paths)} resource(s) already on XNAT but incomplete, "
+            "and NOT repaired: "
+            + ", ".join(incomplete_paths)
+            + ". Delete them on XNAT to allow re-upload."
+        )
+    return f"'{session_name}' did not upload cleanly: " + "; ".join(parts)
