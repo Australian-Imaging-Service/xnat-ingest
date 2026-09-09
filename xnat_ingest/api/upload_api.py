@@ -103,6 +103,37 @@ def upload(
     # already open, so it's safe to use even if the connection is already open
     with xnat_repo.connection:
 
+        # DROP THE CLIENT-SIDE VIEW OF XNAT BEFORE DECIDING ANYTHING.
+        #
+        # `upload --loop` holds ONE connection for the life of the process, and
+        # xnatpy caches project/subject/experiment listings on it. Without this,
+        # every pass answers "does this already exist on XNAT?" from a snapshot
+        # taken when the process started, so nothing an operator does in XNAT is
+        # ever visible to a long-running uploader.
+        #
+        # The failure that motivated it: an operator deletes a partially
+        # uploaded session in XNAT so the pipeline will re-upload it. The next
+        # pass reads the cache, still sees the session, logs "Skipping ... as all
+        # the resources already exist on XNAT", and skips it for ever. No error,
+        # no retry. Only restarting the process recovers it, and nothing tells
+        # the operator that. Confirmed on a live deployment: deleting alone
+        # changed nothing; deleting AND restarting uploaded all 383 files.
+        #
+        # The same staleness hides a NEWLY CREATED project, where
+        # `connection.projects[...]` raises and the caller reports
+        # "Project '<id>' does not exist on XNAT" about a project that is plainly
+        # visible in the web UI.
+        #
+        # THIS DOES NOT RECONNECT, AND THAT IS THE POINT. A per-pass
+        # close/reopen would re-authenticate 1440 times a day and recreate the
+        # session-per-minute churn that holding a single connection was
+        # introduced to avoid. XNATSession.clearcache() only empties local dicts
+        # and listing caches: it does not log out, re-authenticate, or touch the
+        # HTTP session. MEASURED against a live XNAT: 60 consecutive
+        # clearcache+re-read cycles produced exactly ONE session id, unchanged
+        # throughout and released cleanly on disconnect.
+        xnat_repo.connection.clearcache()
+
         num_sessions: int
         sessions: ty.Iterable[SessionListing]
         if input_dir.startswith("s3://"):
