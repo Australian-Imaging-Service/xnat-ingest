@@ -20,6 +20,7 @@ from xnat_ingest.helpers.remotes import (
     calculate_checksums,
     dir_older_than,
     get_xnat_checksums,
+    compare_resource_with_xnat,
     get_xnat_resource,
     get_xnat_session,
     iterate_s3_sessions,
@@ -430,25 +431,29 @@ def upload(
                         if any(remote_checksums.values()):
                             logger.debug("calculating checksums for %s", xresource)
                             calc_checksums = calculate_checksums(resource.fileset)
-                            if remote_checksums != calc_checksums:
-                                extra_keys = set(remote_checksums) - set(calc_checksums)
-                                missing_keys = set(calc_checksums) - set(
-                                    remote_checksums
-                                )
-                                intersect_keys = set(calc_checksums) & set(
-                                    remote_checksums
-                                )
-                                mismatching = [
-                                    k
-                                    for k, v in intersect_keys
-                                    if v != remote_checksums[k]
-                                ]
+                            # COMPARED FILE BY FILE, NOT AS TWO WHOLE DICTS.
+                            # XNAT reports an empty digest until a catalog
+                            # refresh populates it, so a resource that has just
+                            # been topped up holds a mix: real digests for the
+                            # files that were already there, empty ones for the
+                            # files that were just added. A whole-dict `!=` calls
+                            # that a mismatch when nothing is wrong.
+                            #
+                            # MEASURED on a live XNAT immediately after a repair:
+                            # the 3 files just uploaded reported digest '', the 5
+                            # already present reported real md5s, and this check
+                            # failed the upload that had in fact succeeded.
+                            comparison = compare_resource_with_xnat(
+                                calc_checksums, remote_checksums
+                            )
+                            if not comparison.complete:
                                 raise RuntimeError(
                                     "Checksums do not match after upload of "
                                     f"'{resource.path}' resource.\n"
-                                    f"Extra keys were {extra_keys}\n"
-                                    f"Missing keys were {missing_keys}\n"
-                                    f"Mismatching files were {mismatching}\n"
+                                    f"Extra keys were {sorted(comparison.extra)}\n"
+                                    f"Missing keys were {sorted(comparison.missing)}\n"
+                                    "Mismatching files were "
+                                    f"{sorted(comparison.differing)}\n"
                                     f"Remote checksums were {remote_checksums}\n"
                                     f"Calculated checksums were {calc_checksums}\n"
                                 )
@@ -505,8 +510,9 @@ def upload(
                     if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
                     logger.error(msg)
-                else:
-                    logger.info(f"Successfully uploaded all files in '{session.name}'")
+                # Success is not announced here. The session still has metadata
+                # extraction and pipeline triggering ahead of it, and there is a
+                # single report at the end of all of it.
                 # Extract DICOM metadata
                 if session_has_dicom:
                     logger.info("Extracting metadata from DICOMs on XNAT..")
@@ -543,7 +549,13 @@ def upload(
                         f"Failed to trigger pipelines in '{session.name}': {e}\nResponse: "
                         f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
                     )
-                logger.info(f"Successfully uploaded all files in '{session.name}'")
+                # NOT unconditional. This ran even when the verdict above had
+                # just reported the session as failed, so a session that lost
+                # resources logged the failure and then claimed success in the
+                # next breath. Whichever line an operator or a log query saw
+                # first decided what they believed.
+                if msg is None:
+                    logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
                     error_msg = [
