@@ -308,11 +308,12 @@ def upload(
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
-                to_upload: list[tuple[ImagingResource, ty.Any]] = []
+                to_upload: list[tuple[ImagingResource, ty.Any, ty.Any]] = []
                 incomplete_on_xnat: list[str] = []
+                repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
                     try:
-                        xresource = get_xnat_resource(resource, xsession)
+                        xresource, only_files = get_xnat_resource(resource, xsession)
                     except IncompleteCheckumsException as e:
                         # The resource exists on XNAT but is SHORT. Skipping it
                         # quietly is what turns a partial upload into permanent
@@ -327,18 +328,42 @@ def upload(
                             resource.path,
                         )
                         continue  # skipping as resource already exists
-                    to_upload.append((resource, xresource))
+                    if only_files is not None:
+                        repaired_on_xnat.append(resource.path)
+                    to_upload.append((resource, xresource, only_files))
 
                 def _upload_resource(
-                    resource: ImagingResource, xresource: ty.Any
+                    resource: ImagingResource,
+                    xresource: ty.Any,
+                    only_files: ty.Optional[ty.Set[str]] = None,
                 ) -> None:
+                    """Upload a resource, or just the files XNAT is missing.
+
+                    `only_files` is set when XNAT already holds a strict subset
+                    of what we have. Re-sending the files it already has would
+                    be pointless and, on a large resource, expensive.
+                    """
+
+                    def _wanted(fspath: Path) -> bool:
+                        if only_files is None:
+                            return True
+                        # Manifest keys are paths relative to the fileset parent,
+                        # which is what XNAT reports as the file Name. Verified
+                        # against a live XNAT: names and md5s matched exactly.
+                        return (
+                            str(fspath.relative_to(resource.fileset.parent))
+                            in only_files
+                        )
+
                     logger.debug(
                         "Uploading '%s' resource to '%s'",
                         resource.path,
                         xresource,
                     )
                     if isinstance(resource.fileset, File):
-                        for fspath in resource.fileset.fspaths:
+                        for fspath in (
+                            p for p in resource.fileset.fspaths if _wanted(p)
+                        ):
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",
                                 fspath,
@@ -360,7 +385,9 @@ def upload(
                         )
                         # Split the files to upload into batches and hardlink them into
                         # separate directories so we can use upload_dir
-                        files_to_upload = list(resource.fileset.fspaths)
+                        files_to_upload = [
+                            p for p in resource.fileset.fspaths if _wanted(p)
+                        ]
                         num_files = len(files_to_upload)
                         batch_size = (
                             num_files_per_batch
@@ -444,8 +471,10 @@ def upload(
                 resource_errors: list[tuple[ImagingResource, BaseException]] = []
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
-                        executor.submit(_upload_resource, resource, xresource): resource
-                        for resource, xresource in to_upload
+                        executor.submit(
+                            _upload_resource, resource, xresource, only_files
+                        ): resource
+                        for resource, xresource, only_files in to_upload
                     }
                     for future in tqdm(
                         as_completed(futures),
