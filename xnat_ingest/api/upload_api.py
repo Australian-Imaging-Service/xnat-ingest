@@ -499,6 +499,18 @@ def upload(
                             )
                             resource_errors.append((resource, e))
 
+                if repaired_on_xnat:
+                    # Worth a session-level line of its own. A repair means a
+                    # previous pass left this session short and reported it as
+                    # uploaded, so it is the record that the earlier claim was
+                    # wrong, not just that this pass did some work.
+                    logger.info(
+                        "Repaired %d incomplete resource(s) on XNAT in '%s': %s",
+                        len(repaired_on_xnat),
+                        session.name,
+                        sorted(repaired_on_xnat),
+                    )
+
                 msg = session_upload_verdict(
                     session_name=session.name,
                     num_attempted=len(to_upload),
