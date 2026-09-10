@@ -1,4 +1,4 @@
-"""An incomplete resource on XNAT must not be reported as already uploaded.
+"""An incomplete resource on XNAT must be repaired, not reported as uploaded.
 
 `get_xnat_resource` returned None whenever the resource existed on XNAT, and the
 caller logs "Skipping '<path>' resource as it is already uploaded" for None. So a
@@ -6,14 +6,17 @@ resource that XNAT holds only *part* of was skipped on every subsequent pass and
 never repaired, while the session still took the `else` branch and logged
 "Successfully uploaded all files".
 
-The information needed to notice was already in hand: the function computes
-`missing_paths` from the checksum comparison and logs it at ERROR, then discards
-it and returns None anyway.
+The information needed to notice was already in hand: the function computes the
+missing paths from the checksum comparison and logs them at ERROR, then discards
+them and returns None anyway.
 
 Measured on a real deployment: a 383-instance study had 16 of 95 files uploaded
 into one scan while the staging bucket was still being written. Every later pass
 skipped that scan as "already uploaded". 170 of 383 instances reached XNAT and
 the uploader reported success on each run.
+
+So the missing files are now handed back to the caller to upload. Only the
+differences an upload CANNOT fix are still an error a human has to resolve.
 """
 
 import typing as ty
@@ -61,51 +64,96 @@ def _staged(n: int) -> dict[str, str]:
     return {f"slice{i}.dcm": f"digest{i}" for i in range(n)}
 
 
-def test_incomplete_resource_raises_rather_than_reporting_uploaded() -> None:
-    """XNAT holding 16 of 95 files must not read as 'already uploaded'."""
-    staged = _staged(95)
-    on_xnat = {k: v for k, v in list(staged.items())[:16]}  # the short resource
-
+def _call(staged: dict[str, str], on_xnat: dict[str, str]) -> ty.Any:
     resource = FakeStagedResource(staged)
     xsession = FakeXnatSession(FakeScan({"DICOM": FakeResourceOnXnat()}))
-
     with mock.patch(
         "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=on_xnat
     ):
-        with pytest.raises(IncompleteCheckumsException) as excinfo:
-            get_xnat_resource(resource, xsession)
+        return get_xnat_resource(resource, xsession)
 
-    msg = excinfo.value.msg
-    assert "missing 79 file(s)" in msg, msg
-    assert "2-t1_mprage_ax" in msg, msg
+
+def test_incomplete_resource_is_returned_for_repair() -> None:
+    """THE REGRESSION: XNAT holding 16 of 95 files must not read as done.
+
+    This is the shape of the real incident. The resource comes back paired with
+    the 79 names the caller has to upload, and with nothing else, so the files
+    XNAT already holds are not sent again.
+    """
+    staged = _staged(95)
+    on_xnat = {k: v for k, v in list(staged.items())[:16]}  # the short resource
+
+    xresource, only_files = _call(staged, on_xnat)
+
+    assert xresource is not None, "a repairable resource must not be skipped"
+    assert only_files == set(staged) - set(on_xnat)
+    assert len(only_files) == 79
+    assert "slice0.dcm" not in only_files, "already on XNAT, must not be resent"
 
 
 def test_complete_resource_still_skips_quietly() -> None:
-    """An identical resource is genuinely already uploaded: still returns None."""
+    """An identical resource is genuinely already uploaded: nothing to do."""
     staged = _staged(95)
-    resource = FakeStagedResource(staged)
-    xsession = FakeXnatSession(FakeScan({"DICOM": FakeResourceOnXnat()}))
-
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=dict(staged)
-    ):
-        assert get_xnat_resource(resource, xsession) is None
+    assert _call(staged, dict(staged)) == (None, None)
 
 
-def test_extra_files_on_xnat_still_returns_none() -> None:
+def test_extra_files_on_xnat_are_not_repaired() -> None:
     """XNAT holding files we do not is a conflict, not something to auto-repair.
 
-    Re-uploading cannot resolve it, so the existing behaviour is kept: log and
-    return None. Only *missing* files, which an upload could actually fix, raise.
+    An upload can only add, so it cannot resolve this. The existing behaviour is
+    kept: log and skip, leaving it to a human.
     """
     staged = _staged(3)
     on_xnat = dict(staged)
     on_xnat["unexpected.dcm"] = "digestX"
 
-    resource = FakeStagedResource(staged)
-    xsession = FakeXnatSession(FakeScan({"DICOM": FakeResourceOnXnat()}))
+    assert _call(staged, on_xnat) == (None, None)
 
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=on_xnat
-    ):
-        assert get_xnat_resource(resource, xsession) is None
+
+def test_missing_alongside_extra_files_still_raises() -> None:
+    """Missing files that CANNOT be repaired must still fail the session.
+
+    Uploading here would append to a resource that is already wrong, so the
+    exception stays: the session must not be reported as cleanly uploaded, and
+    the operator is told to delete the resource on XNAT.
+    """
+    staged = _staged(5)
+    on_xnat = {"slice0.dcm": "digest0", "unexpected.dcm": "digestX"}
+
+    with pytest.raises(IncompleteCheckumsException) as excinfo:
+        _call(staged, on_xnat)
+
+    msg = excinfo.value.msg
+    assert "missing 4 file(s)" in msg, msg
+    assert "cannot be repaired" in msg, msg
+    assert "Delete the resource on XNAT" in msg, msg
+
+
+def test_differing_content_is_not_repaired() -> None:
+    """A shared file with different bytes cannot be fixed by uploading either."""
+    staged = _staged(3)
+    on_xnat = dict(staged)
+    on_xnat["slice1.dcm"] = "SOMETHING_ELSE"
+
+    assert _call(staged, on_xnat) == (None, None)
+
+
+def test_empty_digests_do_not_make_a_complete_resource_look_broken() -> None:
+    """XNAT reports digest '' until a catalog refresh populates it.
+
+    Every file present by name and no digests to compare means nothing is
+    wrong, and treating it as a difference would re-upload healthy resources.
+    """
+    staged = _staged(4)
+    assert _call(staged, {k: "" for k in staged}) == (None, None)
+
+
+def test_empty_digests_still_repair_a_genuinely_missing_file() -> None:
+    """Names are trustworthy even when digests are not."""
+    staged = _staged(4)
+    on_xnat = {k: "" for k in list(staged)[:2]}
+
+    xresource, only_files = _call(staged, on_xnat)
+
+    assert xresource is not None
+    assert only_files == {"slice2.dcm", "slice3.dcm"}

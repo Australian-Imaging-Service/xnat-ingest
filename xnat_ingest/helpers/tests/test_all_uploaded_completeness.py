@@ -90,7 +90,5 @@ def test_empty_digests_do_not_make_a_complete_resource_look_short(
 def test_no_manifest_falls_back_to_previous_behaviour(tmp_path: ty.Any) -> None:
     """Sessions staged without manifests must not become newly unskippable."""
     listing = _listing(tmp_path, {})
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value={}
-    ):
+    with mock.patch("xnat_ingest.helpers.remotes.get_xnat_checksums", return_value={}):
         assert listing.all_uploaded(FakeConnection()) is True

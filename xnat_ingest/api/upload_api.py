@@ -546,14 +546,14 @@ def upload(
                 logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
-                    msg = [
+                    error_msg = [
                         (
                             f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
                             f"\n{traceback.format_exc()}\n\n"
                         )
                     ]
-                    logger.error("".join(msg))
-                    errors.extend(msg)
+                    logger.error("".join(error_msg))
+                    errors.extend(error_msg)
                     continue
                 else:
                     raise

@@ -32,6 +32,11 @@ from .xnat_scan_types import xnat_scan_type_from_sop_class
 
 
 class SessionListing(metaclass=abc.ABCMeta):
+    # Every subclass supplies this, as a field or a property, and `ids` below
+    # has always relied on it. Declared so that reliance is part of the
+    # interface rather than an assumption each caller has to make afresh.
+    name: str
+
     @property
     @abc.abstractmethod
     def cache_path(self) -> Path:
@@ -43,8 +48,11 @@ class SessionListing(metaclass=abc.ABCMeta):
         pass
 
     @property
-    def resource_manifests(self) -> dict[str, dict[str, str]]:
+    def resource_manifests(self) -> dict[str, dict[str, ty.Any]]:
         """The staged manifests keyed by resource path, when the listing has them.
+
+        A manifest holds more than checksums, so the values are deliberately
+        untyped: "checksums" maps file name to digest, other keys do not.
 
         Declared here so all_uploaded() can rely on it. Subclasses that stage
         manifests override it; the default is empty, which makes completeness
@@ -175,7 +183,7 @@ class LocalSessionListing(SessionListing):
         return paths
 
     @property
-    def name(self) -> str:
+    def name(self) -> str:  # type: ignore[override]  # base declares a plain attr
         return self.fspath.name
 
     @property
