@@ -49,16 +49,23 @@ class SessionListing(metaclass=abc.ABCMeta):
 
     @property
     def resource_manifests(self) -> dict[str, dict[str, ty.Any]]:
-        """The staged manifests keyed by resource path, when the listing has them.
+        """The staged manifests keyed by resource path.
 
         A manifest holds more than checksums, so the values are deliberately
         untyped: "checksums" maps file name to digest, other keys do not.
 
-        Declared here so all_uploaded() can rely on it. Subclasses that stage
-        manifests override it; the default is empty, which makes completeness
-        checking a no-op rather than an error for listings that carry none.
+        Reads them from the staging directory, which is what every listing
+        backed by a local path needs. A listing that stages elsewhere overrides
+        this. A listing staged with no manifests at all raises here, and
+        all_uploaded() treats that as "cannot check" rather than an error.
         """
-        return {}
+        manifests = {}
+        for relpath in sorted(self.resource_paths):
+            resource_dir = self.cache_path / relpath
+            if resource_dir.is_dir():
+                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
+                manifests[relpath] = manifest.contents
+        return manifests
 
     @property
     def ids(self):
@@ -81,6 +88,32 @@ class SessionListing(metaclass=abc.ABCMeta):
     def session_id(self) -> str:
         return self.ids[2]
 
+    def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
+        """Resolve this listing to the XNAT session it belongs to, or None.
+
+        SEPARATE FROM all_uploaded() SO THE COMPLETENESS RULE CAN BE SHARED.
+        Listings differ in how they find their session (by project and label
+        here, by a global label search for a session-only staging directory) but
+        they must not differ in what counts as fully uploaded. Two hand-written
+        copies of "is this resource complete" is how a resource holding a
+        fraction of its files came to be reported as uploaded.
+
+        Returns
+        -------
+        ty.Any or None
+            the XNAT session object, or None when it does not exist yet
+        """
+        try:
+            xproject = connection.projects[self.project_id]
+        except KeyError:
+            raise KeyError(
+                "Project '{}' does not exist on XNAT".format(self.project_id)
+            ) from None
+        try:
+            return xproject.experiments[self.session_id]
+        except KeyError:
+            return None
+
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
 
@@ -96,15 +129,8 @@ class SessionListing(metaclass=abc.ABCMeta):
         xsession : xnat.classes.ExperimentData | None
             the XNAT session object
         """
-        try:
-            xproject = connection.projects[self.project_id]
-        except KeyError:
-            raise KeyError(
-                "Project '{}' does not exist on XNAT".format(self.project_id)
-            ) from None
-        try:
-            xsession = xproject.experiments[self.session_id]
-        except KeyError:
+        xsession = self.find_xnat_session(connection)
+        if xsession is None:
             return False
 
         xresources = {}
@@ -190,19 +216,9 @@ class LocalSessionListing(SessionListing):
     def session_id(self) -> str:
         return self.ids[2]
 
-    @property
-    def resource_manifests(self) -> dict[str, dict[str, str]]:
-        manifests = {}
-        for relpath in sorted(self.resource_paths):
-            resource_dir = self.cache_path / relpath
-            if resource_dir.is_dir():
-                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
-                manifests[relpath] = manifest.contents
-        return manifests
-
 
 @attrs.define
-class SessionOnlyListing:
+class SessionOnlyListing(SessionListing):
     """A staging directory named by session label only (no project.subject.visit structure).
 
     Used when uploading resources directly to an existing XNAT session identified only by
@@ -217,7 +233,7 @@ class SessionOnlyListing:
         return self.fspath
 
     @property
-    def name(self) -> str:
+    def name(self) -> str:  # type: ignore[override]  # base declares a plain attr
         return self.fspath.name
 
     @property
@@ -249,12 +265,12 @@ class SessionOnlyListing:
             )
         return matches[0] if matches else None
 
-    def all_uploaded(self, connection: xnat.XNATSession) -> bool:
-        xsession = self.find_xnat_session(connection)
-        if xsession is None:
-            return False
-        uploaded = {r.label for r in xsession.resources.values()}
-        return uploaded.issuperset(self.resource_paths)
+    # all_uploaded is deliberately NOT defined here. This class used to carry
+    # its own copy that compared resource LABELS, which is the defect the base
+    # class was fixed for, and because the class sat outside the hierarchy the
+    # fix could not reach it: a session-only staging directory whose resource
+    # held 3 of 8 files still reported as fully uploaded. Only find_xnat_session
+    # differs between the modes, so only find_xnat_session is overridden.
 
 
 @attrs.define
