@@ -622,18 +622,53 @@ def get_xnat_resource(
         except KeyError:
             pass
         else:
-            checksums = get_xnat_checksums(xresource)
-            if checksums != resource.checksums:
-                difference = {
-                    k: (v, resource.checksums[k])
-                    for k, v in checksums.items()
-                    if v != resource.checksums[k]
-                }
-                logger.error(
-                    "'%s' session resource already exists on XNAT. Please delete on XNAT to overwrite:\n%s",
+            # SAME THREE OUTCOMES AS THE SCAN BRANCH BELOW. This branch used to
+            # log and return None whatever the difference was, and the caller
+            # reads None as "already uploaded", so a session-level resource that
+            # XNAT held only part of was skipped on every pass and the session
+            # still reported as cleanly uploaded. That is the same defect the
+            # scan branch had, one level up.
+            #
+            # The old difference report could also raise KeyError: it indexed
+            # resource.checksums by XNAT's keys, so a file present on XNAT but
+            # not staged crashed the report meant to explain the problem.
+            comparison = compare_resource_with_xnat(
+                resource.checksums, get_xnat_checksums(xresource)
+            )
+            if comparison.repairable:
+                logger.warning(
+                    "'%s' session resource exists on XNAT but is missing %d of "
+                    "%d file(s) held in the staged session. Uploading the "
+                    "missing file(s): %s%s",
                     resource_name,
-                    pprint.pformat(difference),
+                    len(comparison.missing),
+                    len(resource.checksums),
+                    sorted(comparison.missing)[:10],
+                    "..." if len(comparison.missing) > 10 else "",
                 )
+                return xresource, comparison.missing
+            if not comparison.complete:
+                logger.error(
+                    "'%s' session resource already exists on XNAT and does not "
+                    "match the staged session.\nMissing paths: %s\nAdditional "
+                    "paths: %s\nDiffering paths: %s",
+                    resource_name,
+                    sorted(comparison.missing),
+                    sorted(comparison.extra),
+                    sorted(comparison.differing),
+                )
+                if comparison.missing:
+                    raise IncompleteCheckumsException(
+                        f"'{resource_name}' session resource exists on XNAT but "
+                        f"is missing {len(comparison.missing)} file(s) present "
+                        "in the staged session, and cannot be repaired by "
+                        "uploading because XNAT also holds "
+                        f"{len(comparison.extra)} unexpected file(s) and "
+                        f"{len(comparison.differing)} file(s) with different "
+                        "content. Delete the resource on XNAT to have it "
+                        f"uploaded afresh. Missing: {sorted(comparison.missing)[:10]}"
+                        + ("..." if len(comparison.missing) > 10 else "")
+                    )
             return None, None
         logger.debug(
             "Creating session resource %s in %s", resource_name, xsession.label

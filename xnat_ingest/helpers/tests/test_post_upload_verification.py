@@ -78,3 +78,32 @@ def test_the_mismatch_report_can_be_built_without_unpacking_a_string() -> None:
     assert "extra.dcm" in report
     assert "new2.dcm" in report
     assert "old2.dcm" in report
+
+
+def test_names_are_checked_even_when_no_digests_exist_at_all() -> None:
+    """The check used to do nothing on a site without enableChecksums.
+
+    It was gated on any(remote_checksums.values()), so when XNAT returned no
+    digests at all it logged "assuming upload was successful" and compared
+    nothing, not even file names, which XNAT lists regardless. That is the
+    configuration where the fail-closed guard on the repair filter is the only
+    other net, and the same --dont-check-checksums flag removes both.
+
+    AIS-Edge cares: the deployment plan for the production site still lists
+    "is XNAT enableChecksums on" as an open question.
+    """
+    remote = {k: "" for k in list(CALCULATED)[:3]}  # one file never arrived
+
+    comparison = compare_resource_with_xnat(CALCULATED, remote)
+    assert not comparison.comparable, "no digests to compare"
+    assert not comparison.complete, "but a missing NAME is still detectable"
+    assert comparison.missing == {"new2.dcm"}
+
+
+def test_no_digests_and_all_names_present_is_a_pass() -> None:
+    """Names-only must not turn into a false alarm on a healthy upload."""
+    remote = {k: "" for k in CALCULATED}
+
+    comparison = compare_resource_with_xnat(CALCULATED, remote)
+    assert not comparison.comparable
+    assert comparison.complete

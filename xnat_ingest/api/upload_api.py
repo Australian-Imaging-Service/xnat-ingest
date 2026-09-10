@@ -345,16 +345,12 @@ def upload(
                     be pointless and, on a large resource, expensive.
                     """
 
-                    def _wanted(fspath: Path) -> bool:
-                        if only_files is None:
-                            return True
-                        # Manifest keys are paths relative to the fileset parent,
-                        # which is what XNAT reports as the file Name. Verified
-                        # against a live XNAT: names and md5s matched exactly.
-                        return (
-                            str(fspath.relative_to(resource.fileset.parent))
-                            in only_files
-                        )
+                    wanted_fspaths = select_files_to_upload(
+                        list(resource.fileset.fspaths),
+                        resource.fileset.parent,
+                        only_files,
+                        resource.path,
+                    )
 
                     logger.debug(
                         "Uploading '%s' resource to '%s'",
@@ -362,9 +358,7 @@ def upload(
                         xresource,
                     )
                     if isinstance(resource.fileset, File):
-                        for fspath in (
-                            p for p in resource.fileset.fspaths if _wanted(p)
-                        ):
+                        for fspath in wanted_fspaths:
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",
                                 fspath,
@@ -386,9 +380,7 @@ def upload(
                         )
                         # Split the files to upload into batches and hardlink them into
                         # separate directories so we can use upload_dir
-                        files_to_upload = [
-                            p for p in resource.fileset.fspaths if _wanted(p)
-                        ]
+                        files_to_upload = wanted_fspaths
                         num_files = len(files_to_upload)
                         batch_size = (
                             num_files_per_batch
@@ -428,41 +420,54 @@ def upload(
                     if check_checksums:
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
-                        if any(remote_checksums.values()):
-                            logger.debug("calculating checksums for %s", xresource)
-                            calc_checksums = calculate_checksums(resource.fileset)
-                            # COMPARED FILE BY FILE, NOT AS TWO WHOLE DICTS.
-                            # XNAT reports an empty digest until a catalog
-                            # refresh populates it, so a resource that has just
-                            # been topped up holds a mix: real digests for the
-                            # files that were already there, empty ones for the
-                            # files that were just added. A whole-dict `!=` calls
-                            # that a mismatch when nothing is wrong.
-                            #
-                            # MEASURED on a live XNAT immediately after a repair:
-                            # the 3 files just uploaded reported digest '', the 5
-                            # already present reported real md5s, and this check
-                            # failed the upload that had in fact succeeded.
-                            comparison = compare_resource_with_xnat(
-                                calc_checksums, remote_checksums
-                            )
-                            if not comparison.complete:
-                                raise RuntimeError(
-                                    "Checksums do not match after upload of "
-                                    f"'{resource.path}' resource.\n"
-                                    f"Extra keys were {sorted(comparison.extra)}\n"
-                                    f"Missing keys were {sorted(comparison.missing)}\n"
-                                    "Mismatching files were "
-                                    f"{sorted(comparison.differing)}\n"
-                                    f"Remote checksums were {remote_checksums}\n"
-                                    f"Calculated checksums were {calc_checksums}\n"
-                                )
-                        else:
+                        # NAMES ARE ALWAYS AVAILABLE, DIGESTS ARE NOT, so the
+                        # comparison runs either way. This used to be skipped
+                        # entirely unless XNAT returned at least one digest,
+                        # which made the whole post-upload check depend on a
+                        # site having enableChecksums switched on. On a site
+                        # without it the check logged "assuming upload was
+                        # successful" and compared nothing, not even the file
+                        # names, which XNAT lists regardless.
+                        #
+                        # compare_resource_with_xnat() already degrades to
+                        # names-only when no digest is available, so it is safe
+                        # to call unconditionally: content is compared when
+                        # there is content to compare, and a file that never
+                        # arrived is caught in both cases.
+                        logger.debug("calculating checksums for %s", xresource)
+                        calc_checksums = calculate_checksums(resource.fileset)
+                        # COMPARED FILE BY FILE, NOT AS TWO WHOLE DICTS.
+                        # XNAT reports an empty digest until a catalog refresh
+                        # populates it, so a resource that has just been topped
+                        # up holds a mix: real digests for the files that were
+                        # already there, empty ones for the files just added.
+                        # A whole-dict `!=` calls that a mismatch when nothing
+                        # is wrong.
+                        #
+                        # MEASURED on a live XNAT immediately after a repair:
+                        # the 3 files just uploaded reported digest '', the 5
+                        # already present reported real md5s, and this check
+                        # failed the upload that had in fact succeeded.
+                        comparison = compare_resource_with_xnat(
+                            calc_checksums, remote_checksums
+                        )
+                        if not comparison.comparable:
                             logger.debug(
                                 "Remote checksums were not calculated for %s "
-                                "(requires `enableChecksums` to be set site-wide), "
-                                "assuming upload was successful",
+                                "(requires `enableChecksums` to be set "
+                                "site-wide), comparing file names only",
                                 xresource,
+                            )
+                        if not comparison.complete:
+                            raise RuntimeError(
+                                "Checksums do not match after upload of "
+                                f"'{resource.path}' resource.\n"
+                                f"Extra keys were {sorted(comparison.extra)}\n"
+                                f"Missing keys were {sorted(comparison.missing)}\n"
+                                "Mismatching files were "
+                                f"{sorted(comparison.differing)}\n"
+                                f"Remote checksums were {remote_checksums}\n"
+                                f"Calculated checksums were {calc_checksums}\n"
                             )
                     else:
                         logger.debug(
@@ -587,6 +592,63 @@ def upload(
     else:
         logger.info("Upload completed successfully")
     return errors
+
+
+def select_files_to_upload(
+    fspaths: ty.Sequence[Path],
+    parent: Path,
+    only_files: ty.Optional[ty.Set[str]],
+    resource_path: str,
+) -> list[Path]:
+    """Pick the staged files to send, and refuse to send none of them by accident.
+
+    `only_files` is set when XNAT already holds a strict subset of what we have,
+    and it names the files it is missing. None means upload everything.
+
+    THE TWO NAME SHAPES ARE NOT GUARANTEED TO AGREE, THEY ARE ENFORCED TO AGREE,
+    and by code that lives elsewhere. `parent` here is FileSet.parent, which is
+    commonpath() over the staged files, so it is derived from content and
+    collapses to a subdirectory when every file happens to sit in one. The
+    manifest that `only_files` comes from is keyed to the resource directory,
+    which is fixed. The two coincide for a flat resource directory and can
+    differ for a nested one.
+
+    What normally makes them agree is ImagingResource.load(), which calls
+    check_checksums() and recomputes the manifest keys with this same
+    `relative_to=fileset.parent`, raising if they do not match. See
+    model/resource.py.
+
+    THAT ENFORCEMENT IS OPTIONAL, and the same `check_checksums` flag also gates
+    the post-upload verification, so `--dont-check-checksums` removes both ends
+    at once. Hence this function fails closed rather than trusting the shapes.
+
+    Raises
+    ------
+    RuntimeError
+        when `only_files` names files to upload but nothing matched, which would
+        otherwise upload zero files and report the resource as uploaded
+    """
+    if only_files is None:
+        return list(fspaths)
+    wanted = [p for p in fspaths if str(p.relative_to(parent)) in only_files]
+    if only_files and not wanted:
+        # FAIL CLOSED. only_files holds names we are certain XNAT is missing, so
+        # matching nothing does not mean there is nothing to do. It means the
+        # names and the paths disagree, and carrying on would upload nothing and
+        # then report success, which is the exact failure this change exists to
+        # stop.
+        #
+        # Not hypothetical: with num_files_per_batch > 0, math.ceil(0 / size) is
+        # 0, the batch loop never runs, and control falls straight through to
+        # the line that logs the resource as uploaded.
+        raise RuntimeError(
+            f"Refusing to repair '{resource_path}': XNAT is missing "
+            f"{len(only_files)} file(s) {sorted(only_files)[:5]} but none of "
+            f"the {len(fspaths)} staged file(s) matched those names, so nothing "
+            "would be uploaded. The manifest keys and the staged paths "
+            "disagree. Delete the resource on XNAT to have it uploaded afresh."
+        )
+    return wanted
 
 
 def session_upload_verdict(
