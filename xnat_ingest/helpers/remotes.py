@@ -158,13 +158,34 @@ class SessionListing(metaclass=abc.ABCMeta):
         # rather than newly strict.
         try:
             manifests = self.resource_manifests
-        except Exception:  # noqa: BLE001 - manifest access is best-effort here
-            logger.debug(
-                "Could not read manifests for '%s'; falling back to a "
-                "resource-label comparison",
+        except Exception:  # noqa: BLE001 - see below, any failure means "unknown"
+            # UNKNOWN IS NOT COMPLETE. This returned True, which the caller logs
+            # as "Skipping upload ... as all the resources already exist on
+            # XNAT" and continues, so a resource holding a fraction of its files
+            # was passed over with a success-shaped line: exactly the behaviour
+            # this method was changed to stop.
+            #
+            # On the S3 path this is not a cheap dict read. It is one download
+            # and one JSON parse per resource, so a read timeout, a 5xx, a
+            # truncated body, a manifest still being written, or one malformed
+            # file discards ALL of them for that session.
+            #
+            # Returning False costs a session download on a transient error and
+            # then finds nothing to do, because get_xnat_resource compares each
+            # resource itself. Returning True costs the data.
+            #
+            # WARNING, not DEBUG: the deployments pass no log level, so the
+            # default is INFO and a DEBUG line here would be invisible in
+            # exactly the situation an operator needs to see.
+            logger.warning(
+                "Could not read the staged manifests for '%s', so whether its "
+                "resources are complete on XNAT cannot be determined. Treating "
+                "it as not uploaded and letting the per-resource comparison "
+                "decide.",
                 self.name,
+                exc_info=True,
             )
-            return True
+            return False
         for resource_path, manifest in manifests.items():
             local_checksums = manifest.get("checksums") if manifest else None
             if not local_checksums:
@@ -344,6 +365,11 @@ class S3SessionListing(SessionListing):
         manifests = {}
         manifest_fnames_by_relpath: dict[str, str] = {}
         for path_parts, obj in self.objects:
+            if not path_parts:
+                # An object sitting directly at the session root. resource_paths
+                # skips these; without the same guard this raised IndexError on
+                # every pass, which the caller reads as "cannot check".
+                continue
             fname = path_parts[-1]
             if fname not in (
                 ImagingResource.MANIFEST_FNAME,
@@ -665,8 +691,10 @@ def get_xnat_resource(
                 return xresource, comparison.missing
             if not comparison.complete:
                 logger.error(
-                    "'%s' session resource already exists on XNAT and does not "
-                    "match the staged session.\nMissing paths: %s\nAdditional "
+                    # Same literal phrase as the scan branch: the shipped
+                    # Loki rules match on it.
+                    "'%s' session resource already exists on XNAT with "
+                    "different checksums.\nMissing paths: %s\nAdditional "
                     "paths: %s\nDiffering paths: %s",
                     resource_name,
                     sorted(comparison.missing),
@@ -742,9 +770,8 @@ def get_xnat_resource(
     except KeyError:
         pass
     else:
-        comparison = compare_resource_with_xnat(
-            resource.checksums, get_xnat_checksums(xresource)
-        )
+        xnat_checksums = get_xnat_checksums(xresource)
+        comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
         if comparison.repairable:
             # WE HOLD FILES XNAT DOES NOT, AND NOTHING ELSE IS WRONG. Returning
             # None here had the caller log "already uploaded" and skip the
@@ -767,9 +794,15 @@ def get_xnat_resource(
             return xresource, comparison.missing
         if not comparison.complete:
             logger.error(
-                "'%s' resource in '%s' already exists on XNAT and does not "
-                "match the staged session.\nMissing paths: %s\nAdditional "
-                "paths: %s\nDiffering paths: %s",
+                # THE WORDING IS LOAD-BEARING. The Loki rules shipped with
+                # the edge and mgmt charts match this message on the literal
+                # phrase "already exists on XNAT with different checksums"
+                # together with "Missing paths", so rewording it silently
+                # switches off the operator alert for the one failure mode this
+                # code deliberately does not repair.
+                "'%s' resource in '%s' already exists on XNAT with different "
+                "checksums.\nMissing paths: %s\nAdditional paths: %s\n"
+                "Differing paths: %s",
                 resource_name,
                 resource.scan.path,
                 sorted(comparison.missing),
@@ -794,8 +827,13 @@ def get_xnat_resource(
                     + ("..." if len(comparison.missing) > 10 else "")
                 )
             if comparison.differing:
+                # The listing fetched above, NOT re-fetched per file. Building
+                # this dict with a call inside the comprehension issued one full
+                # GET of the resource listing per differing file, so a resource
+                # re-staged after re-anonymisation, where every name differs,
+                # made thousands of requests to write one log line.
                 difference = {
-                    k: (get_xnat_checksums(xresource)[k], resource.checksums[k])
+                    k: (xnat_checksums[k], resource.checksums[k])
                     for k in sorted(comparison.differing)
                 }
                 logger.error(

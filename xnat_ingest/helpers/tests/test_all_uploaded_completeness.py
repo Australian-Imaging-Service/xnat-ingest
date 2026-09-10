@@ -92,3 +92,31 @@ def test_no_manifest_falls_back_to_previous_behaviour(tmp_path: ty.Any) -> None:
     listing = _listing(tmp_path, {})
     with mock.patch("xnat_ingest.helpers.remotes.get_xnat_checksums", return_value={}):
         assert listing.all_uploaded(FakeConnection()) is True
+
+
+def test_unreadable_manifests_do_not_vote_the_session_complete(
+    tmp_path: ty.Any,
+) -> None:
+    """UNKNOWN IS NOT COMPLETE.
+
+    This used to return True, and the caller logs True as "Skipping upload ...
+    as all the resources already exist on XNAT" and moves on, so a resource
+    holding a fraction of its files was passed over with a success-shaped line.
+
+    On the S3 path the manifest read is one download and one JSON parse per
+    resource, so a read timeout, a 5xx, a truncated body, a manifest still being
+    written, or a single malformed file discards all of them for that session.
+    Returning False costs a session download and then finds nothing to do,
+    because get_xnat_resource compares each resource itself.
+    """
+    listing = _listing(tmp_path, LOCAL)
+    type(listing).resource_manifests = property(  # type: ignore[assignment]
+        lambda self: (_ for _ in ()).throw(OSError("read timeout from S3"))
+    )
+    with mock.patch(
+        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=dict(LOCAL)
+    ):
+        assert listing.all_uploaded(FakeConnection()) is False, (
+            "a session whose completeness cannot be determined must not be "
+            "reported as uploaded"
+        )
