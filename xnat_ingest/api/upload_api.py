@@ -316,10 +316,9 @@ def upload(
                     try:
                         xresource, only_files = get_xnat_resource(resource, xsession)
                     except IncompleteCheckumsException as e:
-                        # The resource exists on XNAT but is SHORT. Skipping it
-                        # quietly is what turns a partial upload into permanent
-                        # data loss, so record it and let the session report as
-                        # not fully uploaded.
+                        # Exists on XNAT but is short and cannot be repaired by
+                        # uploading. Record it so the session does not report as
+                        # fully uploaded.
                         logger.error("%s", e.msg)
                         incomplete_on_xnat.append(resource.path)
                         continue
@@ -420,34 +419,15 @@ def upload(
                     if check_checksums:
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
-                        # NAMES ARE ALWAYS AVAILABLE, DIGESTS ARE NOT, so the
-                        # comparison runs either way. This used to be skipped
-                        # entirely unless XNAT returned at least one digest,
-                        # which made the whole post-upload check depend on a
-                        # site having enableChecksums switched on. On a site
-                        # without it the check logged "assuming upload was
-                        # successful" and compared nothing, not even the file
-                        # names, which XNAT lists regardless.
-                        #
-                        # compare_resource_with_xnat() already degrades to
-                        # names-only when no digest is available, so it is safe
-                        # to call unconditionally: content is compared when
-                        # there is content to compare, and a file that never
-                        # arrived is caught in both cases.
+                        # Names are always available, digests are not, so this
+                        # runs either way rather than being skipped on a site
+                        # without enableChecksums.
                         logger.debug("calculating checksums for %s", xresource)
                         calc_checksums = calculate_checksums(resource.fileset)
-                        # COMPARED FILE BY FILE, NOT AS TWO WHOLE DICTS.
-                        # XNAT reports an empty digest until a catalog refresh
-                        # populates it, so a resource that has just been topped
-                        # up holds a mix: real digests for the files that were
-                        # already there, empty ones for the files just added.
-                        # A whole-dict `!=` calls that a mismatch when nothing
-                        # is wrong.
-                        #
-                        # MEASURED on a live XNAT immediately after a repair:
-                        # the 3 files just uploaded reported digest '', the 5
-                        # already present reported real md5s, and this check
-                        # failed the upload that had in fact succeeded.
+                        # Compared file by file, not as two whole dicts. A
+                        # resource just topped up holds real digests for the
+                        # files already there and empty ones for those just
+                        # added, and a whole-dict `!=` calls that a mismatch.
                         comparison = compare_resource_with_xnat(
                             calc_checksums, remote_checksums
                         )
@@ -505,10 +485,8 @@ def upload(
                             resource_errors.append((resource, e))
 
                 if repaired_on_xnat:
-                    # Worth a session-level line of its own. A repair means a
-                    # previous pass left this session short and reported it as
-                    # uploaded, so it is the record that the earlier claim was
-                    # wrong, not just that this pass did some work.
+                    # A repair means an earlier pass left this session short,
+                    # so it is worth a session-level line of its own.
                     logger.info(
                         "Repaired %d incomplete resource(s) on XNAT in '%s': %s",
                         len(repaired_on_xnat),
@@ -527,9 +505,9 @@ def upload(
                     if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
                     logger.error(msg)
-                # Success is not announced here. The session still has metadata
-                # extraction and pipeline triggering ahead of it, and there is a
-                # single report at the end of all of it.
+                # Success is not announced here: metadata extraction and
+                # pipeline triggering still follow, and there is one report at
+                # the end of all of it.
                 # Extract DICOM metadata
                 if session_has_dicom:
                     logger.info("Extracting metadata from DICOMs on XNAT..")
@@ -566,11 +544,8 @@ def upload(
                         f"Failed to trigger pipelines in '{session.name}': {e}\nResponse: "
                         f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
                     )
-                # NOT unconditional. This ran even when the verdict above had
-                # just reported the session as failed, so a session that lost
-                # resources logged the failure and then claimed success in the
-                # next breath. Whichever line an operator or a log query saw
-                # first decided what they believed.
+                # Guarded by the verdict: unconditional, this claimed success
+                # in the same pass that reported the session as failed.
                 if msg is None:
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
@@ -605,22 +580,17 @@ def select_files_to_upload(
     `only_files` is set when XNAT already holds a strict subset of what we have,
     and it names the files it is missing. None means upload everything.
 
-    THE TWO NAME SHAPES ARE NOT GUARANTEED TO AGREE, THEY ARE ENFORCED TO AGREE,
-    and by code that lives elsewhere. `parent` here is FileSet.parent, which is
-    commonpath() over the staged files, so it is derived from content and
-    collapses to a subdirectory when every file happens to sit in one. The
-    manifest that `only_files` comes from is keyed to the resource directory,
-    which is fixed. The two coincide for a flat resource directory and can
-    differ for a nested one.
+    The two name shapes are not guaranteed to agree, they are ENFORCED to agree
+    elsewhere. `parent` is FileSet.parent, which is commonpath() over the staged
+    files and so collapses to a subdirectory when every file sits in one, while
+    the manifest behind `only_files` is keyed to the resource directory. They
+    coincide for a flat resource directory and can differ for a nested one.
 
-    What normally makes them agree is ImagingResource.load(), which calls
-    check_checksums() and recomputes the manifest keys with this same
-    `relative_to=fileset.parent`, raising if they do not match. See
-    model/resource.py.
-
-    THAT ENFORCEMENT IS OPTIONAL, and the same `check_checksums` flag also gates
-    the post-upload verification, so `--dont-check-checksums` removes both ends
-    at once. Hence this function fails closed rather than trusting the shapes.
+    ImagingResource.load() is what normally makes them agree: it recomputes the
+    manifest keys with this same `relative_to` and raises on a mismatch. That
+    runs only under `check_checksums`, which also gates the post-upload
+    verification, so `--dont-check-checksums` removes both ends at once. Hence
+    this fails closed rather than trusting the shapes.
 
     Raises
     ------
@@ -632,15 +602,10 @@ def select_files_to_upload(
         return list(fspaths)
     wanted = [p for p in fspaths if str(p.relative_to(parent)) in only_files]
     if only_files and not wanted:
-        # FAIL CLOSED. only_files holds names we are certain XNAT is missing, so
-        # matching nothing does not mean there is nothing to do. It means the
-        # names and the paths disagree, and carrying on would upload nothing and
-        # then report success, which is the exact failure this change exists to
-        # stop.
-        #
-        # Not hypothetical: with num_files_per_batch > 0, math.ceil(0 / size) is
-        # 0, the batch loop never runs, and control falls straight through to
-        # the line that logs the resource as uploaded.
+        # Fail closed. only_files holds names XNAT is known to be missing, so
+        # matching nothing means the names and the paths disagree, not that
+        # there is nothing to do. With num_files_per_batch > 0 the batch loop
+        # runs zero times and the resource is then logged as uploaded.
         raise RuntimeError(
             f"Refusing to repair '{resource_path}': XNAT is missing "
             f"{len(only_files)} file(s) {sorted(only_files)[:5]} but none of "

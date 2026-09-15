@@ -1,22 +1,12 @@
 """An incomplete resource on XNAT must be repaired, not reported as uploaded.
 
-`get_xnat_resource` returned None whenever the resource existed on XNAT, and the
-caller logs "Skipping '<path>' resource as it is already uploaded" for None. So a
-resource that XNAT holds only *part* of was skipped on every subsequent pass and
-never repaired, while the session still took the `else` branch and logged
-"Successfully uploaded all files".
+get_xnat_resource returned None whenever the resource existed, and the caller
+reads None as "already uploaded", so a resource XNAT held only part of was
+skipped on every later pass while the session reported success.
 
-The information needed to notice was already in hand: the function computes the
-missing paths from the checksum comparison and logs them at ERROR, then discards
-them and returns None anyway.
-
-Measured on a real deployment: a 383-instance study had 16 of 95 files uploaded
-into one scan while the staging bucket was still being written. Every later pass
-skipped that scan as "already uploaded". 170 of 383 instances reached XNAT and
-the uploader reported success on each run.
-
-So the missing files are now handed back to the caller to upload. Only the
-differences an upload CANNOT fix are still an error a human has to resolve.
+The missing files are now handed back for upload. Only differences an upload
+CANNOT fix, files on XNAT we do not have or shared files with different
+content, are still an error for a human to resolve.
 """
 
 import typing as ty

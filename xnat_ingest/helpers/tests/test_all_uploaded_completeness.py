@@ -1,13 +1,8 @@
 """all_uploaded() must not call a short resource "uploaded".
 
-It compared resource LABELS, so a resource holding 5 of 8 files satisfied it and
-the whole session was skipped before any per-resource check could run. Nothing
-downstream saw it: no error, no retry, and the session reported as uploaded.
-
-Measured on a live XNAT: 3 of 8 files deleted from a resource, after which every
-pass logged "Skipping upload of '<session>' as all the resources already exist
-on XNAT". This is the gate that made both the incomplete-resource exception and
-the operator alert unreachable in that case.
+It compared resource LABELS, and a resource holding 5 of 8 files carries the
+same label as one holding all 8, so the whole session was skipped before any
+per-resource check could run: no error, no retry, reported as uploaded.
 """
 
 import typing as ty

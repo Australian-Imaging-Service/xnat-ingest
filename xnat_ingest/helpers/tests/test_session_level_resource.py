@@ -1,16 +1,12 @@
 """A session-level resource must be held to the same rule as a scan resource.
 
 get_xnat_resource has two branches. The scan branch was fixed so an incomplete
-resource is repaired or reported. The branch above it, for resources attached to
-the session rather than to a scan (resource.scan is None), still logged and
-returned None for every kind of difference, and the caller reads None as
-"already uploaded". So a session-level resource that XNAT held only part of was
-skipped on every pass and the session still reported as cleanly uploaded: the
-exact rule the session verdict exists to enforce, surviving one branch up.
+resource is repaired or reported. The branch above it, for resources attached
+to the session rather than a scan, still logged and returned None for every
+kind of difference, and the caller reads None as "already uploaded".
 
-The old difference report could also raise KeyError. It indexed
-resource.checksums by XNAT's keys, so a file present on XNAT but not staged
-crashed the report that was meant to explain the problem.
+Its difference report could also raise KeyError, indexing the staged checksums
+by XNAT's keys, so a file on XNAT that was never staged crashed the report.
 """
 
 import typing as ty

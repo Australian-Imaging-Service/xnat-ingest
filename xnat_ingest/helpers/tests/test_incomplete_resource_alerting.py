@@ -1,23 +1,10 @@
 """The wording of the incomplete-resource error is load-bearing.
 
-The Loki rules shipped with the AIS-Edge charts match this message on a literal
-phrase to raise XNATResourceIncompleteAndStuck, the operator alert for the one
-failure mode this code deliberately does NOT repair: a resource that is short on
-XNAT and also holds files the staging copy does not, which no upload can fix.
-
-Both tiers require the same two substrings in the same message:
-
-    | message =~ ".*already exists on XNAT with different checksums.*"
-    | message =~ ".*Missing paths.*"
-
-and the edge tier additionally uses the same phrase as an EXCLUSION in its
-general error rule, so that this expected, alerted-on error does not also page
-as an unexpected traceback.
-
-Rewording it therefore does not just change a log line. It switches off the
-alert, and nothing fails: the code still works, the tests still pass, and the
-operator is simply never told. That happened once already, when the message was
-reworded to "does not match the staged session" while clarifying it.
+The Loki rules shipped with the AIS-Edge charts raise
+XNATResourceIncompleteAndStuck by matching this message on two literal
+substrings, and the edge tier uses the same phrase to exclude the error from
+its general error rule. Rewording it does not fail anything: it switches the
+alert off, and the operator is simply never told.
 """
 
 import logging

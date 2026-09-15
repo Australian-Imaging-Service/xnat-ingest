@@ -54,10 +54,9 @@ class SessionListing(metaclass=abc.ABCMeta):
         A manifest holds more than checksums, so the values are deliberately
         untyped: "checksums" maps file name to digest, other keys do not.
 
-        Reads them from the staging directory, which is what every listing
-        backed by a local path needs. A listing that stages elsewhere overrides
-        this. A listing staged with no manifests at all raises here, and
-        all_uploaded() treats that as "cannot check" rather than an error.
+        Read from the staging directory. A listing that stages elsewhere
+        overrides this. With no manifest present this raises, which
+        all_uploaded() treats as "cannot check".
         """
         manifests = {}
         for relpath in sorted(self.resource_paths):
@@ -91,12 +90,10 @@ class SessionListing(metaclass=abc.ABCMeta):
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
         """Resolve this listing to the XNAT session it belongs to, or None.
 
-        SEPARATE FROM all_uploaded() SO THE COMPLETENESS RULE CAN BE SHARED.
-        Listings differ in how they find their session (by project and label
-        here, by a global label search for a session-only staging directory) but
-        they must not differ in what counts as fully uploaded. Two hand-written
-        copies of "is this resource complete" is how a resource holding a
-        fraction of its files came to be reported as uploaded.
+        Separate from all_uploaded() so the completeness rule can be shared.
+        Listings differ in how they find their session, by project and label
+        here or by a global label search for a session-only staging directory,
+        but they must not differ in what counts as fully uploaded.
 
         Returns
         -------
@@ -142,41 +139,20 @@ class SessionListing(metaclass=abc.ABCMeta):
         if not set(xresources).issuperset(self.resource_paths):
             return False
 
-        # A RESOURCE THAT EXISTS IS NOT NECESSARILY A RESOURCE THAT IS COMPLETE,
-        # and comparing labels alone was the whole bug. A resource holding 5 of 8
-        # files carries the same label as one holding all 8, so this returned
-        # True and the session was skipped HERE, before any per-resource check
-        # could run. Nothing downstream ever saw it: no error, no retry, and the
-        # session reported as uploaded.
+        # A resource that EXISTS is not necessarily a resource that is
+        # COMPLETE: one holding 5 of 8 files carries the same label as one
+        # holding all 8, so labels alone cannot decide this.
         #
-        # MEASURED: 3 of 8 files deleted from a resource on a live XNAT, after
-        # which every pass logged "Skipping upload of '<session>' as all the
-        # resources already exist on XNAT".
-        #
-        # Manifests are the source of truth for what SHOULD be there. A session
-        # staged without them leaves this loop empty, so behaviour is unchanged
-        # rather than newly strict.
+        # Manifests are the source of truth for what should be there. A session
+        # staged without them leaves this loop empty, so it is not newly strict.
         try:
             manifests = self.resource_manifests
         except Exception:  # noqa: BLE001 - see below, any failure means "unknown"
-            # UNKNOWN IS NOT COMPLETE. This returned True, which the caller logs
-            # as "Skipping upload ... as all the resources already exist on
-            # XNAT" and continues, so a resource holding a fraction of its files
-            # was passed over with a success-shaped line: exactly the behaviour
-            # this method was changed to stop.
-            #
-            # On the S3 path this is not a cheap dict read. It is one download
-            # and one JSON parse per resource, so a read timeout, a 5xx, a
-            # truncated body, a manifest still being written, or one malformed
-            # file discards ALL of them for that session.
-            #
-            # Returning False costs a session download on a transient error and
-            # then finds nothing to do, because get_xnat_resource compares each
-            # resource itself. Returning True costs the data.
-            #
-            # WARNING, not DEBUG: the deployments pass no log level, so the
-            # default is INFO and a DEBUG line here would be invisible in
-            # exactly the situation an operator needs to see.
+            # Unknown is not complete. On the S3 path this is a download and a
+            # JSON parse per resource, so one failure discards all of them for
+            # the session. Returning False costs a session download and then
+            # finds nothing to do, since get_xnat_resource compares each
+            # resource itself. Returning True would cost the data.
             logger.warning(
                 "Could not read the staged manifests for '%s', so whether its "
                 "resources are complete on XNAT cannot be determined. Treating "
@@ -286,12 +262,9 @@ class SessionOnlyListing(SessionListing):
             )
         return matches[0] if matches else None
 
-    # all_uploaded is deliberately NOT defined here. This class used to carry
-    # its own copy that compared resource LABELS, which is the defect the base
-    # class was fixed for, and because the class sat outside the hierarchy the
-    # fix could not reach it: a session-only staging directory whose resource
-    # held 3 of 8 files still reported as fully uploaded. Only find_xnat_session
-    # differs between the modes, so only find_xnat_session is overridden.
+    # all_uploaded is deliberately NOT defined here. Only find_xnat_session
+    # differs between the modes; a second copy of the completeness rule is how
+    # this class kept a label comparison after the base class stopped using one.
 
 
 @attrs.define
@@ -561,14 +534,12 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
 class ResourceComparison:
     """How a staged resource compares with what XNAT actually holds.
 
-    Exists because "does this resource exist on XNAT?" is the wrong question and
-    was the one being asked. api/check_upload_api.py already computes this
-    comparison for its own reporting; this puts it somewhere both it and the
-    upload path can use, so the two cannot drift apart.
+    Shared by the upload path and api/check_upload_api.py so the two cannot
+    drift apart.
 
-    NOTE THE ORIENTATION. `missing` means files WE hold that XNAT does not, the
+    NOTE THE ORIENTATION: `missing` means files WE hold that XNAT does not, the
     ones an upload could supply. check_upload_api names its locals the other way
-    round, which is a trap when editing both.
+    round.
     """
 
     missing: ty.Set[str] = attrs.field(factory=set)
@@ -585,10 +556,9 @@ class ResourceComparison:
     def repairable(self) -> bool:
         """Safe to fix by uploading the missing files and nothing else.
 
-        Deliberately strict. `extra` means XNAT holds files we do not and
-        `differing` means a shared file has different content: neither can be
-        resolved by uploading, and treating them as repairable would append to a
-        resource that is already wrong.
+        Deliberately strict: `extra` and `differing` cannot be resolved by
+        uploading, so treating them as repairable would append to a resource
+        that is already wrong.
         """
         return bool(self.missing) and not self.extra and not self.differing
 
@@ -599,13 +569,11 @@ def compare_resource_with_xnat(
 ) -> ResourceComparison:
     """Compare a staged resource's manifest against XNAT's file listing.
 
-    XNAT LEAVES `digest` EMPTY UNTIL A CATALOG REFRESH POPULATES IT. Measured
-    against a live XNAT: every file reported digest '' immediately after upload,
-    and only after POSTing to /data/services/refresh/catalog with the checksum
-    option did they carry md5s. Comparing content in that state would call every
-    healthy resource corrupt, so when no digest is available the result is marked
-    not `comparable` and only FILE NAMES are trusted. api/check_upload_api.py
-    guards the same way.
+    XNAT leaves `digest` empty until a catalog refresh populates it, so files
+    uploaded but not yet refreshed report ''. Comparing content in that state
+    would call a healthy resource corrupt, so a file with no digest is compared
+    by NAME only and the result is marked not `comparable`.
+    api/check_upload_api.py guards the same way.
     """
     local_names = set(local_checksums)
     xnat_names = set(xnat_checksums)
@@ -664,16 +632,9 @@ def get_xnat_resource(
         except KeyError:
             pass
         else:
-            # SAME THREE OUTCOMES AS THE SCAN BRANCH BELOW. This branch used to
-            # log and return None whatever the difference was, and the caller
-            # reads None as "already uploaded", so a session-level resource that
-            # XNAT held only part of was skipped on every pass and the session
-            # still reported as cleanly uploaded. That is the same defect the
-            # scan branch had, one level up.
-            #
-            # The old difference report could also raise KeyError: it indexed
-            # resource.checksums by XNAT's keys, so a file present on XNAT but
-            # not staged crashed the report meant to explain the problem.
+            # Same three outcomes as the scan branch below: repair, refuse, or
+            # nothing to do. The caller reads None as "already uploaded", so
+            # returning it for a short resource loses the data silently.
             comparison = compare_resource_with_xnat(
                 resource.checksums, get_xnat_checksums(xresource)
             )
@@ -691,8 +652,7 @@ def get_xnat_resource(
                 return xresource, comparison.missing
             if not comparison.complete:
                 logger.error(
-                    # Same literal phrase as the scan branch: the shipped
-                    # Loki rules match on it.
+                    # Same literal phrase as the scan branch; see above.
                     "'%s' session resource already exists on XNAT with "
                     "different checksums.\nMissing paths: %s\nAdditional "
                     "paths: %s\nDiffering paths: %s",
@@ -773,13 +733,9 @@ def get_xnat_resource(
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
         if comparison.repairable:
-            # WE HOLD FILES XNAT DOES NOT, AND NOTHING ELSE IS WRONG. Returning
-            # None here had the caller log "already uploaded" and skip the
-            # resource for good, so a scan interrupted part-way through was
-            # never repaired and the session still reported as fully uploaded.
-            # Hand back the resource and the shortfall so the caller uploads
-            # exactly the missing files. Not the whole resource: XNAT would
-            # reject or duplicate the files it already holds.
+            # We hold files XNAT does not and nothing else is wrong, so hand
+            # back the shortfall. Not the whole resource: XNAT would reject or
+            # duplicate the files it already holds.
             logger.warning(
                 "'%s' resource in '%s' exists on XNAT but is missing %d of %d "
                 "file(s) held in the staged session. Uploading the missing "
@@ -794,12 +750,10 @@ def get_xnat_resource(
             return xresource, comparison.missing
         if not comparison.complete:
             logger.error(
-                # THE WORDING IS LOAD-BEARING. The Loki rules shipped with
-                # the edge and mgmt charts match this message on the literal
-                # phrase "already exists on XNAT with different checksums"
-                # together with "Missing paths", so rewording it silently
-                # switches off the operator alert for the one failure mode this
-                # code deliberately does not repair.
+                # THE WORDING IS LOAD-BEARING: the Loki rules shipped with the
+                # AIS-Edge charts match this message on the literal phrase
+                # "already exists on XNAT with different checksums". Rewording
+                # it switches the operator alert off silently.
                 "'%s' resource in '%s' already exists on XNAT with different "
                 "checksums.\nMissing paths: %s\nAdditional paths: %s\n"
                 "Differing paths: %s",
@@ -810,11 +764,9 @@ def get_xnat_resource(
                 sorted(comparison.differing),
             )
             if comparison.missing:
-                # Missing files alone would have been repaired above, so getting
-                # here means XNAT also holds files we do not, or a shared file
-                # differs. AN UPLOAD CANNOT FIX EITHER: it can only add. Raise so
-                # the session is not reported as cleanly uploaded and an operator
-                # is told to delete the resource on XNAT.
+                # Missing alone is repaired above, so XNAT also holds files we
+                # do not or a shared file differs. An upload can only add, so it
+                # cannot fix either. Raise, so the session is not reported clean.
                 raise IncompleteCheckumsException(
                     f"'{resource_name}' resource in '{resource.scan.path}' exists "
                     f"on XNAT but is missing {len(comparison.missing)} file(s) "

@@ -3,21 +3,12 @@
 `only_files` names the files XNAT is missing, taken from the staged manifest,
 which is keyed to the resource directory. The filter matches them against
 `fspath.relative_to(fileset.parent)`, and FileSet.parent is commonpath() over
-the staged files, so it is derived from content: for a flat resource directory
-it equals the resource directory, for a nested one it collapses to the
-subdirectory the files share. The two shapes are not guaranteed to agree.
+the staged files, so the two shapes are not guaranteed to agree.
 
-What normally makes them agree is ImagingResource.load() calling
-check_checksums(), which recomputes the keys with the same expression and raises
-on a mismatch. That runs only when check_checksums is set, and the same flag
-gates the post-upload verification, so --dont-check-checksums removes both the
-guard and the net that would catch its absence.
-
-If the filter then matches nothing, the consequence depends on batch size:
-num_files_per_batch=0 gives math.ceil(0/0) and a ZeroDivisionError, which is at
-least loud, but any positive batch size gives ceil(0/N)=0, the batch loop never
-runs, and the code falls through to logging the resource as uploaded. Silent
-data loss. So this fails closed instead.
+ImagingResource.load() normally enforces that they do, but only under
+check_checksums, and the same flag gates the post-upload verification. If the
+filter then matches nothing, any positive batch size gives zero batches and
+the code falls through to logging the resource as uploaded. So it fails closed.
 """
 
 from pathlib import Path

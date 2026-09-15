@@ -1,17 +1,11 @@
 """The post-upload checksum check must survive a partly-refreshed catalog.
 
-The check compared the two checksum dicts whole: `remote_checksums !=
-calc_checksums`. XNAT reports an empty digest until a catalog refresh populates
-it, so a resource that has just been topped up holds a mix, real digests for the
-files that were already there and empty ones for the files just added, and a
-whole-dict comparison calls that a mismatch when nothing is wrong.
+It compared the two checksum dicts whole. XNAT reports an empty digest until a
+catalog refresh populates it, so a resource just topped up holds real digests
+for the files already there and empty ones for those just added, and a whole
+dict comparison calls that a mismatch when nothing is wrong.
 
-MEASURED on a live XNAT immediately after a repair: the 3 files just uploaded
-reported digest '', the 5 already present reported real md5s. The upload had
-succeeded, every file was in place, and the check failed it anyway.
-
-The comparison is per file, so a file with no digest to compare is trusted by
-name. These tests pin that behaviour to the helper both paths now share.
+The comparison is per file, so a file with no digest is trusted by name.
 """
 
 from xnat_ingest.helpers.remotes import compare_resource_with_xnat
@@ -25,7 +19,7 @@ CALCULATED = {
 
 
 def test_freshly_uploaded_files_with_no_digest_are_not_a_mismatch() -> None:
-    """THE REGRESSION: the exact shape measured after a live repair."""
+    """THE REGRESSION: the shape a resource holds right after a repair."""
     remote = {"old1.dcm": "aaa", "old2.dcm": "bbb", "new1.dcm": "", "new2.dcm": ""}
 
     assert remote != CALCULATED, "the whole-dict comparison that used to fail"
@@ -61,8 +55,7 @@ def test_the_mismatch_report_can_be_built_without_unpacking_a_string() -> None:
 
     `for k, v in intersect_keys` iterated a set of file NAMES and unpacked each
     one as a pair, so every genuine mismatch raised "too many values to unpack"
-    instead of saying which files disagreed. Observed on a live deployment: a
-    successful repair reported that error and nothing about the checksums.
+    instead of saying which files disagreed.
     """
     remote = dict(CALCULATED)
     remote["old2.dcm"] = "CORRUPTED"

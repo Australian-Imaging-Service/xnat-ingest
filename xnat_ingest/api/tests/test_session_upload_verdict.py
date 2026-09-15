@@ -1,10 +1,8 @@
 """A session must not be reported as clean when resources were left incomplete.
 
-Resources skipped as "already uploaded" never enter `to_upload`, so they can
-never reach `resource_errors`, so before this the success branch was taken and
-the session logged "Successfully uploaded all files" while holding a fraction of
-its data. Observed on a real deployment: 170 of 383 instances in XNAT, reported
-as a success on every pass.
+Resources skipped as "already uploaded" never enter `to_upload`, so they never
+reach `resource_errors`, so the success branch was taken and the session logged
+"Successfully uploaded all files" while holding a fraction of its data.
 """
 
 from xnat_ingest.api.upload_api import session_upload_verdict

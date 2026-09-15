@@ -1,10 +1,7 @@
 """Comparing a staged resource with what XNAT actually holds.
 
-"Does this resource exist on XNAT?" was the question being asked, and it is the
-wrong one: a resource holding 5 of 8 files has the same label as one holding all
-8. Measured on a live XNAT by deleting 3 of 8 files from a resource, after which
-every pass logged "Skipping upload of '<session>' as all the resources already
-exist on XNAT".
+"Does this resource exist on XNAT?" is the wrong question: a resource holding
+5 of 8 files has the same label as one holding all 8.
 """
 
 from xnat_ingest.helpers.remotes import (
@@ -57,8 +54,6 @@ def test_missing_and_differing_together_is_not_repairable() -> None:
 def test_empty_digests_fall_back_to_names_only() -> None:
     """XNAT leaves `digest` empty until a catalog refresh populates it.
 
-    Measured against a live XNAT: every file reported digest '' immediately
-    after upload, and only a refresh with the checksum option filled them in.
     Comparing content in that state would call every healthy resource corrupt.
     """
     c = compare_resource_with_xnat(LOCAL, {k: "" for k in LOCAL})

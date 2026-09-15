@@ -1,26 +1,13 @@
 """The session-label upload mode must obey the same completeness rule.
 
-SessionOnlyListing sat OUTSIDE the SessionListing hierarchy and carried its own
-copy of all_uploaded that compared resource LABELS:
+SessionOnlyListing sat outside the SessionListing hierarchy as a duck-typed
+sibling with its own copy of all_uploaded comparing resource LABELS, so fixing
+the base class could not reach it.
 
-    uploaded = {r.label for r in xsession.resources.values()}
-    return uploaded.issuperset(self.resource_paths)
-
-That is verbatim the defect the base class was fixed for, and because the class
-was a duck-typed sibling rather than a subclass, the fix could not reach it. A
-staging directory whose resource held 8 files, against an XNAT resource holding
-3 of them, still reported as fully uploaded, so the session was skipped with no
-per-resource check, no repair and no error, and on AIS-Edge the staged copy is
-then age-reclaimed while XNAT keeps a fraction.
-
-The two modes differ only in how they FIND their session: by project and label
-here, by a global label search there. They must not differ in what counts as
-uploaded. So find_xnat_session is the only override, and the completeness rule
-has one implementation.
-
-The mode is selected on a dot in the staging directory name (upload_api picks
-LocalSessionListing when the name has one, SessionOnlyListing when it does not),
-which is why every live test of the repair so far exercised only the other path.
+The two modes differ only in how they FIND their session, by project and label
+or by a global label search, so find_xnat_session is the only override and the
+completeness rule has one implementation. The mode is selected on whether the
+staging directory name contains a dot.
 """
 
 import json
