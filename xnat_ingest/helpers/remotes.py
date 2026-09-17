@@ -18,7 +18,7 @@ import paramiko
 import xnat
 from fileformats.application import Json
 from fileformats.core import FileSet
-from fileformats.medimage import DicomCollection
+from fileformats.medimage import DicomCollection, DicomZip
 from tqdm import tqdm
 
 from ..model.resource import ImagingResource
@@ -499,7 +499,7 @@ def get_xnat_resource(
         is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
         if is_secondary:
             resource_name = "secondary"
-        if isinstance(resource.fileset, DicomCollection):
+        if isinstance(resource.fileset, (DicomCollection, DicomZip)):
             scan_type = xnat_scan_type_from_sop_class(
                 resource.metadata.get("SOPClassUID")
             )
