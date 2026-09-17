@@ -1979,7 +1979,9 @@ def test_deidentify_cli_dicom_missing_transform(
     assert result.exit_code != 0, show_cli_trace(result)
     assert "anon_patient_name" in result.output or "anon_patient_name" in str(
         result.exception
-    ), f"Expected error about missing 'anon_patient_name' transform: {show_cli_trace(result)}"
+    ), (
+        f"Expected error about missing 'anon_patient_name' transform: {show_cli_trace(result)}"
+    )
 
 
 def test_deidentify_cli_dicom_encrypted_reid(

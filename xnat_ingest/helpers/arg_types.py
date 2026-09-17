@@ -175,7 +175,6 @@ class LoggerConfig(MultiCliTyped):
 
 @attrs.define
 class Convert(MultiCliTyped):
-
     source: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
     target: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
@@ -650,7 +649,6 @@ def row_frequency_converter(
 
 @attrs.define
 class JoinExpr(MultiCliTyped):
-
     column_name: str
     value_expr: str
 

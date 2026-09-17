@@ -317,9 +317,9 @@ def test_deidentify_reports_a_session_with_no_data_files(
         )
 
     assert any("no data files" in e for e in errors), errors
-    assert not (
-        output_dir / "PROJ.SUBJ.EMPTY"
-    ).exists(), "an output was produced for a session that had no input"
+    assert not (output_dir / "PROJ.SUBJ.EMPTY").exists(), (
+        "an output was produced for a session that had no input"
+    )
 
 
 def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(
