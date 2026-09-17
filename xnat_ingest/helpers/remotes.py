@@ -22,6 +22,7 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection
 from tqdm import tqdm
 
+from ..exceptions import IncompleteCheckumsException
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
@@ -31,6 +32,11 @@ from .xnat_scan_types import xnat_scan_type_from_sop_class
 
 
 class SessionListing(metaclass=abc.ABCMeta):
+    # Every subclass supplies this, as a field or a property, and `ids` below
+    # has always relied on it. Declared so that reliance is part of the
+    # interface rather than an assumption each caller has to make afresh.
+    name: str
+
     @property
     @abc.abstractmethod
     def cache_path(self) -> Path:
@@ -40,6 +46,25 @@ class SessionListing(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def resource_paths(self) -> set[str]:
         pass
+
+    @property
+    def resource_manifests(self) -> dict[str, dict[str, ty.Any]]:
+        """The staged manifests keyed by resource path.
+
+        A manifest holds more than checksums, so the values are deliberately
+        untyped: "checksums" maps file name to digest, other keys do not.
+
+        Read from the staging directory. A listing that stages elsewhere
+        overrides this. With no manifest present this raises, which
+        all_uploaded() treats as "cannot check".
+        """
+        manifests = {}
+        for relpath in sorted(self.resource_paths):
+            resource_dir = self.cache_path / relpath
+            if resource_dir.is_dir():
+                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
+                manifests[relpath] = manifest.contents
+        return manifests
 
     @property
     def ids(self):
@@ -62,6 +87,30 @@ class SessionListing(metaclass=abc.ABCMeta):
     def session_id(self) -> str:
         return self.ids[2]
 
+    def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
+        """Resolve this listing to the XNAT session it belongs to, or None.
+
+        Separate from all_uploaded() so the completeness rule can be shared.
+        Listings differ in how they find their session, by project and label
+        here or by a global label search for a session-only staging directory,
+        but they must not differ in what counts as fully uploaded.
+
+        Returns
+        -------
+        ty.Any or None
+            the XNAT session object, or None when it does not exist yet
+        """
+        try:
+            xproject = connection.projects[self.project_id]
+        except KeyError:
+            raise KeyError(
+                "Project '{}' does not exist on XNAT".format(self.project_id)
+            ) from None
+        try:
+            return xproject.experiments[self.session_id]
+        except KeyError:
+            return None
+
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
 
@@ -77,24 +126,64 @@ class SessionListing(metaclass=abc.ABCMeta):
         xsession : xnat.classes.ExperimentData | None
             the XNAT session object
         """
-        try:
-            xproject = connection.projects[self.project_id]
-        except KeyError:
-            raise KeyError(
-                "Project '{}' does not exist on XNAT".format(self.project_id)
-            ) from None
-        try:
-            xsession = xproject.experiments[self.session_id]
-        except KeyError:
+        xsession = self.find_xnat_session(connection)
+        if xsession is None:
             return False
 
-        resource_paths = set()
+        xresources = {}
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
-                resource_paths.add(f"{xscan.id}.{xscan.type}/{xresource.label}")
+                xresources[f"{xscan.id}.{xscan.type}/{xresource.label}"] = xresource
         for xresource in xsession.resources.values():
-            resource_paths.add(xresource.label)
-        return resource_paths.issuperset(self.resource_paths)
+            xresources[xresource.label] = xresource
+        if not set(xresources).issuperset(self.resource_paths):
+            return False
+
+        # A resource that EXISTS is not necessarily a resource that is
+        # COMPLETE: one holding 5 of 8 files carries the same label as one
+        # holding all 8, so labels alone cannot decide this.
+        #
+        # Manifests are the source of truth for what should be there. A session
+        # staged without them leaves this loop empty, so it is not newly strict.
+        try:
+            manifests = self.resource_manifests
+        except Exception:  # noqa: BLE001 - see below, any failure means "unknown"
+            # Unknown is not complete. On the S3 path this is a download and a
+            # JSON parse per resource, so one failure discards all of them for
+            # the session. Returning False costs a session download and then
+            # finds nothing to do, since get_xnat_resource compares each
+            # resource itself. Returning True would cost the data.
+            logger.warning(
+                "Could not read the staged manifests for '%s', so whether its "
+                "resources are complete on XNAT cannot be determined. Treating "
+                "it as not uploaded and letting the per-resource comparison "
+                "decide.",
+                self.name,
+                exc_info=True,
+            )
+            return False
+        for resource_path, manifest in manifests.items():
+            local_checksums = manifest.get("checksums") if manifest else None
+            if not local_checksums:
+                continue
+            xresource = xresources.get(resource_path)
+            if xresource is None:
+                return False
+            comparison = compare_resource_with_xnat(
+                local_checksums, get_xnat_checksums(xresource)
+            )
+            if not comparison.complete:
+                logger.info(
+                    "'%s' in '%s' exists on XNAT but is not complete: %d file(s) "
+                    "missing, %d unexpected, %d differing. Not skipping the session.",
+                    resource_path,
+                    self.name,
+                    len(comparison.missing),
+                    len(comparison.extra),
+                    len(comparison.differing),
+                )
+                return False
+        return True
 
 
 @attrs.define
@@ -116,26 +205,16 @@ class LocalSessionListing(SessionListing):
         return paths
 
     @property
-    def name(self) -> str:
+    def name(self) -> str:  # type: ignore[override]  # base declares a plain attr
         return self.fspath.name
 
     @property
     def session_id(self) -> str:
         return self.ids[2]
 
-    @property
-    def resource_manifests(self) -> dict[str, dict[str, str]]:
-        manifests = {}
-        for relpath in sorted(self.resource_paths):
-            resource_dir = self.cache_path / relpath
-            if resource_dir.is_dir():
-                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
-                manifests[relpath] = manifest.contents
-        return manifests
-
 
 @attrs.define
-class SessionOnlyListing:
+class SessionOnlyListing(SessionListing):
     """A staging directory named by session label only (no project.subject.visit structure).
 
     Used when uploading resources directly to an existing XNAT session identified only by
@@ -150,7 +229,7 @@ class SessionOnlyListing:
         return self.fspath
 
     @property
-    def name(self) -> str:
+    def name(self) -> str:  # type: ignore[override]  # base declares a plain attr
         return self.fspath.name
 
     @property
@@ -182,12 +261,9 @@ class SessionOnlyListing:
             )
         return matches[0] if matches else None
 
-    def all_uploaded(self, connection: xnat.XNATSession) -> bool:
-        xsession = self.find_xnat_session(connection)
-        if xsession is None:
-            return False
-        uploaded = {r.label for r in xsession.resources.values()}
-        return uploaded.issuperset(self.resource_paths)
+    # all_uploaded is deliberately NOT defined here. Only find_xnat_session
+    # differs between the modes; a second copy of the completeness rule is how
+    # this class kept a label comparison after the base class stopped using one.
 
 
 @attrs.define
@@ -260,6 +336,11 @@ class S3SessionListing(SessionListing):
         manifests = {}
         manifest_fnames_by_relpath: dict[str, str] = {}
         for path_parts, obj in self.objects:
+            if not path_parts:
+                # An object sitting directly at the session root. resource_paths
+                # skips these; without the same guard this raised IndexError on
+                # every pass, which the caller reads as "cannot check".
+                continue
             fname = path_parts[-1]
             if fname not in (
                 ImagingResource.MANIFEST_FNAME,
@@ -447,8 +528,77 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
     return xsession
 
 
-def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
+@attrs.define
+class ResourceComparison:
+    """How a staged resource compares with what XNAT actually holds.
+
+    Shared by the upload path and api/check_upload_api.py so the two cannot
+    drift apart.
+
+    NOTE THE ORIENTATION: `missing` means files WE hold that XNAT does not, the
+    ones an upload could supply. check_upload_api names its locals the other way
+    round.
+    """
+
+    missing: ty.Set[str] = attrs.field(factory=set)
+    extra: ty.Set[str] = attrs.field(factory=set)
+    differing: ty.Set[str] = attrs.field(factory=set)
+    comparable: bool = True
+
+    @property
+    def complete(self) -> bool:
+        """XNAT holds everything we do, with nothing unexpected."""
+        return not (self.missing or self.extra or self.differing)
+
+    @property
+    def repairable(self) -> bool:
+        """Safe to fix by uploading the missing files and nothing else.
+
+        Deliberately strict: `extra` and `differing` cannot be resolved by
+        uploading, so treating them as repairable would append to a resource
+        that is already wrong.
+        """
+        return bool(self.missing) and not self.extra and not self.differing
+
+
+def compare_resource_with_xnat(
+    local_checksums: ty.Mapping[str, str],
+    xnat_checksums: ty.Mapping[str, str],
+) -> ResourceComparison:
+    """Compare a staged resource's manifest against XNAT's file listing.
+
+    XNAT leaves `digest` empty until a catalog refresh populates it, so files
+    uploaded but not yet refreshed report ''. Comparing content in that state
+    would call a healthy resource corrupt, so a file with no digest is compared
+    by NAME only and the result is marked not `comparable`.
+    api/check_upload_api.py guards the same way.
+    """
+    local_names = set(local_checksums)
+    xnat_names = set(xnat_checksums)
+    comparable = any(xnat_checksums.values())
+    differing: ty.Set[str] = set()
+    if comparable:
+        differing = {
+            n
+            for n in local_names & xnat_names
+            if xnat_checksums[n] and xnat_checksums[n] != local_checksums[n]
+        }
+    return ResourceComparison(
+        missing=local_names - xnat_names,
+        extra=xnat_names - local_names,
+        differing=differing,
+        comparable=comparable,
+    )
+
+
+def get_xnat_resource(
+    resource: ImagingResource, xsession: ty.Any
+) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
+
+    RETURNS A PAIR AT EVERY EXIT, so the caller cannot mistake "nothing to do"
+    for "upload everything". The second element is the set of file names to
+    upload, or None meaning "all of them".
 
     Parameters
     ----------
@@ -460,7 +610,16 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     Returns
     -------
     xresource : ty.Any
-        the XNAT resource object
+        the XNAT resource object, or None when there is nothing to upload
+    only_files : set[str] or None
+        the file names still to upload. None means the whole resource, which is
+        the case for a resource being created. A set is returned only when the
+        resource already exists on XNAT and is short of exactly these files.
+
+    Raises
+    ------
+    IncompleteCheckumsException
+        when the resource on XNAT differs in a way an upload cannot fix
     """
     xclasses = xsession.xnat_session.classes
     resource_name = resource.name
@@ -471,26 +630,55 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
         except KeyError:
             pass
         else:
-            checksums = get_xnat_checksums(xresource)
-            if checksums != resource.checksums:
-                difference = {
-                    k: (v, resource.checksums[k])
-                    for k, v in checksums.items()
-                    if v != resource.checksums[k]
-                }
-                logger.error(
-                    "'%s' session resource already exists on XNAT. Please delete on XNAT to overwrite:\n%s",
+            # Same three outcomes as the scan branch below: repair, refuse, or
+            # nothing to do. The caller reads None as "already uploaded", so
+            # returning it for a short resource loses the data silently.
+            comparison = compare_resource_with_xnat(
+                resource.checksums, get_xnat_checksums(xresource)
+            )
+            if comparison.repairable:
+                logger.warning(
+                    "'%s' session resource exists on XNAT but is missing %d of "
+                    "%d file(s) held in the staged session. Uploading the "
+                    "missing file(s): %s%s",
                     resource_name,
-                    pprint.pformat(difference),
+                    len(comparison.missing),
+                    len(resource.checksums),
+                    sorted(comparison.missing)[:10],
+                    "..." if len(comparison.missing) > 10 else "",
                 )
-            return None
+                return xresource, comparison.missing
+            if not comparison.complete:
+                logger.error(
+                    # Same literal phrase as the scan branch; see above.
+                    "'%s' session resource already exists on XNAT with "
+                    "different checksums.\nMissing paths: %s\nAdditional "
+                    "paths: %s\nDiffering paths: %s",
+                    resource_name,
+                    sorted(comparison.missing),
+                    sorted(comparison.extra),
+                    sorted(comparison.differing),
+                )
+                if comparison.missing:
+                    raise IncompleteCheckumsException(
+                        f"'{resource_name}' session resource exists on XNAT but "
+                        f"is missing {len(comparison.missing)} file(s) present "
+                        "in the staged session, and cannot be repaired by "
+                        "uploading because XNAT also holds "
+                        f"{len(comparison.extra)} unexpected file(s) and "
+                        f"{len(comparison.differing)} file(s) with different "
+                        "content. Delete the resource on XNAT to have it "
+                        f"uploaded afresh. Missing: {sorted(comparison.missing)[:10]}"
+                        + ("..." if len(comparison.missing) > 10 else "")
+                    )
+            return None, None
         logger.debug(
             "Creating session resource %s in %s", resource_name, xsession.label
         )
         uri = f"{xsession.uri}/resources/{resource_name}"
         xsession.xnat_session.put(uri)
         xsession.clearcache()
-        return xsession.xnat_session.create_object(uri)
+        return xsession.xnat_session.create_object(uri), None
 
     try:
         xscan = xsession.scans[resource.scan.id]
@@ -540,24 +728,63 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
     except KeyError:
         pass
     else:
-        checksums = get_xnat_checksums(xresource)
-        if checksums != resource.checksums:
-            missing_paths = set(resource.checksums) - set(checksums)
-            extra_paths = set(checksums) - set(resource.checksums)
-            if missing_paths or extra_paths:
-                logger.error(
-                    "'%s' resource in '%s' already exists on XNAT with "
-                    "different checksums.\nMissing paths: %s\nAdditional paths: %s",
-                    resource_name,
-                    resource.scan.path,
-                    missing_paths,
-                    extra_paths,
+        xnat_checksums = get_xnat_checksums(xresource)
+        comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
+        if comparison.repairable:
+            # We hold files XNAT does not and nothing else is wrong, so hand
+            # back the shortfall. Not the whole resource: XNAT would reject or
+            # duplicate the files it already holds.
+            logger.warning(
+                "'%s' resource in '%s' exists on XNAT but is missing %d of %d "
+                "file(s) held in the staged session. Uploading the missing "
+                "file(s): %s%s",
+                resource_name,
+                resource.scan.path,
+                len(comparison.missing),
+                len(resource.checksums),
+                sorted(comparison.missing)[:10],
+                "..." if len(comparison.missing) > 10 else "",
+            )
+            return xresource, comparison.missing
+        if not comparison.complete:
+            logger.error(
+                # THE WORDING IS LOAD-BEARING: the Loki rules shipped with the
+                # AIS-Edge charts match this message on the literal phrase
+                # "already exists on XNAT with different checksums". Rewording
+                # it switches the operator alert off silently.
+                "'%s' resource in '%s' already exists on XNAT with different "
+                "checksums.\nMissing paths: %s\nAdditional paths: %s\n"
+                "Differing paths: %s",
+                resource_name,
+                resource.scan.path,
+                sorted(comparison.missing),
+                sorted(comparison.extra),
+                sorted(comparison.differing),
+            )
+            if comparison.missing:
+                # Missing alone is repaired above, so XNAT also holds files we
+                # do not or a shared file differs. An upload can only add, so it
+                # cannot fix either. Raise, so the session is not reported clean.
+                raise IncompleteCheckumsException(
+                    f"'{resource_name}' resource in '{resource.scan.path}' exists "
+                    f"on XNAT but is missing {len(comparison.missing)} file(s) "
+                    f"present in the staged session, and cannot be repaired by "
+                    f"uploading because XNAT also holds "
+                    f"{len(comparison.extra)} unexpected file(s) and "
+                    f"{len(comparison.differing)} file(s) with different content. "
+                    f"Delete the resource on XNAT to have it uploaded afresh. "
+                    f"Missing: {sorted(comparison.missing)[:10]}"
+                    + ("..." if len(comparison.missing) > 10 else "")
                 )
-            else:
+            if comparison.differing:
+                # The listing fetched above, NOT re-fetched per file. Building
+                # this dict with a call inside the comprehension issued one full
+                # GET of the resource listing per differing file, so a resource
+                # re-staged after re-anonymisation, where every name differs,
+                # made thousands of requests to write one log line.
                 difference = {
-                    k: (v, resource.checksums[k])
-                    for k, v in checksums.items()
-                    if v != resource.checksums[k]
+                    k: (xnat_checksums[k], resource.checksums[k])
+                    for k in sorted(comparison.differing)
                 }
                 logger.error(
                     "'%s' resource in '%s' already exists on XNAT with "
@@ -579,14 +806,14 @@ def get_xnat_resource(resource: ImagingResource, xsession: ty.Any) -> ty.Any:
                     resource_name,
                     resource.scan.path,
                 )
-        return None
+        return None, None
     logger.debug(
         "Creating resource %s in %s",
         resource_name,
         resource.scan.path,
     )
     xresource = xscan.create_resource(resource_name)
-    return xresource
+    return xresource, None
 
 
 def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:

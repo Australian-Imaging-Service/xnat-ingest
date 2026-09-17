@@ -18,6 +18,7 @@ from xnat_ingest.helpers.remotes import (
     SessionListing,
     SessionOnlyListing,
     calculate_checksums,
+    compare_resource_with_xnat,
     dir_older_than,
     get_xnat_checksums,
     get_xnat_resource,
@@ -26,6 +27,7 @@ from xnat_ingest.helpers.remotes import (
     list_session_dirs,
 )
 
+from ..exceptions import IncompleteCheckumsException
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
@@ -304,27 +306,55 @@ def upload(
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
-                to_upload: list[tuple[ImagingResource, ty.Any]] = []
+                to_upload: list[tuple[ImagingResource, ty.Any, ty.Any]] = []
+                incomplete_on_xnat: list[str] = []
+                repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
-                    xresource = get_xnat_resource(resource, xsession)
+                    try:
+                        xresource, only_files = get_xnat_resource(resource, xsession)
+                    except IncompleteCheckumsException as e:
+                        # Exists on XNAT but is short and cannot be repaired by
+                        # uploading. Record it so the session does not report as
+                        # fully uploaded.
+                        logger.error("%s", e.msg)
+                        incomplete_on_xnat.append(resource.path)
+                        continue
                     if xresource is None:
                         logger.info(
                             "Skipping '%s' resource as it is already uploaded",
                             resource.path,
                         )
                         continue  # skipping as resource already exists
-                    to_upload.append((resource, xresource))
+                    if only_files is not None:
+                        repaired_on_xnat.append(resource.path)
+                    to_upload.append((resource, xresource, only_files))
 
                 def _upload_resource(
-                    resource: ImagingResource, xresource: ty.Any
+                    resource: ImagingResource,
+                    xresource: ty.Any,
+                    only_files: ty.Optional[ty.Set[str]] = None,
                 ) -> None:
+                    """Upload a resource, or just the files XNAT is missing.
+
+                    `only_files` is set when XNAT already holds a strict subset
+                    of what we have. Re-sending the files it already has would
+                    be pointless and, on a large resource, expensive.
+                    """
+
+                    wanted_fspaths = select_files_to_upload(
+                        list(resource.fileset.fspaths),
+                        resource.fileset.parent,
+                        only_files,
+                        resource.path,
+                    )
+
                     logger.debug(
                         "Uploading '%s' resource to '%s'",
                         resource.path,
                         xresource,
                     )
                     if isinstance(resource.fileset, File):
-                        for fspath in resource.fileset.fspaths:
+                        for fspath in wanted_fspaths:
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",
                                 fspath,
@@ -346,7 +376,7 @@ def upload(
                         )
                         # Split the files to upload into batches and hardlink them into
                         # separate directories so we can use upload_dir
-                        files_to_upload = list(resource.fileset.fspaths)
+                        files_to_upload = wanted_fspaths
                         num_files = len(files_to_upload)
                         batch_size = (
                             num_files_per_batch
@@ -386,37 +416,35 @@ def upload(
                     if check_checksums:
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
-                        if any(remote_checksums.values()):
-                            logger.debug("calculating checksums for %s", xresource)
-                            calc_checksums = calculate_checksums(resource.fileset)
-                            if remote_checksums != calc_checksums:
-                                extra_keys = set(remote_checksums) - set(calc_checksums)
-                                missing_keys = set(calc_checksums) - set(
-                                    remote_checksums
-                                )
-                                intersect_keys = set(calc_checksums) & set(
-                                    remote_checksums
-                                )
-                                mismatching = [
-                                    k
-                                    for k, v in intersect_keys
-                                    if v != remote_checksums[k]
-                                ]
-                                raise RuntimeError(
-                                    "Checksums do not match after upload of "
-                                    f"'{resource.path}' resource.\n"
-                                    f"Extra keys were {extra_keys}\n"
-                                    f"Missing keys were {missing_keys}\n"
-                                    f"Mismatching files were {mismatching}\n"
-                                    f"Remote checksums were {remote_checksums}\n"
-                                    f"Calculated checksums were {calc_checksums}\n"
-                                )
-                        else:
+                        # Names are always available, digests are not, so this
+                        # runs either way rather than being skipped on a site
+                        # without enableChecksums.
+                        logger.debug("calculating checksums for %s", xresource)
+                        calc_checksums = calculate_checksums(resource.fileset)
+                        # Compared file by file, not as two whole dicts. A
+                        # resource just topped up holds real digests for the
+                        # files already there and empty ones for those just
+                        # added, and a whole-dict `!=` calls that a mismatch.
+                        comparison = compare_resource_with_xnat(
+                            calc_checksums, remote_checksums
+                        )
+                        if not comparison.comparable:
                             logger.debug(
                                 "Remote checksums were not calculated for %s "
-                                "(requires `enableChecksums` to be set site-wide), "
-                                "assuming upload was successful",
+                                "(requires `enableChecksums` to be set "
+                                "site-wide), comparing file names only",
                                 xresource,
+                            )
+                        if not comparison.complete:
+                            raise RuntimeError(
+                                "Checksums do not match after upload of "
+                                f"'{resource.path}' resource.\n"
+                                f"Extra keys were {sorted(comparison.extra)}\n"
+                                f"Missing keys were {sorted(comparison.missing)}\n"
+                                "Mismatching files were "
+                                f"{sorted(comparison.differing)}\n"
+                                f"Remote checksums were {remote_checksums}\n"
+                                f"Calculated checksums were {calc_checksums}\n"
                             )
                     else:
                         logger.debug(
@@ -430,8 +458,10 @@ def upload(
                 resource_errors: list[tuple[ImagingResource, BaseException]] = []
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
-                        executor.submit(_upload_resource, resource, xresource): resource
-                        for resource, xresource in to_upload
+                        executor.submit(
+                            _upload_resource, resource, xresource, only_files
+                        ): resource
+                        for resource, xresource, only_files in to_upload
                     }
                     for future in tqdm(
                         as_completed(futures),
@@ -451,18 +481,30 @@ def upload(
                             )
                             resource_errors.append((resource, e))
 
-                if resource_errors:
-                    msg = (
-                        f"{len(resource_errors)} of {len(to_upload)} resource(s) "
-                        f"failed to upload in '{session.name}': "
-                        + ", ".join(r.path for r, _ in resource_errors)
+                if repaired_on_xnat:
+                    # A repair means an earlier pass left this session short,
+                    # so it is worth a session-level line of its own.
+                    logger.info(
+                        "Repaired %d incomplete resource(s) on XNAT in '%s': %s",
+                        len(repaired_on_xnat),
+                        session.name,
+                        sorted(repaired_on_xnat),
                     )
+
+                msg = session_upload_verdict(
+                    session_name=session.name,
+                    num_attempted=len(to_upload),
+                    failed_paths=[r.path for r, _ in resource_errors],
+                    incomplete_paths=incomplete_on_xnat,
+                )
+                if msg is not None:
                     errors.append(msg)
-                    if raise_errors:
+                    if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
                     logger.error(msg)
-                else:
-                    logger.info(f"Successfully uploaded all files in '{session.name}'")
+                # Success is not announced here: metadata extraction and
+                # pipeline triggering still follow, and there is one report at
+                # the end of all of it.
                 # Extract DICOM metadata
                 if session_has_dicom:
                     logger.info("Extracting metadata from DICOMs on XNAT..")
@@ -499,17 +541,20 @@ def upload(
                         f"Failed to trigger pipelines in '{session.name}': {e}\nResponse: "
                         f"{e.response.text if hasattr(e, 'response') else 'N/A'}"
                     )
-                logger.info(f"Successfully uploaded all files in '{session.name}'")
+                # Guarded by the verdict: unconditional, this claimed success
+                # in the same pass that reported the session as failed.
+                if msg is None:
+                    logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
-                    msg = [
+                    error_msg = [
                         (
                             f"Skipping upload of '{session_listing.name}' due to error: \"{e}\""
                             f"\n{traceback.format_exc()}\n\n"
                         )
                     ]
-                    logger.error("".join(msg))
-                    errors.extend(msg)
+                    logger.error("".join(error_msg))
+                    errors.extend(error_msg)
                     continue
                 else:
                     raise
@@ -519,3 +564,100 @@ def upload(
     else:
         logger.info("Upload completed successfully")
     return errors
+
+
+def select_files_to_upload(
+    fspaths: ty.Sequence[Path],
+    parent: Path,
+    only_files: ty.Optional[ty.Set[str]],
+    resource_path: str,
+) -> list[Path]:
+    """Pick the staged files to send, and refuse to send none of them by accident.
+
+    `only_files` is set when XNAT already holds a strict subset of what we have,
+    and it names the files it is missing. None means upload everything.
+
+    The two name shapes are not guaranteed to agree, they are ENFORCED to agree
+    elsewhere. `parent` is FileSet.parent, which is commonpath() over the staged
+    files and so collapses to a subdirectory when every file sits in one, while
+    the manifest behind `only_files` is keyed to the resource directory. They
+    coincide for a flat resource directory and can differ for a nested one.
+
+    ImagingResource.load() is what normally makes them agree: it recomputes the
+    manifest keys with this same `relative_to` and raises on a mismatch. That
+    runs only under `check_checksums`, which also gates the post-upload
+    verification, so `--dont-check-checksums` removes both ends at once. Hence
+    this fails closed rather than trusting the shapes.
+
+    Raises
+    ------
+    RuntimeError
+        when `only_files` names files to upload but nothing matched, which would
+        otherwise upload zero files and report the resource as uploaded
+    """
+    if only_files is None:
+        return list(fspaths)
+    wanted = [p for p in fspaths if str(p.relative_to(parent)) in only_files]
+    if only_files and not wanted:
+        # Fail closed. only_files holds names XNAT is known to be missing, so
+        # matching nothing means the names and the paths disagree, not that
+        # there is nothing to do. With num_files_per_batch > 0 the batch loop
+        # runs zero times and the resource is then logged as uploaded.
+        raise RuntimeError(
+            f"Refusing to repair '{resource_path}': XNAT is missing "
+            f"{len(only_files)} file(s) {sorted(only_files)[:5]} but none of "
+            f"the {len(fspaths)} staged file(s) matched those names, so nothing "
+            "would be uploaded. The manifest keys and the staged paths "
+            "disagree. Delete the resource on XNAT to have it uploaded afresh."
+        )
+    return wanted
+
+
+def session_upload_verdict(
+    session_name: str,
+    num_attempted: int,
+    failed_paths: ty.Sequence[str],
+    incomplete_paths: ty.Sequence[str],
+) -> ty.Optional[str]:
+    """Summarise how a session's upload went, or None if it went cleanly.
+
+    Kept separate from upload() because the SUCCESS branch is the one that
+    misled operators: resources skipped as "already uploaded" never entered
+    `to_upload`, so they could never reach `resource_errors`, so a session that
+    delivered a fraction of its files still logged "Successfully uploaded all
+    files". Returning None only when BOTH lists are empty makes that impossible
+    to reintroduce by accident, and makes the rule testable on its own.
+
+    Parameters
+    ----------
+    session_name : str
+        the session being reported on
+    num_attempted : int
+        how many resources were actually attempted
+    failed_paths : Sequence[str]
+        resources whose upload raised
+    incomplete_paths : Sequence[str]
+        resources already on XNAT but missing files held in staging, which this
+        uploader will not repair
+
+    Returns
+    -------
+    str or None
+        an operator-facing message, or None if nothing was wrong
+    """
+    if not failed_paths and not incomplete_paths:
+        return None
+    parts = []
+    if failed_paths:
+        parts.append(
+            f"{len(failed_paths)} of {num_attempted} resource(s) failed to upload: "
+            + ", ".join(failed_paths)
+        )
+    if incomplete_paths:
+        parts.append(
+            f"{len(incomplete_paths)} resource(s) already on XNAT but incomplete, "
+            "and NOT repaired: "
+            + ", ".join(incomplete_paths)
+            + ". Delete them on XNAT to allow re-upload."
+        )
+    return f"'{session_name}' did not upload cleanly: " + "; ".join(parts)
