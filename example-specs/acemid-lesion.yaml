@@ -1,0 +1,111 @@
+# The full ACEMID "lesion ingest" pipeline (dermoscopy PNG/JPEG + whole-body
+# analysis + dexi data, all pulled out of one recursive Canfield Vectra export)
+# as a single workflow. Mirrors the equivalent chained CLI/k8s commands - every
+# composite --flag becomes real YAML structure here instead of ';'-packed env
+# vars or repeated CLI tokens; see workflow.coerce for exactly how each shape
+# below is parsed.
+#
+# 'input_dir'/'csv_path' are declared params rather than hardcoded, so the same
+# spec is transportable between sites with their own Canfield Vectra export
+# mount and lesion table - only 'xnat_password' has no default (a site's secret
+# has no sane default); the rest can be left at the defaults below or overridden
+# with '--param name=value' / a same-named environment variable.
+
+name: acemid-lesion
+
+params:
+  input_dir:
+    description: "Root of this site's Canfield Vectra export"
+  csv_path:
+    description: "Lesion table CSV joined onto the dermoscopy PNGs/JPEGs"
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: ["${input_dir}"]
+      recursive: true
+      datatypes:
+        - image/png
+        - image/jpeg
+        - medimage/vnd.canfield.whole-body-analysis-dir
+        - medimage/vnd.canfield.dexi-data-dir
+      # Canfield ships a thumbnail PNG/JPEG alongside the ones we want, one and
+      # two levels deeper respectively - drop them before classification rather
+      # than trying to --ignore-datatype a valid image/png.
+      exclude_paths:
+        - "*/*/*.png"
+        - "*/*/*.jpg"
+      allow_unrecognised:
+        - ".*"   # tolerate every other vendor file in the export
+      session:
+        - expr: "{subject_uid}_{CaptureDate:%Y%m%d}"
+          # datatype omitted -> 'all', applies regardless of fileset type
+      scan:
+        - expr: "dermoscopy-{LesionID}"
+          datatype: "image/png|image/jpeg"
+        - expr: "dexi-{CaptureTime}"
+          datatype: medimage/vnd.canfield.dexi-data-dir
+        - expr: "analysis-{CaptureTime}"
+          datatype: medimage/vnd.canfield.whole-body-analysis-dir
+      resource:
+        - expr: CaptureDevice
+          datatype: "image/png|image/jpeg"
+      # Multiple PNGs/JPEGs from the same lesion fold into one SetOf resource;
+      # a clash between any other pair of datatypes here still raises.
+      on_resource_clash:
+        - policy: merge
+          datatype: "image/png|image/jpeg"
+      path_metadata_regex:
+        - pattern: '.*/(?P<subject_uid>[\w-]+)/(?P<filename>[\w-]+\.(?:png|jpe?g))'
+          datatype: "image/png|image/jpeg"
+        - pattern: '.*/(?P<subject_uid>[\w-]+)/(?P<CaptureDate>\d{8})(?P<CaptureTime>\d+)/analysis'
+          datatype: medimage/vnd.canfield.whole-body-analysis-dir
+        - pattern: '.*/(?P<subject_uid>[\w-]+)/(?P<CaptureDate>\d{8})(?P<CaptureTime>\d+)/DexiData.*'
+          datatype: medimage/vnd.canfield.dexi-data-dir
+      metadata_tables:
+        - path: "${csv_path}"
+          rows: "fileset[image/png|image/jpeg]"
+          joins:
+            ImagePath: '=HYPERLINK("{subject_uid}/{filename}")'
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      # assign() still requires a project field even when constant_project_id
+      # overrides the actual project assigned below - it's otherwise unused.
+      project: "all"
+      subject: SubjectID
+      session: "{SubjectID}_{CaptureDate:%Y%m%d}"
+      constant_project_id: ACEMID
+
+  - name: deidentify
+    command: deidentify
+    input: assign
+    # The PNG/JPEG/whole-body-analysis/dexi data uploaded here carry no PHI, so
+    # this stage is disabled - it forwards 'assign's output straight through to
+    # 'upload' unchanged. Flip to true (and point spec_dir somewhere real) if
+    # that ever stops being true, with no change needed to either neighbour.
+    enabled: false
+    args:
+      spec_dir: /etc/xnat-ingest/deid-specs
+      reid_dir: /var/lib/xnat-ingest/reid
+
+  - name: upload
+    command: upload
+    input: deidentify
+    args:
+      # Explicit on the stage that actually needs them, not a shared top-level
+      # block - keeps the spec format backend-agnostic for a future non-XNAT
+      # upload stage.
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"
