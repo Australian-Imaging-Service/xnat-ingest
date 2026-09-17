@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
-from fileformats.medimage import DicomCollection, DicomZip
+from fileformats.medimage import DicomCollection
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
@@ -36,8 +36,7 @@ from ..model.session import ImagingSession
 def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
     """Whether resources include DICOM files attached to an imaging scan."""
     return any(
-        resource.scan is not None
-        and isinstance(resource.fileset, (DicomCollection, DicomZip))
+        resource.scan is not None and isinstance(resource.fileset, DicomCollection)
         for resource in resources
     )
 
@@ -277,90 +276,27 @@ def upload(
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
-                to_upload: list[tuple[ImagingResource, ty.Any, FileSet]] = []
+                to_upload: list[tuple[ImagingResource, ty.Any]] = []
                 for resource in selected_resources:
-                    fileset = resource.fileset
-
-                    if isinstance(fileset, DicomZip):
-                        # DicomZip upload: create DICOM-zip resource
-                        # (format=ZIP, content=RAW) and a secondary resource
-                        # with a sample DICOM (format=DICOM, content=SAMPLE)
-                        # so pullDataFromHeaders can populate scan metadata
-
-                        # Ensure metadata has SOPClassUID/Modality from the
-                        # zip for correct scan type creation
-                        header = fileset.peek_header()
-                        sop_class = header.get("SOPClassUID")
-                        modality = header.get("Modality")
-                        if sop_class:
-                            resource.metadata["SOPClassUID"] = sop_class
-                        if modality:
-                            resource.metadata["Modality"] = modality
-
-                        xresource_zip = get_xnat_resource(
-                            resource,
-                            xsession,
-                            resource_label="DICOM-zip",
-                            resource_format="ZIP",
-                            content="RAW",
+                    xresource = get_xnat_resource(resource, xsession)
+                    if xresource is None:
+                        logger.info(
+                            "Skipping '%s' resource as it is already uploaded",
+                            resource.path,
                         )
-                        if xresource_zip is None:
-                            logger.info(
-                                "Skipping '%s' DICOM-zip resource as it is already uploaded",
-                                resource.path,
-                            )
-                        else:
-                            to_upload.append((resource, xresource_zip, fileset))
-
-                        # Extract a sample DICOM from the zip for the
-                        # secondary resource
-                        xresource_sample = get_xnat_resource(
-                            resource,
-                            xsession,
-                            resource_label="secondary",
-                            resource_format="DICOM",
-                            content="SAMPLE",
-                        )
-                        if xresource_sample is None:
-                            logger.info(
-                                "Skipping sample for '%s' as it is already uploaded",
-                                resource.path,
-                            )
-                        else:
-                            scratch = Path(tempfile.mkdtemp())
-                            sample_path = fileset.extract_first(scratch)
-                            if sample_path is not None:
-                                to_upload.append(
-                                    (resource, xresource_sample, File(sample_path))
-                                )
-                            else:
-                                logger.warning(
-                                    "Could not extract sample from '%s' — zip is empty",
-                                    resource.path,
-                                )
-                    else:
-                        # Non-zip resource — upload as-is
-                        xresource = get_xnat_resource(resource, xsession)
-                        if xresource is None:
-                            logger.info(
-                                "Skipping '%s' resource as it is already uploaded",
-                                resource.path,
-                            )
-                        else:
-                            to_upload.append((resource, xresource, fileset))
+                        continue  # skipping as resource already exists
+                    to_upload.append((resource, xresource))
 
                 def _upload_resource(
-                    resource: ImagingResource,
-                    xresource: ty.Any,
-                    fileset: FileSet,
+                    resource: ImagingResource, xresource: ty.Any
                 ) -> None:
                     logger.debug(
                         "Uploading '%s' resource to '%s'",
                         resource.path,
                         xresource,
                     )
-                    if isinstance(fileset, File):
-                        for fspath in fileset.fspaths:
+                    if isinstance(resource.fileset, File):
+                        for fspath in resource.fileset.fspaths:
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",
                                 fspath,
@@ -371,18 +307,18 @@ def upload(
                     else:
                         # Upload the contents of the resource to XNAT
                         upload_method = UploadMethod.select_method(
-                            methods, type(fileset)
+                            methods, type(resource.fileset)
                         )
                         # Get the directory containing the files to upload
                         # and create a temporary upload directory alongside it
                         # to hardlink files to upload in each batch into
-                        dir_to_upload = fileset.parent
+                        dir_to_upload = resource.fileset.parent
                         upload_dir = dir_to_upload.parent / (
                             "." + dir_to_upload.name + "-upload"
                         )
                         # Split the files to upload into batches and hardlink them into
                         # separate directories so we can use upload_dir
-                        files_to_upload = list(fileset.fspaths)
+                        files_to_upload = list(resource.fileset.fspaths)
                         num_files = len(files_to_upload)
                         batch_size = (
                             num_files_per_batch
@@ -424,7 +360,7 @@ def upload(
                         remote_checksums = get_xnat_checksums(xresource)
                         if any(remote_checksums.values()):
                             logger.debug("calculating checksums for %s", xresource)
-                            calc_checksums = calculate_checksums(fileset)
+                            calc_checksums = calculate_checksums(resource.fileset)
                             if remote_checksums != calc_checksums:
                                 extra_keys = set(remote_checksums) - set(calc_checksums)
                                 missing_keys = set(calc_checksums) - set(
@@ -466,10 +402,8 @@ def upload(
                 resource_errors: list[tuple[ImagingResource, BaseException]] = []
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
-                        executor.submit(
-                            _upload_resource, resource, xresource, fileset
-                        ): resource
-                        for resource, xresource, fileset in to_upload
+                        executor.submit(_upload_resource, resource, xresource): resource
+                        for resource, xresource in to_upload
                     }
                     for future in tqdm(
                         as_completed(futures),
