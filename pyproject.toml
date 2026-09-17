@@ -16,23 +16,23 @@ dependencies = [
     # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
     # the new API does not exist.
     "fileformats >=0.18.1",
-    "fileformats-medimage >=0.13.0",
-    "fileformats-medimage-extras >=0.13.0",
+    "fileformats-medimage >=0.13.1",
+    "fileformats-medimage-extras >=0.13.1",
     "fileformats-vendor-siemens >=0.2.1",
-    "fileformats-vendor-siemens-extras >=0.1.0",
+    "fileformats-vendor-siemens-extras >=0.2.0",
     "fileformats-vendor-mrtrix3",
     "fileformats-vendor-mrtrix3-extras",
     "pydicom >=2.3.1",
     "python-dateutil",
     "tqdm >=4.64.1",
-    "boto3",
+    "boto3 >=1.26",
     "requests",
-    "cryptography",
+    "cryptography >=38.0",
     "natsort",
-    "paramiko",
+    "paramiko >=2.12",
     "xnat==0.7.2",
-    "frametree",
-    "frametree-xnat",
+    "frametree >=0.16.2",
+    "frametree-xnat >=0.6.10",
 ]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]
@@ -67,8 +67,8 @@ test = [
     "pytest-env>=0.6.2",
     "pytest-cov>=2.12.1",
     "xnat4tests >=0.3",
-    "medimages4tests >=0.3.1",
-    "moto >=4.0.11",
+    "medimages4tests >=0.5.7",
+    "moto >=5.0",
     "PyYAML",
 ]
 docs = [

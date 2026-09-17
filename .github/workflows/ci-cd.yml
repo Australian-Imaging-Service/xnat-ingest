@@ -46,6 +46,11 @@ jobs:
       matrix:
         os: [ubuntu-latest]  # , windows-latest]  #, macos-latest
         python-version: ["3.11", "3.13"]
+        resolution: [highest]
+        include:
+        - os: ubuntu-latest
+          python-version: "3.11"
+          resolution: lowest-direct
       fail-fast: false
     runs-on: ${{ matrix.os }}
     defaults:
@@ -94,7 +99,10 @@ jobs:
     - name: Install Xnat-Ingest
       run: |
         uv venv --python python3
-        uv pip install --prerelease=allow ".[test]"
+        uv pip install \
+          --prerelease=allow \
+          --resolution "${{ matrix.resolution }}" \
+          ".[test]"
 
     - name: Save XNAT username/password in ~/.netrc
       run: |
