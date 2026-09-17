@@ -1065,6 +1065,7 @@ class ImagingSession:
             session_dir.mkdir(parents=True, exist_ok=True)
 
             modalities: set[str] = set()
+            staged_instance_ids: dict[str, set[str]] = {}
             for series_id in study["Series"]:
                 series = get_json(f"/series/{series_id}")
                 if modality := series["MainDicomTags"].get("Modality"):
@@ -1083,20 +1084,21 @@ class ImagingSession:
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
+                staged_instance_ids[series_id] = {
+                    instance["ID"] for instance in instances
+                }
 
                 def _link_instance(
                     instance: ty.Mapping[str, ty.Any],
                     resource_dir: Path = resource_dir,
                     series_id: str = series_id,
-                ) -> tuple[str, str] | None:
+                ) -> tuple[str, str]:
                     instance_id = instance["ID"]
                     sop_uid = instance["MainDicomTags"].get(
                         "SOPInstanceUID", instance_id
                     )
                     fname = f"{sop_uid}.dcm"
                     dest_path = resource_dir / fname
-                    if dest_path.exists():
-                        return None
                     attachment = get_json(
                         f"/instances/{instance_id}/attachments/dicom/info"
                     )
@@ -1106,14 +1108,15 @@ class ImagingSession:
                             "compressed in Orthanc — disable StorageCompression in the "
                             "Orthanc config to use hardlink sorting."
                         )
-                    uuid = attachment["Uuid"]
-                    src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
-                    os.link(src_path, dest_path)
+                    if not dest_path.exists():
+                        uuid = attachment["Uuid"]
+                        src_path = Path(store_dir) / uuid[0:2] / uuid[2:4] / uuid
+                        os.link(src_path, dest_path)
                     return fname, attachment["UncompressedMD5"]
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     linked = executor.map(_link_instance, instances)
-                checksums: dict[str, str] = dict(r for r in linked if r is not None)
+                checksums: dict[str, str] = dict(linked)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
                 with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
@@ -1131,7 +1134,25 @@ class ImagingSession:
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
+            staged_session = cls.load(session_dir)
+
             if processed_label:
+                current_study = get_json(f"/studies/{study_id}")
+                current_series_ids = set(current_study["Series"])
+                if current_study.get("LastUpdate") != study.get(
+                    "LastUpdate"
+                ) or current_series_ids != set(staged_instance_ids):
+                    raise RuntimeError(
+                        f"Orthanc study '{study_id}' changed while it was being staged"
+                    )
+                for series_id, expected_instance_ids in staged_instance_ids.items():
+                    current_instances = get_json(f"/series/{series_id}/instances")
+                    if {instance["ID"] for instance in current_instances} != (
+                        expected_instance_ids
+                    ):
+                        raise RuntimeError(
+                            f"Orthanc study '{study_id}' changed while it was being staged"
+                        )
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
@@ -1139,7 +1160,7 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
             )
-            staged.append(cls.load(session_dir))
+            staged.append(staged_session)
 
         return staged
 

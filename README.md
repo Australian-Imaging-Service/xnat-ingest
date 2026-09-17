@@ -28,13 +28,24 @@ flowchart LR
 
 ## Installation
 
-XNAT ingest can be installed as a Python package from PyPI with `pip`:
+A Docker image containing the toolkit can be pulled from the GitHub Container Registry
+
+```
+docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
+```
+
+The entrypoint of the image is the xnat-ingest CLI so commands can be run by the form
+
+```
+docker run ghcr.io/australian-imaging-service/xnat-ingest:latest <command-name> <arg1> <arg2> ... --opt1 <opt1> ...
+```
+
+Alternatively, XNAT ingest can be installed as a Python package from PyPI with `pip`:
 
 ```
 $ python3 -m pip install xnat-ingest
 ```
 
-Alternatively, a Docker image containing the toolkit can be pulled from `docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest`
 
 ## Running
 
