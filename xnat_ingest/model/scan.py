@@ -88,7 +88,9 @@ class ImagingScan:
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
-        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
+        conversion_map: (
+            dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        ) = None,
         include: ty.Sequence[ty.Type[FileSet]] = (),
     ) -> Self:
         # Ensure scan type is a valid directory name. A scan with no description set

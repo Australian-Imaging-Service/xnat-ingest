@@ -99,7 +99,9 @@ class ImagingResource:
         dest_dir: Path,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
-        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None = None,
+        conversion_map: (
+            dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        ) = None,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
     ) -> Self:
@@ -114,8 +116,10 @@ class ImagingResource:
         collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
             A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
             sessions. If None, the default collation behavior for each FileSet type will be used.
-        conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
-            A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
+        conversion_map: dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+            A mapping of source FileSet types to (target FileSet types, conversion options).
+            When a resource matches a source type, it will be converted to the target type during save,
+            with the options passed through to ``convert()``.
         calculate_checksums: bool
             Whether to calculate the checksums of the files
         overwrite: bool
@@ -175,7 +179,7 @@ class ImagingResource:
                     break
         # If a conversion is requested for this resource's type, run it now
         if conversion_map:
-            for src_type, tgt_type in conversion_map.items():
+            for src_type, (tgt_type, options) in conversion_map.items():
                 if isinstance(fileset, src_type):
                     logger.info(
                         "Converting resource '%s' from %s to %s",
@@ -185,7 +189,7 @@ class ImagingResource:
                     )
                     # Call the target format's convert() method with the saved fileset
                     # The convert implementation is expected to return a FileSet for the converted data.
-                    fileset = tgt_type.convert(fileset)
+                    fileset = tgt_type.convert(fileset, **options)
                     break
         saved_fileset = fileset.copy(
             resource_dir, mode=copy_mode, trim=True, collation=collation
