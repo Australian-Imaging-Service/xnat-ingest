@@ -28,7 +28,10 @@ from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata
-from .xnat_scan_types import xnat_scan_type_from_sop_class
+from .xnat_scan_types import (
+    xnat_resource_label_from_sop_class,
+    xnat_scan_type_from_sop_class,
+)
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -682,19 +685,28 @@ def get_xnat_resource(
         xsession.clearcache()
         return xsession.xnat_session.create_object(uri), None
 
+    if isinstance(resource.fileset, DicomCollection):
+        # XNAT decides which resource a scan's DICOM is catalogued under from the SOP
+        # class alone -- ImageType isn't consulted -- and regenerates the catalog under
+        # that label whenever the scan XML is rebuilt from the headers (e.g. by
+        # pullDataFromHeaders). Uploading under any other name leaves the catalog
+        # pointing at a directory the files aren't in, which breaks downloads, so the
+        # name XNAT would choose is used rather than one of our own.
+        resource_name = xnat_resource_label_from_sop_class(
+            resource.metadata.get("SOPClassUID")
+        )
+
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        image_type = resource.metadata.get("ImageType")
-        is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
-        if is_secondary:
-            resource_name = "secondary"
         if isinstance(resource.fileset, DicomCollection):
             scan_type = xnat_scan_type_from_sop_class(
                 resource.metadata.get("SOPClassUID")
             )
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
+            image_type = resource.metadata.get("ImageType")
+            is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
             if isinstance(xsession, xclasses.MrSessionData):
                 default_scan_modality = "MR"
             elif isinstance(xsession, xclasses.PetSessionData):
