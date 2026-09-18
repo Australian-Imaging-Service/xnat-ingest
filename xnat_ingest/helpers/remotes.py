@@ -188,7 +188,6 @@ class SessionListing(metaclass=abc.ABCMeta):
 
 @attrs.define
 class LocalSessionListing(SessionListing):
-
     fspath: Path
 
     @property
@@ -269,7 +268,6 @@ class SessionOnlyListing(SessionListing):
 
 @attrs.define
 class S3SessionListing(SessionListing):
-
     name: str
     bucket: ty.Any
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]

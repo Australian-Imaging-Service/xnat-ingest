@@ -104,7 +104,6 @@ def upload(
     # Note that this context manager doesn't do anything if the connection is
     # already open, so it's safe to use even if the connection is already open
     with xnat_repo.connection:
-
         # DROP THE CLIENT-SIDE VIEW OF XNAT BEFORE DECIDING ANYTHING.
         #
         # `upload --loop` holds ONE connection for the life of the process, and
@@ -176,7 +175,6 @@ def upload(
             total=num_sessions,
             desc=f"Processing staged sessions found in '{input_dir}'",
         ):
-
             if dry_run:
                 logger.info(
                     "Would attempt to upload '%s' if not dry run",
@@ -185,7 +183,6 @@ def upload(
                 continue
 
             try:
-
                 if session_listing.all_uploaded(xnat_repo.connection):
                     logger.info(
                         "Skipping upload of '%s' as all the resources already exist on XNAT",

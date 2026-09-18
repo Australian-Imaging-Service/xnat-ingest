@@ -91,9 +91,9 @@ def test_unrepairable_resource_logs_the_phrase_the_alert_matches(
         "ALERT_PHRASE to match the new wording turns this test green and leaves "
         "the alert dead."
     )
-    assert (
-        ALERT_SECOND in logged
-    ), f"the rules require {ALERT_SECOND!r} in the SAME message as the phrase"
+    assert ALERT_SECOND in logged, (
+        f"the rules require {ALERT_SECOND!r} in the SAME message as the phrase"
+    )
 
 
 def test_both_alert_substrings_are_in_one_message(caplog: ty.Any) -> None:

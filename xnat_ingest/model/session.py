@@ -1029,7 +1029,7 @@ class ImagingSession:
 
         study_ids = sorted(candidates)
         logger.info(
-            "Found %d studies in Orthanc at '%s' " "(label=%r, skip label=%r)",
+            "Found %d studies in Orthanc at '%s' (label=%r, skip label=%r)",
             len(study_ids),
             url,
             to_process_label,
@@ -1602,9 +1602,9 @@ class ImagingSession:
                     "don't collide." + (f" {clash_hint}" if clash_hint else ""),
                 )
             else:
-                assert (
-                    False
-                ), f"Invalid resource-clash policy: {policy} (should be one of {ON_RESOURCE_CLASH})"
+                assert False, (
+                    f"Invalid resource-clash policy: {policy} (should be one of {ON_RESOURCE_CLASH})"
+                )
         scan.resources[resource_name] = resource
 
     def add_session_resource(

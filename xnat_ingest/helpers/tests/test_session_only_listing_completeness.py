@@ -52,12 +52,12 @@ def _staging(tmp_path: ty.Any, checksums: dict[str, str]) -> SessionOnlyListing:
 def test_it_is_part_of_the_hierarchy() -> None:
     """The fix must not be able to miss this class again."""
     assert issubclass(SessionOnlyListing, SessionListing)
-    assert (
-        "all_uploaded" not in SessionOnlyListing.__dict__
-    ), "a second copy of the completeness rule is how this bug survived"
-    assert (
-        "find_xnat_session" in SessionOnlyListing.__dict__
-    ), "the mode still resolves its session by a global label search"
+    assert "all_uploaded" not in SessionOnlyListing.__dict__, (
+        "a second copy of the completeness rule is how this bug survived"
+    )
+    assert "find_xnat_session" in SessionOnlyListing.__dict__, (
+        "the mode still resolves its session by a global label search"
+    )
 
 
 def test_short_resource_is_not_uploaded(tmp_path: ty.Any) -> None:

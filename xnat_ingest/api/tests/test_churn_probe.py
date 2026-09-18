@@ -53,6 +53,6 @@ def test_second_cycle_does_not_touch_output_mtimes(tmp_path: Path):
     print(f"files whose mtime ADVANCED on cycle 2: {len(changed)}")
     for k in changed:
         print(f"  CHURN {k}")
-    assert (
-        not changed
-    ), f"{len(changed)} file(s) rewritten on an unchanged session: {changed}"
+    assert not changed, (
+        f"{len(changed)} file(s) rewritten on an unchanged session: {changed}"
+    )
