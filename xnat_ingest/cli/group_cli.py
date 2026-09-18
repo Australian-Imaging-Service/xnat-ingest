@@ -276,12 +276,17 @@ are uploaded to XNAT
     "--convert",
     "conversions",
     type=Convert.cli_type,
-    metavar="<src-mime-like> <tgt-mime-like>",
+    metavar="<src-mime-like> <tgt-spec>",
     nargs=2,
     multiple=True,
     default=(),
     envvar="XINGEST_CONVERT",
-    help=("Convert resources of <src-mime-like> to <tgt-mime-like> during save. "),
+    help=(
+        "Convert resources of <src-mime-like> to <tgt-spec> during save. "
+        "<tgt-spec> may be either '<tgt-mime-like>' or "
+        "'<tgt-mime-like>:key=value[,key=value...]', e.g. "
+        "'application/zip:compression=ZIP_STORED'."
+    ),
 )
 @click.option(
     "--metadata-table",
@@ -371,7 +376,7 @@ def group_cmd(
             path_metadata_regex=path_metadata_regex,
             recursive=recursive,
             collation_map={cs.datatype: cs.collation_level for cs in collate_resources},
-            conversion_map={c.source: c.target for c in conversions},
+            conversion_map={c.source: (c.target, c.options) for c in conversions},
             metadata_tables=metadata_tables,
         )
         if errors:

@@ -338,7 +338,7 @@ def test_group_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
         session=SESSION_FIELD,
         scan=SCAN_FIELD,
         resource=RESOURCE_FIELD,
-        conversion_map={DicomDir: Zip},
+        conversion_map={DicomDir: (Zip, {"compression": "ZIP_STORED"})},
     )
 
     assert errors == []
