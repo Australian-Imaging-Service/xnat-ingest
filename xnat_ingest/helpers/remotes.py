@@ -24,11 +24,16 @@ from tqdm import tqdm
 
 from ..exceptions import IncompleteCheckumsException
 from ..model.resource import ImagingResource
+from ..model.scan import ImagingScan
 from ..model.session import ImagingSession
 from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata
-from .xnat_scan_types import xnat_scan_type_from_sop_class
+from .xnat_scan_types import (
+    group_by_modality,
+    xnat_resource_label_from_sop_class,
+    xnat_scan_type_from_sop_class,
+)
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -591,6 +596,71 @@ def compare_resource_with_xnat(
     )
 
 
+def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
+    """Split a DICOM scan resource that holds more than one modality into one
+    resource per modality, each destined for its own scan.
+
+    XNAT does this itself when it rebuilds a session's scans from the DICOM headers
+    (pullDataFromHeaders): a series carrying more than one modality under the same
+    SeriesNumber -- e.g. a PET series with an embedded dose-report SR object -- comes
+    out as separate scans named '<scan-id>-<modality>' rather than one. Uploading
+    everything under the original scan id and letting that pull split it apart
+    afterwards is the same class of mistake as pre-creating a "secondary" resource
+    (see `xnat_resource_label_from_sop_class`): the files end up moved out from under
+    whichever scan/resource xnat-ingest thinks it created, and a later run that looks
+    for the original scan id to decide what is already uploaded won't find it.
+
+    So this predicts the split up front and uploads directly under the scan ids XNAT
+    will use, the same way the resource label is chosen to match ahead of time rather
+    than corrected after the fact.
+
+    Parameters
+    ----------
+    resource : ImagingResource
+        the staged resource to check for a modality split
+
+    Returns
+    -------
+    list[ImagingResource]
+        `[resource]` unchanged if it isn't a DICOM scan resource, or if every file in
+        it shares the same modality; otherwise one resource per modality present,
+        named the same as `resource` but scanned under '<scan-id>-<modality>'
+    """
+    # If there is only one modality, or this isn't a DICOM scan resource, no split is needed.
+    if (
+        resource.scan is None
+        or not isinstance(resource.fileset, DicomCollection)
+        or len(resource.metadata.get("Modality", [])) <= 1
+    ):
+        return [resource]
+    # `resource.fileset.contents` and each image's own `.metadata` are cached on the
+    # objects themselves once read, so for the common case -- a single-modality series,
+    # where this returns `[resource]` unchanged -- this read is not a new cost: the
+    # SOP-class-based label/type decision that `get_xnat_resource` makes on the same
+    # (unmodified) resource right after reuses the same cached per-file metadata. Only
+    # when a split actually happens are fresh sub-filesets built, whose own files get
+    # read again for their own SOP class, but a mixed-modality series is the rare case
+    # this function exists for in the first place
+    groups = group_by_modality(
+        (fspath, image.metadata.get("Modality"))
+        for image in resource.fileset.contents
+        for fspath in image.fspaths
+    )
+    if groups is None:
+        return [resource]
+    scan = resource.scan
+    return [
+        ImagingResource(
+            name=resource.name,
+            fileset=type(resource.fileset)(fspaths),
+            scan=ImagingScan(
+                id=f"{scan.id}-{modality}", type=scan.type, session=scan.session
+            ),
+        )
+        for modality, fspaths in groups.items()
+    ]
+
+
 def get_xnat_resource(
     resource: ImagingResource, xsession: ty.Any
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
@@ -680,40 +750,42 @@ def get_xnat_resource(
         xsession.clearcache()
         return xsession.xnat_session.create_object(uri), None
 
+    # XNAT decides both the resource label a scan's DICOM is catalogued under and the
+    # scan-data type from the SOP class alone -- ImageType isn't consulted -- and
+    # regenerates both whenever the scan XML is rebuilt from the headers (e.g. by
+    # pullDataFromHeaders). Uploading under a different name/type leaves the catalog
+    # pointing at a directory the files aren't in, which breaks downloads, so whatever
+    # XNAT would choose is used instead.
+    #
+    # This can only be decided from files XNAT's own catalog builder actually parses as
+    # DICOM, i.e. `resource.fileset` has to be a `DicomCollection` -- not merely have a
+    # readable "SOPClassUID": a vendor raw-data resource (e.g. Siemens listmode/
+    # countrate .ptd files) embeds a copy of a DICOM header for provenance, which gives
+    # it a perfectly readable SOPClassUID too, but XNAT itself never parses that file as
+    # DICOM, so it never applies this categorisation to it. Deciding from the metadata
+    # key alone previously renamed both such resources under one scan to "secondary",
+    # colliding them into the same catalog and uploading it from two threads at once.
+    sop_class_uids = (
+        resource.metadata.get("SOPClassUID")
+        if isinstance(resource.fileset, DicomCollection)
+        else None
+    )
+    if sop_class_uids:
+        resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        image_type = resource.metadata.get("ImageType")
-        is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
-        if is_secondary:
-            resource_name = "secondary"
-        if isinstance(resource.fileset, DicomCollection):
-            scan_type = xnat_scan_type_from_sop_class(
-                resource.metadata.get("SOPClassUID")
-            )
+        if sop_class_uids:
+            scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
-            if isinstance(xsession, xclasses.MrSessionData):
-                default_scan_modality = "MR"
-            elif isinstance(xsession, xclasses.PetSessionData):
-                default_scan_modality = "PT"
-            else:
-                default_scan_modality = "CT"
-            modality = (
-                "SC"
-                if is_secondary
-                else resource.metadata.get("Modality", default_scan_modality)
-            )
-            if modality == "SC":
-                ScanClass = xclasses.ScScanData
-            elif modality == "MR":
-                ScanClass = xclasses.MrScanData
-            elif modality == "PT":
-                ScanClass = xclasses.PetScanData
-            elif modality == "CT":
-                ScanClass = xclasses.CtScanData
-            else:
-                ScanClass = xclasses.OtherDicomScanData
+            # No SOP class to decide from -- not DICOM, or DICOM whose header didn't
+            # carry one. XNAT's schema has no generic scan type outside the
+            # DICOM-derived ones (every xnat:*ScanData is modality-specific), so this
+            # falls back to the same catch-all XNAT itself uses for an unrecognised
+            # SOP class rather than guessing a modality from ImageType/session type.
+            ScanClass = xclasses.OtherDicomScanData
         logger.debug(
             "Creating scan %s in %s", resource.scan.id, resource.scan.session.path
         )

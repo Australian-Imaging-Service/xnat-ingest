@@ -25,6 +25,7 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_session,
     iterate_s3_sessions,
     list_session_dirs,
+    split_resource_by_modality,
 )
 
 from ..exceptions import IncompleteCheckumsException
@@ -310,24 +311,29 @@ def upload(
                 incomplete_on_xnat: list[str] = []
                 repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
-                    try:
-                        xresource, only_files = get_xnat_resource(resource, xsession)
-                    except IncompleteCheckumsException as e:
-                        # Exists on XNAT but is short and cannot be repaired by
-                        # uploading. Record it so the session does not report as
-                        # fully uploaded.
-                        logger.error("%s", e.msg)
-                        incomplete_on_xnat.append(resource.path)
-                        continue
-                    if xresource is None:
-                        logger.info(
-                            "Skipping '%s' resource as it is already uploaded",
-                            resource.path,
-                        )
-                        continue  # skipping as resource already exists
-                    if only_files is not None:
-                        repaired_on_xnat.append(resource.path)
-                    to_upload.append((resource, xresource, only_files))
+                    # A DICOM resource whose series carries more than one modality is
+                    # split into one part per modality here, uploaded to its own scan,
+                    # so that XNAT never has to split it itself when it rebuilds the
+                    # session from the headers (see `split_resource_by_modality`)
+                    for part in split_resource_by_modality(resource):
+                        try:
+                            xresource, only_files = get_xnat_resource(part, xsession)
+                        except IncompleteCheckumsException as e:
+                            # Exists on XNAT but is short and cannot be repaired by
+                            # uploading. Record it so the session does not report as
+                            # fully uploaded.
+                            logger.error("%s", e.msg)
+                            incomplete_on_xnat.append(part.path)
+                            continue
+                        if xresource is None:
+                            logger.info(
+                                "Skipping '%s' resource as it is already uploaded",
+                                part.path,
+                            )
+                            continue  # skipping as resource already exists
+                        if only_files is not None:
+                            repaired_on_xnat.append(part.path)
+                        to_upload.append((part, xresource, only_files))
 
                 def _upload_resource(
                     resource: ImagingResource,
