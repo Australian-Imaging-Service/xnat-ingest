@@ -60,6 +60,7 @@ class FakeStagedResource:
     # not a DicomCollection, so the resource keeps the name it was staged under rather
     # than one derived from the SOP class -- these tests are about checksum repair
     fileset = None
+    metadata: dict[str, object] = {}
     path = "test_project:SUBJ:SESS:2-t1_mprage_ax:DICOM"
 
     def __init__(self, checksums: dict[str, str]) -> None:

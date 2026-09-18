@@ -262,3 +262,33 @@ def xnat_resource_label_from_sop_class(
     if any(uid in PRIMARY_SOP_CLASS_UIDS for uid in uids):
         return DICOM_RESOURCE_LABEL
     return SECONDARY_RESOURCE_LABEL
+
+
+T = ty.TypeVar("T")
+
+
+def group_by_modality(
+    items: ty.Iterable[ty.Tuple[T, ty.Optional[str]]],
+) -> ty.Optional[ty.Dict[str, ty.List[T]]]:
+    """Groups items (e.g. file paths) by the DICOM Modality (0008,0060) tag of the
+    file they came from, matching how XNAT splits a series into '<scan-id>-<modality>'
+    scans when it rebuilds the session from the DICOM headers (pullDataFromHeaders),
+    if the series holds more than one modality.
+
+    A missing modality is grouped under "OT" ("Other"), the DICOM defined term for it.
+
+    Parameters
+    ----------
+    items : Iterable[tuple[T, str or None]]
+        the items to group, paired with the modality of the file they came from
+
+    Returns
+    -------
+    dict[str, list[T]] or None
+        the items grouped by modality, or None if every item shares the same modality
+        (i.e. no split is needed)
+    """
+    groups: ty.Dict[str, ty.List[T]] = {}
+    for item, modality in items:
+        groups.setdefault(modality or "OT", []).append(item)
+    return groups if len(groups) > 1 else None
