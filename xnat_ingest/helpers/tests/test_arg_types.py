@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 import pytest
 from click.testing import CliRunner
+from fileformats.application import Zip
 from fileformats.core import FileSet
 from fileformats.image.raster import Jpeg, Png
 from fileformats.text import Csv, Plain, Tsv
@@ -12,6 +13,7 @@ from xnat_ingest.exceptions import ImagingSessionParseError
 from xnat_ingest.helpers.arg_types import (
     SEMICOLON_LIST,
     ClashSpec,
+    Convert,
     IDSpec,
     JoinExpr,
     MetadataTable,
@@ -753,3 +755,162 @@ def test_metadata_table_env_var_multiple_semicolon_separated(
     )
     result = CliRunner().invoke(_metadata_table_cli(), [], catch_exceptions=False)
     assert result.output.splitlines() == ["Csv|scan|A=B", "Tsv|resource|C=D"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# --convert option / target_converter's fileformats.core.Field roundtrip
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 'application/zip's converter task has fields covering the roundtrip outcomes:
+#   - allowZip64/strict_timestamps: bool -> matches fileformats.field.Boolean exactly,
+#     so the CLI string is actually coerced to a real Python bool.
+#   - compression: int | str -> not a *bare* type that matches a registered Field
+#     primitive, so Field.from_primitive raises FormatMismatchError, which
+#     target_converter catches and falls back to leaving the raw string untouched;
+#     that's still valid here since str is one of the union's members.
+#   - compresslevel: int | None -> same fallback, but a raw string is *not* valid for
+#     this field (neither member is str) - target_converter now actually instantiates
+#     the converter task with the parsed options, so Pydra's own type-checking catches
+#     this immediately with a clear error instead of failing deep in the ingest
+#     pipeline once the conversion actually runs.
+
+
+def test_convert_bare_mime_has_no_options() -> None:
+    convert = Convert("text/plain", "application/zip")
+    assert convert.target is Zip
+    assert convert.options == {}
+
+
+def test_convert_bool_option_roundtrips_to_real_bool() -> None:
+    convert = Convert("text/plain", "application/zip:allowZip64=false")
+    assert convert.options == {"allowZip64": False}
+    assert convert.options["allowZip64"] is False
+
+
+def test_convert_bool_option_true_roundtrip() -> None:
+    convert = Convert("text/plain", "application/zip:allowZip64=true")
+    assert convert.options["allowZip64"] is True
+
+
+def test_convert_multiple_bool_options() -> None:
+    convert = Convert(
+        "text/plain",
+        "application/zip:allowZip64=false,strict_timestamps=true",
+    )
+    assert convert.options == {"allowZip64": False, "strict_timestamps": True}
+
+
+def test_convert_union_typed_string_option_passes_through() -> None:
+    """'compression: int | str' isn't a single registered Field primitive, so the
+    raw CLI string is kept as-is - and it's accepted by the task itself since str is
+    one of the union's members (create_zip resolves the name itself)"""
+    convert = Convert("text/plain", "application/zip:compression=ZIP_STORED")
+    assert convert.options == {"compression": "ZIP_STORED"}
+
+
+def test_convert_unresolvable_option_value_raises_early_via_task_instantiation() -> (
+    None
+):
+    """'compresslevel: int | None' isn't a bare registered Field primitive, so the
+    string isn't coerced - and unlike 'compression', a raw string isn't valid for
+    either member of this union. Rather than silently keeping the bad string,
+    target_converter instantiates the converter task with it and lets Pydra's own
+    type-checking raise, so this fails immediately rather than deep in the pipeline"""
+    with pytest.raises(ValueError, match="compresslevel"):
+        Convert("text/plain", "application/zip:compresslevel=5")
+
+
+def test_convert_invalid_bool_value_raises_early() -> None:
+    with pytest.raises(ValueError, match="allowZip64"):
+        Convert("text/plain", "application/zip:allowZip64=notabool")
+
+
+def test_convert_same_type_target_needs_no_converter() -> None:
+    """When source already satisfies the target type, get_converter() returns None -
+    target_converter must handle that without crashing, and any options are then
+    necessarily invalid since there's no converter task to validate them against"""
+    convert = Convert("application/zip", "application/zip")
+    assert convert.target is Zip
+    assert convert.options == {}
+    with pytest.raises(ValueError, match="Invalid option 'allowZip64'"):
+        Convert("application/zip", "application/zip:allowZip64=false")
+
+
+def test_convert_unknown_option_key_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid option 'bogus'"):
+        Convert("text/plain", "application/zip:bogus=1")
+
+
+def test_convert_malformed_option_pair_raises() -> None:
+    with pytest.raises(ValueError, match="expected 'key=val'"):
+        Convert("text/plain", "application/zip:novalue")
+
+
+def test_convert_reconverts_already_resolved_target_spec() -> None:
+    """attrs re-runs converters on already-converted values (e.g. attrs.evolve)"""
+    convert = Convert("text/plain", "application/zip:allowZip64=false")
+    resolved = Convert("text/plain", convert._target_spec)
+    assert resolved.target is Zip
+    assert resolved.options == convert.options
+
+
+# ── --convert CLI wiring ────────────────────────────────────────────────────
+
+
+def _convert_cli() -> click.Command:
+    @click.command()
+    @click.option(
+        "--convert",
+        "conversions",
+        type=Convert.cli_type,
+        nargs=2,
+        multiple=True,
+        default=(),
+    )
+    def cmd(conversions: tuple[Convert, ...]) -> None:
+        for c in conversions:
+            click.echo(f"{c.source.__name__}->{c.target.__name__}:{c.options}")
+
+    return cmd
+
+
+def test_convert_cli_option() -> None:
+    result = CliRunner().invoke(
+        _convert_cli(),
+        ["--convert", "text/plain", "application/zip:allowZip64=false"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert result.output.strip() == "Plain->Zip:{'allowZip64': False}"
+
+
+def test_convert_cli_option_repeatable() -> None:
+    result = CliRunner().invoke(
+        _convert_cli(),
+        [
+            "--convert",
+            "text/plain",
+            "application/zip",
+            "--convert",
+            "image/png",
+            "application/zip:strict_timestamps=false",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.output.splitlines() == [
+        "Plain->Zip:{}",
+        "Png->Zip:{'strict_timestamps': False}",
+    ]
+
+
+def test_convert_cli_option_invalid_value_reported_clearly() -> None:
+    """An option value Pydra rejects (e.g. a plain string for an 'int | None' field)
+    is surfaced as a clear ValueError at CLI-parse time rather than an opaque
+    failure deep in the ingest pipeline once the conversion actually runs"""
+    result = CliRunner().invoke(
+        _convert_cli(),
+        ["--convert", "text/plain", "application/zip:compresslevel=9"],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert "compresslevel" in str(result.exception)
