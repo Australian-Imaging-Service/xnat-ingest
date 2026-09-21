@@ -28,7 +28,9 @@ contains tools for each step of this process:
 * Uploading the sorted data into the specified XNAT instance.
 
 Each of these is a separate step that can be chained together and left
-running continuously as a service, watching for new files as they arrive.
+running continuously as a service, watching for new files as they arrive — either as
+separate long-running processes, or as a single Prefect-driven workflow described by
+one YAML spec.
 
 See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data or go through the
 different sections in more detail using the links below
@@ -37,6 +39,7 @@ different sections in more detail using the links below
 * :ref:`Associate files without relevant metadata` — link in files by filename pattern instead
 * :ref:`Deidentification` — strip patient-identifying data first
 * :ref:`Deployment tips` — run the pipeline continuously via Docker/Kubernetes
+* :ref:`Running a whole pipeline from one spec` — chain every stage from a single YAML file via Prefect
 * :doc:`cli` — full command-line reference
 
 
@@ -83,6 +86,7 @@ This work is licensed under the
     how_to/deidentify
     how_to/associate
     how_to/deploying
+    how_to/workflow
 
 .. toctree::
     :maxdepth: 2

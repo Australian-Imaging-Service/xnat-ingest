@@ -33,6 +33,7 @@ dependencies = [
     "xnat==0.7.2",
     "frametree >=0.16.2",
     "frametree-xnat >=0.6.10",
+    "PyYAML",
 ]
 license = { file = "LICENSE" }
 authors = [{ name = "Thomas G. Close", email = "thomas.close@sydney.edu.au" }]
@@ -57,11 +58,8 @@ classifiers = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-dev = [
-    "pre-commit",
-    "codespell",
-    "ruff==0.16.2",
-]
+workflow = ["prefect >=3.0"]
+dev = ["pre-commit", "codespell", "ruff==0.16.2"]
 test = [
     "pytest >=6.2.5",
     "pytest-env>=0.6.2",

@@ -1,0 +1,35 @@
+# The smallest useful xnat-ingest workflow: group -> assign -> upload, every
+# default left in place. Suits a plain DICOM export where StudyInstanceUID/
+# SeriesNumber/PatientID/AccessionNumber already say everything needed.
+
+name: minimal-dicom
+
+# Every stage without its own args.output_dir gets a subdirectory under work_dir
+# (<work_dir>/<stage-name>) - only the first stage's real input and the final
+# 'upload' target need spelling out.
+work_dir: /var/lib/xnat-ingest/work/minimal-dicom
+
+xnat:
+  server: https://xnat.example.org
+  user: ${XNAT_USER}
+  password: ${XNAT_PASSWORD}
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: [/data/scanner-export]
+      # datatypes/session/scan all default to DICOM (medimage/dicom-series,
+      # StudyInstanceUID, SeriesNumber) - nothing else needed here.
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      project: StudyComments
+      subject: PatientID
+      session: AccessionNumber
+
+  - name: upload
+    command: upload
+    input: assign
