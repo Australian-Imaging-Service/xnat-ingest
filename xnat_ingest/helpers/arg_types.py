@@ -18,11 +18,13 @@ import attrs
 import click.types
 from dateutil import parser as dateutil_parser
 from fileformats.core import DataType, FileSet, from_mime, from_paths
-from fileformats.core.exceptions import FormatRecognitionError
+from fileformats.core.exceptions import FormatMismatchError, FormatRecognitionError
+from fileformats.field import Field
 from fileformats.text import Csv, Tsv
 from fileformats.vendor.openxmlformats_officedocument.application import (
     Spreadsheetml_Sheet,
 )
+from pydra.utils import get_fields
 
 from ..exceptions import ImagingSessionParseError
 
@@ -175,6 +177,7 @@ class LoggerConfig(MultiCliTyped):
 
 def target_converter(
     value: str | tuple[ty.Type[FileSet], dict[str, str]],
+    instance: "Convert",
 ) -> tuple[ty.Type[FileSet], dict[str, str]]:
     """Parses 'mime-like' or 'mime-like:key=val,key2=val2' (e.g. 'application/zip:compression=stored')
     into (datatype, options)."""
@@ -182,14 +185,46 @@ def target_converter(
         return value
     target_str, _, opts_str = value.partition(":")
     datatype = datatype_converter(target_str)
-    options: dict[str, str] = {}
+    converter = datatype.get_converter(instance.source)
+    inputs = get_fields(converter.task) if converter is not None else {}
+    options: dict[str, ty.Any] = {}
+    errors: list[str] = []
     for pair in filter(None, opts_str.split(",")):
         key, _, val = pair.partition("=")
         if not key or not val:
-            raise ValueError(
+            errors.append(
                 f"Invalid option '{pair}' in target spec '{value}', expected 'key=val'"
             )
-        options[key.strip()] = val.strip()
+            break
+        key, val = key.strip(), val.strip()
+        try:
+            input = inputs[key]  # type: ignore[index]
+        except KeyError:
+            errors.append(
+                f"Invalid option '{key}' for target spec '{value}', expected one of {list(inputs)}"
+            )
+            break
+        # Roundtrip to/from FileFormats Field type to convert from string
+        # representations of the value.
+        try:
+            val = Field.from_primitive(input.type)(val).to_primitive()
+        except FormatMismatchError:
+            pass
+        options[key] = val
+    if errors:
+        raise ValueError("\n".join(errors))
+    if converter is not None and options:
+        # Actually instantiate the converter task with the parsed options so any
+        # value that isn't valid for its field (including ones that weren't coerced
+        # above because their type isn't a bare Field primitive, e.g. 'int | str')
+        # is caught now, with Pydra's own type-checking, rather than failing deep
+        # inside the ingest pipeline much later.
+        try:
+            attrs.evolve(converter.task, **options)
+        except TypeError as e:
+            raise ValueError(
+                f"Invalid option value(s) {options!r} for target spec {value!r}: {e}"
+            ) from e
     return datatype, options
 
 
@@ -197,7 +232,7 @@ def target_converter(
 class Convert(MultiCliTyped):
     source: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
     _target_spec: tuple[ty.Type[FileSet], dict[str, str]] = attrs.field(
-        converter=target_converter
+        converter=attrs.Converter(target_converter, takes_self=True)
     )
 
     @property
