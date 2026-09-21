@@ -173,10 +173,40 @@ class LoggerConfig(MultiCliTyped):
         return getattr(logging, self.loglevel.upper())  # type: ignore[no-any-return]
 
 
+def target_converter(
+    value: str | tuple[ty.Type[FileSet], dict[str, str]],
+) -> tuple[ty.Type[FileSet], dict[str, str]]:
+    """Parses 'mime-like' or 'mime-like:key=val,key2=val2' (e.g. 'application/zip:compression=stored')
+    into (datatype, options)."""
+    if isinstance(value, tuple):
+        return value
+    target_str, _, opts_str = value.partition(":")
+    datatype = datatype_converter(target_str)
+    options: dict[str, str] = {}
+    for pair in filter(None, opts_str.split(",")):
+        key, _, val = pair.partition("=")
+        if not key or not val:
+            raise ValueError(
+                f"Invalid option '{pair}' in target spec '{value}', expected 'key=val'"
+            )
+        options[key.strip()] = val.strip()
+    return datatype, options
+
+
 @attrs.define
 class Convert(MultiCliTyped):
     source: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
-    target: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
+    _target_spec: tuple[ty.Type[FileSet], dict[str, str]] = attrs.field(
+        converter=target_converter
+    )
+
+    @property
+    def target(self) -> ty.Type[FileSet]:
+        return self._target_spec[0]
+
+    @property
+    def options(self) -> dict[str, str]:
+        return self._target_spec[1]
 
 
 @attrs.define

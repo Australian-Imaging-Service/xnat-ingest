@@ -44,7 +44,9 @@ def group(
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     wait_period: int = 0,
     collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
-    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
+    conversion_map: (
+        dict[type[FileSet], tuple[type[FileSet], dict[str, str]]] | None
+    ) = None,
     allow_unrecognised: ty.Sequence[str] = (),
     exclude_paths: ty.Sequence[str] = (),
     ignore_datatypes: ty.Sequence[type[FileSet]] = (),
@@ -96,8 +98,10 @@ def group(
     collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
         A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
         sessions. If None, the default collation behavior for each FileSet type will be used.
-    conversion_map: dict[ty.Type[FileSet], ty.Type[FileSet]] | None
-        A mapping of source FileSet types to target FileSet types. When a resource matches a source type, it will be converted to the target type during save.
+    conversion_map: dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        A mapping of source FileSet types to (target FileSet types, conversion options).
+        When a resource matches a source type, it will be converted to the target type during save,
+        with the options passed through to ``convert()``.
     allow_unrecognised: ty.Sequence[str]
         Regexes matched against the *basename* of any input path that no datatype recognised;
         matches are skipped instead of raising ``FormatRecognitionError``. ``[".*"]`` tolerates
@@ -305,7 +309,9 @@ def save_sessions_to_dir(
     output_dir: Path,
     wait_period: int = 0,
     collation_map=None,
-    conversion_map: dict[type[FileSet], type[FileSet]] | None = None,
+    conversion_map: (
+        dict[type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+    ) = None,
     unlink_source: str | None = None,
     raise_errors: bool = False,
 ) -> list[str]:
