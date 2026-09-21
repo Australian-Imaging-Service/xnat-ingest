@@ -944,7 +944,7 @@ def test_add_resource_clash_hint_in_error() -> None:
             clash_hint=(
                 "the --scan and --resource ID(s) for this resource were "
                 "auto-derived from its fileset type; pass explicit --scan / "
-                "--resource specifier(s) to control grouping"
+                "--resource expr(s) to control grouping"
             ),
         )
 
@@ -959,9 +959,9 @@ def test_add_resource_clash_hint_in_avoid_warning(
         resource_name=CLASH_RESOURCE_NAME,
         fileset=File.sample(seed=2),
         on_clash="avoid",
-        clash_hint="pass explicit --scan / --resource specifier(s) to control grouping",
+        clash_hint="pass explicit --scan / --resource expr(s) to control grouping",
     )
-    assert "pass explicit --scan / --resource specifier(s)" in caplog.text
+    assert "pass explicit --scan / --resource expr(s)" in caplog.text
 
 
 def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
@@ -1188,7 +1188,8 @@ def test_add_resource_clash_spec_avoid_within_scope(tmp_path: Path) -> None:
 
 def test_add_resource_clash_spec_remerge_into_existing_setof(tmp_path: Path) -> None:
     """A 3rd fileset merged into an existing ``SetOf[Png, Jpeg]`` is still covered by
-    an ``image/png|image/jpeg`` scope (``_fileset_in_scope`` checks content types)."""
+    an ``image/png|image/jpeg`` datatype (``_fileset_matches_datatype`` checks content
+    types)."""
     from fileformats.generic import SetOf
     from fileformats.image.raster import Jpeg, Png
 
