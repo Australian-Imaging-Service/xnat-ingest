@@ -1,17 +1,28 @@
 # Like minimal-dicom.yaml, with a deidentify stage inserted between assign and
-# upload. --reid-dir is deliberately omitted: the original<->deidentified mapping
-# is computed and then discarded rather than written to disk. Add reid_dir (and
-# optionally reid_encrypt_key) back if re-identifying data later needs to be
-# possible - see docs/source/how_to/deidentify.rst.
+# upload. deidentify() (this branch) requires a reid_dir to write the original
+# <-> deidentified mapping to - see docs/source/how_to/deidentify.rst. Add
+# reid_encrypt_key too if that mapping should be encrypted at rest.
 
 name: dicom-deidentify
 
 params:
-  input_dir:
-    description: "Root directory of the scanner export to ingest"
+  orthanc_url:
+    description: "URL of the Orthanc instance to pull DICOM sessions from"
+  orthanc_store_dir:
+    description: "Orthanc's StorageDirectory, as mounted in this container"
+  orthanc_user:
+    description: "Orthanc username"
+  orthanc_password:
+    description: "Orthanc password"
+    secret: true
   spec_dir:
     description: "Directory of project-specific deidentification specs"
     default: /etc/xnat-ingest/deid-specs
+  reid_dir:
+    description: "Directory to write the original<->deidentified mapping to"
+  reid_encrypt_key:
+    description: "Key to encrypt the reid mapping at rest with (Fernet.generate_key())"
+    secret: true
   xnat_server:
     description: "URL of the XNAT server to upload to"
   xnat_user:
@@ -22,9 +33,12 @@ params:
 
 stages:
   - name: group
-    command: group
+    command: group-orthanc
     args:
-      input_paths: ["${input_dir}"]
+      url: "${orthanc_url}"
+      store_dir: "${orthanc_store_dir}"
+      user: "${orthanc_user}"
+      password: "${orthanc_password}"
 
   - name: assign
     command: assign
@@ -39,8 +53,8 @@ stages:
     input: assign
     args:
       spec_dir: "${spec_dir}"
-      # reid_dir: /var/lib/xnat-ingest/reid   # uncomment to keep the mapping
-      # reid_encrypt_key: ${REID_ENCRYPT_KEY} # only meaningful alongside reid_dir
+      reid_dir: "${reid_dir}"
+      reid_encrypt_key: "${reid_encrypt_key}"
 
   - name: upload
     command: upload

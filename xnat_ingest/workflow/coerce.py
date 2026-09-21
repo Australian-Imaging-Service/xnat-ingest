@@ -67,7 +67,7 @@ def path_metadata_regexes(value: ty.Any) -> list[PathMetadataRegex]:
 
 def on_resource_clash(value: ty.Any) -> "OnResourceClash | list[ClashSpec]":
     """A bare policy string ('error'/'avoid'/'merge'/'overwrite') applies to any
-    clash; a list of {policy, scope} entries is datatype-scoped (``group`` only -
+    clash; a list of {policy, datatype} entries is datatype-scoped (``group`` only -
     ``deidentify``/``associate`` only accept the bare-string form)."""
     if value is None:
         return "error"

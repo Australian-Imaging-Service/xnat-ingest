@@ -16,7 +16,7 @@ from xnat_ingest.helpers.arg_types import (
     JoinExpr,
     MetadataTable,
     parse_join_exprs,
-    row_frequency_converter,
+    rows_converter,
     table_file_converter,
 )
 from xnat_ingest.model.resource import ImagingResource
@@ -56,7 +56,7 @@ def test_plain_field_missing_uses_placeholder() -> None:
 # ── new format-string mode ──
 
 
-def test_compound_specifier_combines_fields() -> None:
+def test_compound_expr_combines_fields() -> None:
     spec = IDSpec("{PatientID}_{AccessionNumber}")
     value = spec.get_value({"PatientID": "subj-01", "AccessionNumber": "42"})
     # '-' is kept (permitted in XNAT IDs); other punctuation would collapse to '_'
@@ -88,7 +88,7 @@ def test_non_date_string_with_percent_spec_raises() -> None:
         spec.get_value({"SeriesDescription": "AC CT 3.0 SWB HD_FoV"})
 
 
-def test_missing_field_in_compound_specifier_uses_placeholder() -> None:
+def test_missing_field_in_compound_expr_uses_placeholder() -> None:
     missing: dict[str, str] = {}
     spec = IDSpec("{PatientID}_{AccessionNumber}")
     value = spec.get_value({"PatientID": "subj01"}, missing_ids=missing)
@@ -96,7 +96,7 @@ def test_missing_field_in_compound_specifier_uses_placeholder() -> None:
     assert missing["AccessionNumber"] in value
 
 
-def test_missing_field_in_compound_specifier_raises_without_missing_ids() -> None:
+def test_missing_field_in_compound_expr_raises_without_missing_ids() -> None:
     spec = IDSpec("{PatientID}_{AccessionNumber}")
     with pytest.raises(ImagingSessionParseError):
         spec.get_value({"PatientID": "subj01"})
@@ -114,7 +114,7 @@ def test_missing_date_field_with_percent_spec_uses_placeholder() -> None:
 def test_unreferenced_non_identifier_key_is_harmless() -> None:
     """A metadata dict containing a key that isn't a valid identifier (e.g. DICOM's
     all-digit fallback name for a private/unnamed tag) shouldn't break a compound
-    specifier that doesn't reference it"""
+    expr that doesn't reference it"""
     spec = IDSpec("{PatientID}")
     value = spec.get_value({"PatientID": "subj01", "00100010": "private tag value"})
     assert value == "subj01"
@@ -314,16 +314,16 @@ def test_table_file_converter_rejects_other_types() -> None:
 def test_clash_spec_single_mime_scope() -> None:
     spec = ClashSpec("merge", "image/png")
     assert spec.policy == "merge"
-    assert spec.scope is Png
+    assert spec.datatype is Png
 
 
 def test_clash_spec_union_scope() -> None:
     spec = ClashSpec("avoid", "image/png|image/jpeg")
-    assert issubclass(Png, spec.scope) and issubclass(Jpeg, spec.scope)
+    assert issubclass(Png, spec.datatype) and issubclass(Jpeg, spec.datatype)
 
 
 def test_clash_spec_all_scope_is_fileset() -> None:
-    assert ClashSpec("overwrite", "all").scope is FileSet
+    assert ClashSpec("overwrite", "all").datatype is FileSet
 
 
 def test_clash_spec_rejects_unknown_policy() -> None:
@@ -342,7 +342,7 @@ def test_clash_spec_cli_option_nargs_two() -> None:
     )
     def cmd(on_resource_clash: tuple[ClashSpec, ...]) -> None:
         for s in on_resource_clash:
-            click.echo(f"{s.policy}:{s.scope}")
+            click.echo(f"{s.policy}:{s.datatype}")
 
     res = CliRunner().invoke(
         cmd,
@@ -387,62 +387,63 @@ def test_semicolon_list_option_accepts_repeated_flags_and_env_var() -> None:
 
 
 # ── row_frequency_converter ────────────────────────────────────────────────
+# ── rows_converter ────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("freq", ["session", "scan", "resource"])
-def test_row_frequency_converter_hierarchy_levels(freq: str) -> None:
-    assert row_frequency_converter(freq) == freq
+def test_rows_converter_hierarchy_levels(freq: str) -> None:
+    assert rows_converter(freq) == freq
 
 
-def test_row_frequency_converter_plain_fileset_becomes_fileset_class() -> None:
-    assert row_frequency_converter("fileset") is FileSet
+def test_rows_converter_plain_fileset_becomes_fileset_class() -> None:
+    assert rows_converter("fileset") is FileSet
 
 
-def test_row_frequency_converter_is_case_insensitive() -> None:
-    assert row_frequency_converter("SeSsIoN") == "session"
-    assert row_frequency_converter("FileSet") is FileSet
+def test_rows_converter_is_case_insensitive() -> None:
+    assert rows_converter("SeSsIoN") == "session"
+    assert rows_converter("FileSet") is FileSet
 
 
-def test_row_frequency_converter_single_mime() -> None:
-    assert row_frequency_converter("fileset[image/png]") is Png
+def test_rows_converter_single_mime() -> None:
+    assert rows_converter("fileset[image/png]") is Png
 
 
-def test_row_frequency_converter_union_mime_pipe_separated() -> None:
+def test_rows_converter_union_mime_pipe_separated() -> None:
     # a '|'-union of FileSet types, usable directly with isinstance()
-    assert row_frequency_converter("fileset[image/png|image/jpeg]") == Png | Jpeg
+    assert rows_converter("fileset[image/png|image/jpeg]") == Png | Jpeg
 
 
-def test_row_frequency_converter_invalid_level_raises() -> None:
-    with pytest.raises(ValueError, match="Invalid frequency"):
-        row_frequency_converter("subject")
+def test_rows_converter_invalid_level_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid rows"):
+        rows_converter("subject")
 
 
-def test_row_frequency_converter_unrecognised_mime_raises_valueerror() -> None:
+def test_rows_converter_unrecognised_mime_raises_valueerror() -> None:
     with pytest.raises(ValueError, match="Could not recognise mime type"):
-        row_frequency_converter("fileset[not/a-real-mime]")
+        rows_converter("fileset[not/a-real-mime]")
 
 
-def test_row_frequency_converter_accepts_iterable_of_types() -> None:
-    assert row_frequency_converter([Png, Jpeg]) == Png | Jpeg
+def test_rows_converter_accepts_iterable_of_types() -> None:
+    assert rows_converter([Png, Jpeg]) == Png | Jpeg
 
 
-def test_row_frequency_converter_accepts_iterable_of_mime_strings() -> None:
-    assert row_frequency_converter(["image/png", "image/jpeg"]) == Png | Jpeg
+def test_rows_converter_accepts_iterable_of_mime_strings() -> None:
+    assert rows_converter(["image/png", "image/jpeg"]) == Png | Jpeg
 
 
-def test_row_frequency_converter_single_element_iterable_returns_bare_type() -> None:
-    assert row_frequency_converter([Png]) is Png
+def test_rows_converter_single_element_iterable_returns_bare_type() -> None:
+    assert rows_converter([Png]) is Png
 
 
-def test_row_frequency_converter_reconverts_resolved_values() -> None:
+def test_rows_converter_reconverts_resolved_values() -> None:
     """attrs re-runs the converter on an already-converted value"""
-    assert row_frequency_converter(Png) is Png
-    assert row_frequency_converter(Png | Jpeg) == Png | Jpeg
+    assert rows_converter(Png) is Png
+    assert rows_converter(Png | Jpeg) == Png | Jpeg
 
 
-def test_row_frequency_converter_iterable_with_bad_entry_raises() -> None:
+def test_rows_converter_iterable_with_bad_entry_raises() -> None:
     with pytest.raises(TypeError):
-        row_frequency_converter([Png, 42])  # type: ignore[list-item]
+        rows_converter([Png, 42])  # type: ignore[list-item]
 
 
 # ── MetadataTable construction ─────────────────────────────────────────────
@@ -451,7 +452,7 @@ def test_row_frequency_converter_iterable_with_bad_entry_raises() -> None:
 def test_metadata_table_built_from_cli_style_strings(csv_table: Csv) -> None:
     table = MetadataTable(str(csv_table.fspath), "session", "PatientID=PatientID")
     assert isinstance(table.table_file, Csv)
-    assert table.row_frequency == "session"
+    assert table.rows == "session"
     assert table.join_exprs == [JoinExpr("PatientID", "PatientID")]
 
 
@@ -576,7 +577,7 @@ def test_inject_fileset_mime_frequency_against_raw_fileset(tmp_path: Path) -> No
     fileset.metadata["Name"] = "hello.txt"
 
     table = MetadataTable(Csv(csv_path), "fileset[text/plain]", "Name=Name")
-    assert table.row_frequency is Plain
+    assert table.rows is Plain
     table.inject(fileset)
     assert fileset.metadata["Note"] == "greeting"
 
@@ -592,7 +593,7 @@ def test_inject_fileset_union_mime_frequency_matches_any_member(tmp_path: Path) 
     table = MetadataTable(
         Csv(lookup), "fileset[text/csv|text/tab-separated-values]", "Name=Name"
     )
-    assert table.row_frequency == Csv | Tsv
+    assert table.rows == Csv | Tsv
     table.inject(fileset)
     assert fileset.metadata["Note"] == "matched"
 
@@ -614,7 +615,7 @@ def test_inject_plain_fileset_frequency_matches_any_fileset(tmp_path: Path) -> N
     fileset.metadata["Name"] = "hello.txt"
 
     table = MetadataTable(Csv(csv_path), "fileset", "Name=Name")
-    assert table.row_frequency is FileSet
+    assert table.rows is FileSet
     table.inject(fileset)
     assert fileset.metadata["Note"] == "greeting"
 
@@ -690,7 +691,7 @@ def _metadata_table_cli() -> click.Command:
     def cmd(metadata_tables: tuple[MetadataTable, ...]) -> None:
         for mt in metadata_tables:
             click.echo(
-                f"{type(mt.table_file).__name__}|{mt.row_frequency}|"
+                f"{type(mt.table_file).__name__}|{mt.rows}|"
                 + ";".join(f"{e.column_name}={e.value_expr}" for e in mt.join_exprs)
             )
 

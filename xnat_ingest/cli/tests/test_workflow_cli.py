@@ -31,7 +31,16 @@ def test_workflow_check_valid_spec_reports_stage_order(
                     "command": "group",
                     "args": {"input_paths": [str(tmp_path)]},
                 },
-                {"name": "asn", "command": "assign", "input": "grp"},
+                {
+                    "name": "asn",
+                    "command": "assign",
+                    "input": "grp",
+                    "args": {
+                        "project": "StudyComments",
+                        "subject": "PatientID",
+                        "session": "AccessionNumber",
+                    },
+                },
                 {
                     "name": "up",
                     "command": "upload",
@@ -77,7 +86,11 @@ def test_workflow_check_disabled_stage_marked(
                 {
                     "name": "d",
                     "command": "deidentify",
-                    "args": {"input_dir": str(tmp_path), "spec_dir": str(tmp_path)},
+                    "args": {
+                        "input_dir": str(tmp_path),
+                        "spec_dir": str(tmp_path),
+                        "reid_dir": str(tmp_path),
+                    },
                     "enabled": False,
                 }
             ]
@@ -94,7 +107,9 @@ def test_workflow_check_missing_required_param_reports_error(
     spec_path = _write_spec(
         tmp_path,
         {
-            "params": {"xnat_password": {"description": "XNAT password"}},
+            "params": {
+                "xnat_password": {"description": "XNAT password", "secret": True}
+            },
             "stages": [
                 {
                     "name": "up",
