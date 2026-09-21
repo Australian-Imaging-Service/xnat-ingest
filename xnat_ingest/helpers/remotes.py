@@ -20,6 +20,7 @@ import xnat
 from fileformats.application import Json
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection
+from fileformats.vendor.dicomzip import DicomZip
 from tqdm import tqdm
 
 from ..exceptions import IncompleteCheckumsException
@@ -594,7 +595,11 @@ def compare_resource_with_xnat(
 
 
 def get_xnat_resource(
-    resource: ImagingResource, xsession: ty.Any
+    resource: ImagingResource,
+    xsession: ty.Any,
+    resource_label: str | None = None,
+    resource_format: str | None = None,
+    content: str | None = None,
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
 
@@ -608,6 +613,16 @@ def get_xnat_resource(
         the resource to upload
     xsession : ty.Any
         the XNAT session object
+    resource_label : str | None
+        override the resource label (name) on XNAT. If None, the resource's own
+        name is used. This is what the XNAT GUI displays as the scan "format".
+    resource_format : str | None
+        the format to set on the XNAT resource (e.g. "ZIP", "DICOM"), passed
+        through to xnatpy's ``create_resource(format=...)``. If None, no format
+        is set.
+    content : str | None
+        the content tag to set on the XNAT resource (e.g. "RAW", "SAMPLE"),
+        passed as a query parameter when creating the resource.
 
     Returns
     -------
@@ -624,7 +639,7 @@ def get_xnat_resource(
         when the resource on XNAT differs in a way an upload cannot fix
     """
     xclasses = xsession.xnat_session.classes
-    resource_name = resource.name
+    resource_name = resource_label if resource_label is not None else resource.name
 
     if resource.scan is None:
         try:
@@ -678,7 +693,8 @@ def get_xnat_resource(
             "Creating session resource %s in %s", resource_name, xsession.label
         )
         uri = f"{xsession.uri}/resources/{resource_name}"
-        xsession.xnat_session.put(uri)
+        query = {"content": content} if content else None
+        xsession.xnat_session.put(uri, format=resource_format, query=query)
         xsession.clearcache()
         return xsession.xnat_session.create_object(uri), None
 
@@ -689,7 +705,7 @@ def get_xnat_resource(
         is_secondary = image_type and image_type[:2] == ["DERIVED", "SECONDARY"]
         if is_secondary:
             resource_name = "secondary"
-        if isinstance(resource.fileset, DicomCollection):
+        if isinstance(resource.fileset, (DicomCollection, DicomZip)):
             scan_type = xnat_scan_type_from_sop_class(
                 resource.metadata.get("SOPClassUID")
             )
@@ -814,7 +830,11 @@ def get_xnat_resource(
         resource_name,
         resource.scan.path,
     )
-    xresource = xscan.create_resource(resource_name)
+    uri = f"{xscan.fulluri}/resources/{resource_name}"
+    query = {"content": content} if content else None
+    xscan.xnat_session.put(uri, format=resource_format, query=query)
+    xscan.clearcache()
+    xresource = xscan.xnat_session.create_object(uri)
     return xresource, None
 
 

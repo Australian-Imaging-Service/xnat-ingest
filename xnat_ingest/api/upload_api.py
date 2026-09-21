@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fileformats.generic import File, FileSet
 from fileformats.medimage import DicomCollection
+from fileformats.vendor.dicomzip import DicomZip
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
@@ -38,7 +39,8 @@ from ..model.session import ImagingSession
 def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
     """Whether resources include DICOM files attached to an imaging scan."""
     return any(
-        resource.scan is not None and isinstance(resource.fileset, DicomCollection)
+        resource.scan is not None
+        and isinstance(resource.fileset, (DicomCollection, DicomZip))
         for resource in resources
     )
 
@@ -309,32 +311,116 @@ def upload(
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
-                to_upload: list[tuple[ImagingResource, ty.Any, ty.Any]] = []
+                to_upload: list[tuple[ImagingResource, ty.Any, FileSet, ty.Any]] = []
                 incomplete_on_xnat: list[str] = []
                 repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
-                    try:
-                        xresource, only_files = get_xnat_resource(resource, xsession)
-                    except IncompleteCheckumsException as e:
-                        # Exists on XNAT but is short and cannot be repaired by
-                        # uploading. Record it so the session does not report as
-                        # fully uploaded.
-                        logger.error("%s", e.msg)
-                        incomplete_on_xnat.append(resource.path)
-                        continue
-                    if xresource is None:
-                        logger.info(
-                            "Skipping '%s' resource as it is already uploaded",
-                            resource.path,
-                        )
-                        continue  # skipping as resource already exists
-                    if only_files is not None:
-                        repaired_on_xnat.append(resource.path)
-                    to_upload.append((resource, xresource, only_files))
+                    fileset = resource.fileset
+                    if isinstance(fileset, DicomZip):
+                        # DicomZip upload: create DICOM-zip resource
+                        # (format=ZIP, content=RAW) and a secondary resource
+                        # with a sample DICOM (format=DICOM, content=SAMPLE)
+                        # so pullDataFromHeaders can populate scan metadata
+
+                        # Ensure metadata has SOPClassUID/Modality from the
+                        # zip for correct scan type creation
+                        header = fileset.peek_header()
+                        sop_class = header.get("SOPClassUID")
+                        modality = header.get("Modality")
+                        if sop_class:
+                            resource.metadata["SOPClassUID"] = sop_class
+                        if modality:
+                            resource.metadata["Modality"] = modality
+                        try:
+                            xresource_zip, only_files = get_xnat_resource(
+                                resource,
+                                xsession,
+                                resource_label="DICOM-zip",
+                                resource_format="ZIP",
+                                content="RAW",
+                            )
+                        except IncompleteCheckumsException as e:
+                            # Exists on XNAT but is short and cannot be repaired by
+                            # uploading. Record it so the session does not report as
+                            # fully uploaded.
+                            logger.error("%s", e.msg)
+                            incomplete_on_xnat.append(resource.path)
+                            continue
+                        if only_files is not None:
+                            repaired_on_xnat.append(resource.path)
+                        if xresource_zip is None:
+                            logger.info(
+                                "Skipping '%s' DICOM-zip resource as it is already uploaded",
+                                resource.path,
+                            )
+                        else:
+                            to_upload.append(
+                                (resource, xresource_zip, fileset, only_files)
+                            )
+
+                        # Upload a sample DICOM so pullDataFromHeaders
+                        # can populate scan metadata from the zip contents.
+                        # Label "secondary" is XNAT's own label for non-primary
+                        # DICOM; pullDataFromHeaders reads any format=DICOM
+                        # resource regardless of label. A "DICOM" label holding
+                        # 1 of N files looks like data loss to users.
+                        xscan = xsession.scans[resource.scan.id]
+                        sample_label = "secondary"
+                        if sample_label not in xscan.resources:
+                            scratch = Path(tempfile.mkdtemp())
+                            sample_path = fileset.extract_first(scratch)
+                            if sample_path is not None:
+                                uri = f"{xscan.fulluri}/resources/{sample_label}"
+                                xscan.xnat_session.put(
+                                    uri, format="DICOM", query={"content": "SAMPLE"}
+                                )
+                                xscan.clearcache()
+                                xresource_sample = xscan.xnat_session.create_object(uri)
+                                to_upload.append(
+                                    (
+                                        resource,
+                                        xresource_sample,
+                                        File(sample_path),
+                                        None,
+                                    )
+                                )
+                            else:
+                                logger.warning(
+                                    "Could not extract sample from '%s' — zip is empty",
+                                    resource.path,
+                                )
+                        else:
+                            logger.info(
+                                "Skipping sample for '%s' as it is already uploaded",
+                                resource.path,
+                            )
+                    else:
+                        # Non-zip resource — upload as-is
+                        try:
+                            xresource, only_files = get_xnat_resource(
+                                resource, xsession
+                            )
+                        except IncompleteCheckumsException as e:
+                            # Exists on XNAT but is short and cannot be repaired by
+                            # uploading. Record it so the session does not report as
+                            # fully uploaded.
+                            logger.error("%s", e.msg)
+                            incomplete_on_xnat.append(resource.path)
+                            continue
+                        if only_files is not None:
+                            repaired_on_xnat.append(resource.path)
+                        if xresource is None:
+                            logger.info(
+                                "Skipping '%s' resource as it is already uploaded",
+                                resource.path,
+                            )
+                        else:
+                            to_upload.append((resource, xresource, fileset, only_files))
 
                 def _upload_resource(
                     resource: ImagingResource,
                     xresource: ty.Any,
+                    fileset: FileSet,
                     only_files: ty.Optional[ty.Set[str]] = None,
                 ) -> None:
                     """Upload a resource, or just the files XNAT is missing.
@@ -345,8 +431,8 @@ def upload(
                     """
 
                     wanted_fspaths = select_files_to_upload(
-                        list(resource.fileset.fspaths),
-                        resource.fileset.parent,
+                        list(fileset.fspaths),
+                        fileset.parent,
                         only_files,
                         resource.path,
                     )
@@ -356,7 +442,7 @@ def upload(
                         resource.path,
                         xresource,
                     )
-                    if isinstance(resource.fileset, File):
+                    if isinstance(fileset, File):
                         for fspath in wanted_fspaths:
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",
@@ -368,12 +454,12 @@ def upload(
                     else:
                         # Upload the contents of the resource to XNAT
                         upload_method = UploadMethod.select_method(
-                            methods, type(resource.fileset)
+                            methods, type(fileset)
                         )
                         # Get the directory containing the files to upload
                         # and create a temporary upload directory alongside it
                         # to hardlink files to upload in each batch into
-                        dir_to_upload = resource.fileset.parent
+                        dir_to_upload = fileset.parent
                         upload_dir = dir_to_upload.parent / (
                             "." + dir_to_upload.name + "-upload"
                         )
@@ -423,7 +509,7 @@ def upload(
                         # runs either way rather than being skipped on a site
                         # without enableChecksums.
                         logger.debug("calculating checksums for %s", xresource)
-                        calc_checksums = calculate_checksums(resource.fileset)
+                        calc_checksums = calculate_checksums(fileset)
                         # Compared file by file, not as two whole dicts. A
                         # resource just topped up holds real digests for the
                         # files already there and empty ones for those just
@@ -462,9 +548,9 @@ def upload(
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(
-                            _upload_resource, resource, xresource, only_files
+                            _upload_resource, resource, xresource, fileset, only_files
                         ): resource
-                        for resource, xresource, only_files in to_upload
+                        for resource, xresource, fileset, only_files in to_upload
                     }
                     for future in tqdm(
                         as_completed(futures),
