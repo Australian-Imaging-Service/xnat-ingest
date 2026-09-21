@@ -7,8 +7,8 @@ from xnat_ingest.helpers.arg_types import ClashSpec, IDSpec
 from xnat_ingest.workflow.stages import STAGES, StageContext
 
 
-def _ctx(input_path=None, output_path=None, xnat=None) -> StageContext:  # type: ignore[no-untyped-def]
-    return StageContext(input_path=input_path, output_path=output_path, xnat=xnat)
+def _ctx(input_path=None, output_path=None) -> StageContext:  # type: ignore[no-untyped-def]
+    return StageContext(input_path=input_path, output_path=output_path)
 
 
 def test_group_kwargs_input_from_context() -> None:
@@ -126,6 +126,21 @@ def test_upload_kwargs_no_repo_built_here() -> None:
     assert kwargs["input_dir"] == "/staged"
     assert kwargs["always_include"] == ["all"]
     assert "xnat_repo" not in kwargs  # injected by run_stage(), not build_kwargs()
+    assert "_xnat_connection" not in kwargs  # no 'server' given
+
+
+def test_upload_kwargs_connection_from_own_args() -> None:
+    kwargs = STAGES["upload"].build_kwargs(
+        {"server": "https://xnat.example.org", "user": "u", "password": "p"},
+        _ctx(input_path=Path("/staged")),
+    )
+    assert kwargs["_xnat_connection"] == {
+        "server": "https://xnat.example.org",
+        "user": "u",
+        "password": "p",
+        "verify_ssl": True,
+    }
+    assert "server" not in kwargs and "user" not in kwargs  # not passed to upload()
 
 
 def test_copy_mode_string_conversion() -> None:

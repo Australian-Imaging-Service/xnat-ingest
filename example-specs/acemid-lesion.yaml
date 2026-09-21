@@ -4,20 +4,35 @@
 # composite --flag becomes real YAML structure here instead of ';'-packed env
 # vars or repeated CLI tokens; see workflow.coerce for exactly how each shape
 # below is parsed.
+#
+# 'input_dir'/'csv_path' are declared params rather than hardcoded, so the same
+# spec is transportable between sites with their own Canfield Vectra export
+# mount and lesion table - only 'xnat_password' has no default (a site's secret
+# has no sane default); the rest can be left at the defaults below or overridden
+# with '--param name=value' / a same-named environment variable.
 
 name: acemid-lesion
 
-work_dir: /var/lib/xnat-ingest/work/acemid-lesion
-
-# Shared XNAT server/credentials - see common.yaml. 'extends' is resolved (and
-# deep-merged, this file's own top-level keys winning) before anything else.
-extends: common.yaml
+params:
+  input_dir:
+    description: "Root of this site's Canfield Vectra export"
+    default: /data/canfield-export
+  csv_path:
+    description: "Lesion table CSV joined onto the dermoscopy PNGs/JPEGs"
+    default: /data/canfield-export/lesion-table.csv
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 stages:
   - name: group
     command: group
     args:
-      input_paths: [/data/canfield-export]
+      input_paths: ["${input_dir}"]
       recursive: true
       datatypes:
         - image/png
@@ -58,7 +73,7 @@ stages:
         - regex: '.*/(?P<subject_uid>[\w-]+)/(?P<CaptureDate>\d{8})(?P<CaptureTime>\d+)/DexiData.*'
           datatype: medimage/vnd.canfield.dexi-data-dir
       metadata_tables:
-        - path: /data/canfield-export/lesion-table.csv
+        - path: "${csv_path}"
           row_frequency: "fileset[image/png|image/jpeg]"
           joins:
             ImagePath: '=HYPERLINK("{subject_uid}/{filename}")'
@@ -85,3 +100,10 @@ stages:
   - name: upload
     command: upload
     input: deidentify
+    args:
+      # Explicit on the stage that actually needs them, not a shared top-level
+      # block - keeps the spec format backend-agnostic for a future non-XNAT
+      # upload stage.
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"
