@@ -301,8 +301,9 @@ are uploaded to XNAT
         "Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var). "
         "The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or "
         "TSV from the file extension; a different format can be forced by appending its mime-type in square "
-        "brackets, e.g. 'path/to/table.dat[text/csv]'. "
-        'The "row frequency" arg specifies what each row in the '
+        "brackets, e.g. 'path/to/table.dat[text/csv]'. For data stored in tables that are specific to the input "
+        "specific files, the 'path' can include placeholders and glob syntax to match the file's metadata,"
+        " e.g. 'tables/{PatientID}/table.csv'. The \"rows\" arg specifies what each row in the "
         "metadata table corresponds to in the data hierarchy, and can be one of 'session', 'scan', 'resource', "
         "'fileset', 'fileset[<mime-type>]'. When one or more mime-types are given in square brackets after 'fileset' "
         "they restrict the join to input files of those types (multiple mime-types can be '|'-separated, e.g. "
