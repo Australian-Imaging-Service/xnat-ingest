@@ -60,9 +60,13 @@ are uploaded to XNAT
 @click.argument(
     "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
 )
-@click.argument("datatype", type=str, envvar="XINGEST_DATATYPE")
-@click.argument("glob", type=str, envvar="XINGEST_GLOB")
-@click.argument("id_pattern", type=str, envvar="XINGEST_ID_PATTERN")
+@click.argument(
+    "datatype", type=str, envvar="XINGEST_DATATYPE", required=False, default=None
+)
+@click.argument("glob", type=str, envvar="XINGEST_GLOB", required=False, default=None)
+@click.argument(
+    "id_pattern", type=str, envvar="XINGEST_ID_PATTERN", required=False, default=None
+)
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
@@ -157,9 +161,9 @@ are uploaded to XNAT
 def associate_cmd(
     input_dir: Path,
     output_dir: Path,
-    datatype: str,
-    glob: str,
-    id_pattern: str,
+    datatype: str | None,
+    glob: str | None,
+    id_pattern: str | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     raise_errors: bool,

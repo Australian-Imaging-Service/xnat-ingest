@@ -662,7 +662,11 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
 
 
 def get_xnat_resource(
-    resource: ImagingResource, xsession: ty.Any
+    resource: ImagingResource,
+    xsession: ty.Any,
+    resource_label: str | None = None,
+    resource_format: str | None = None,
+    content: str | None = None,
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
 
@@ -676,6 +680,15 @@ def get_xnat_resource(
         the resource to upload
     xsession : ty.Any
         the XNAT session object
+    resource_label : str | None
+        override the resource label (name) on XNAT. If None, the resource's own
+        name is used.
+    resource_format : str | None
+        the format to set on the XNAT resource (e.g. "ZIP", "DICOM"), passed
+        through to xnatpy when creating the resource. If None, no format is set.
+    content : str | None
+        the content tag to set on the XNAT resource (e.g. "RAW", "SAMPLE"),
+        passed as a query parameter when creating the resource.
 
     Returns
     -------
@@ -692,7 +705,7 @@ def get_xnat_resource(
         when the resource on XNAT differs in a way an upload cannot fix
     """
     xclasses = xsession.xnat_session.classes
-    resource_name = resource.name
+    resource_name = resource_label if resource_label is not None else resource.name
 
     if resource.scan is None:
         try:
@@ -746,7 +759,8 @@ def get_xnat_resource(
             "Creating session resource %s in %s", resource_name, xsession.label
         )
         uri = f"{xsession.uri}/resources/{resource_name}"
-        xsession.xnat_session.put(uri)
+        query = {"content": content} if content else None
+        xsession.xnat_session.put(uri, format=resource_format, query=query)
         xsession.clearcache()
         return xsession.xnat_session.create_object(uri), None
 
@@ -757,26 +771,34 @@ def get_xnat_resource(
     # pointing at a directory the files aren't in, which breaks downloads, so whatever
     # XNAT would choose is used instead.
     #
-    # This can only be decided from files XNAT's own catalog builder actually parses as
-    # DICOM, i.e. `resource.fileset` has to be a `DicomCollection` -- not merely have a
-    # readable "SOPClassUID": a vendor raw-data resource (e.g. Siemens listmode/
-    # countrate .ptd files) embeds a copy of a DICOM header for provenance, which gives
-    # it a perfectly readable SOPClassUID too, but XNAT itself never parses that file as
-    # DICOM, so it never applies this categorisation to it. Deciding from the metadata
-    # key alone previously renamed both such resources under one scan to "secondary",
-    # colliding them into the same catalog and uploading it from two threads at once.
-    sop_class_uids = (
-        resource.metadata.get("SOPClassUID")
-        if isinstance(resource.fileset, DicomCollection)
-        else None
-    )
-    if sop_class_uids:
-        resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+    # For DicomCollection: decided from the fileset itself (XNAT parses those files).
+    # For resources with SOPClassUID already in metadata (e.g. peeked by
+    # prepare_samples from a DicomZip): use that metadata when a resource_label
+    # override is provided, since the caller has already decided the XNAT label.
+    # For vendor raw-data (e.g. Siemens .ptd): has a readable SOPClassUID but XNAT
+    # never parses it as DICOM, so must NOT be used to pick the label.
+    if resource_label is None:
+        sop_class_uids = (
+            resource.metadata.get("SOPClassUID")
+            if isinstance(resource.fileset, DicomCollection)
+            else None
+        )
+        if sop_class_uids:
+            resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+    # When resource_label is provided, the caller has already decided the label
+    # (e.g. "DICOM-zip" for a zip resource). Use SOPClassUID from metadata only
+    # for scan type selection below.
+    sop_class_uids = resource.metadata.get("SOPClassUID")
 
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        if sop_class_uids:
+        if sop_class_uids and isinstance(resource.fileset, DicomCollection):
+            scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
+            ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
+        elif sop_class_uids and resource_label is not None:
+            # Resource label override with SOPClassUID in metadata (e.g. DicomZip
+            # whose metadata was peeked by prepare_samples)
             scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
@@ -884,7 +906,14 @@ def get_xnat_resource(
         resource_name,
         resource.scan.path,
     )
-    xresource = xscan.create_resource(resource_name)
+    if resource_format or content:
+        uri = f"{xscan.fulluri}/resources/{resource_name}"
+        query = {"content": content} if content else None
+        xscan.xnat_session.put(uri, format=resource_format, query=query)
+        xscan.clearcache()
+        xresource = xscan.xnat_session.create_object(uri)
+    else:
+        xresource = xscan.create_resource(resource_name)
     return xresource, None
 
 

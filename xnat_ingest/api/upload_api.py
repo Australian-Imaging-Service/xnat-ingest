@@ -36,10 +36,20 @@ from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 
 
+def _has_peek_header(fileset: FileSet) -> bool:
+    """Whether the fileset supports peek_header (duck-typed archive format)."""
+    return callable(getattr(fileset, "peek_header", None))
+
+
 def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
-    """Whether resources include DICOM files attached to an imaging scan."""
+    """Whether resources include DICOM files (or DICOM samples) attached to a scan."""
     return any(
-        resource.scan is not None and isinstance(resource.fileset, DicomCollection)
+        resource.scan is not None
+        and (
+            isinstance(resource.fileset, DicomCollection)
+            or _has_peek_header(resource.fileset)
+            or resource.metadata.get("format") == "DICOM"
+        )
         for resource in resources
     )
 
@@ -311,13 +321,38 @@ def upload(
                 incomplete_on_xnat: list[str] = []
                 repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
+                    # Determine XNAT resource parameters based on fileset
+                    # capabilities. Archive formats with peek_header (e.g.
+                    # DicomZip) need format=ZIP and a distinct label so XNAT
+                    # doesn't misidentify them as loose DICOM. Secondary
+                    # sample resources (created by prepare_samples) need
+                    # format=DICOM and content=SAMPLE.
+                    kwargs: dict[str, ty.Any] = {}
+                    if _has_peek_header(resource.fileset):
+                        kwargs = {
+                            "resource_label": "DICOM-zip",
+                            "resource_format": "ZIP",
+                            "content": "RAW",
+                        }
+                    elif (
+                        resource.metadata.get("format") == "DICOM"
+                        and resource.name == "secondary"
+                    ):
+                        kwargs = {
+                            "resource_label": "secondary",
+                            "resource_format": "DICOM",
+                            "content": resource.metadata.get("content", "SAMPLE"),
+                        }
+
                     # A DICOM resource whose series carries more than one modality is
                     # split into one part per modality here, uploaded to its own scan,
                     # so that XNAT never has to split it itself when it rebuilds the
                     # session from the headers (see `split_resource_by_modality`)
                     for part in split_resource_by_modality(resource):
                         try:
-                            xresource, only_files = get_xnat_resource(part, xsession)
+                            xresource, only_files = get_xnat_resource(
+                                part, xsession, **kwargs
+                            )
                         except IncompleteCheckumsException as e:
                             # Exists on XNAT but is short and cannot be repaired by
                             # uploading. Record it so the session does not report as
