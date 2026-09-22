@@ -26,7 +26,7 @@ from xnat_ingest.helpers.logging import logger
 # Set DEBUG logging for unittests
 
 sch = logging.StreamHandler()
-sch.setLevel(logging.DEBUG)
+sch.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sch.setFormatter(formatter)
 logger.addHandler(sch)
