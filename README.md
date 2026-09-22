@@ -29,12 +29,7 @@ flowchart LR
 ## Installation
 
 A Docker image containing the toolkit can be pulled from the GitHub Container Registry
-
-```
-docker pull ghcr.io/australian-imaging-service/xnat-ingest:latest
-```
-
-The entrypoint of the image is the xnat-ingest CLI so commands can be run by the form
+and entrypoint of the image is the xnat-ingest CLI so commands can be run by the form
 
 ```
 docker run ghcr.io/australian-imaging-service/xnat-ingest:latest <command-name> <arg1> <arg2> ... --opt1 <opt1> ...
