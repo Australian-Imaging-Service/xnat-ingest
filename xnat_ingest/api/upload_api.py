@@ -90,11 +90,9 @@ def upload(
     dry_run: bool
          Whether to list the sessions that would be uploaded instead of actually uploading them
     max_workers: int, optional
-        The number of threads to use to upload resources within a session concurrently.
-        Different resources map to different scans/catalogs on XNAT so are safe to
-        upload in parallel; a failure uploading one resource doesn't stop the others
-        from being attempted. If None, defaults to
-        `concurrent.futures.ThreadPoolExecutor`'s default.
+        The maximum number of concurrent S3 object downloads and XNAT resource
+        uploads. S3 downloads default to 10 to match botocore's connection pool;
+        local uploads default to `concurrent.futures.ThreadPoolExecutor`'s default.
     """
 
     errors = []
@@ -145,7 +143,11 @@ def upload(
                     f"Using temporary directory '{s3_cache_dir}' to cache S3 files during upload"
                 )
             sessions = iterate_s3_sessions(
-                input_dir, store_credentials, s3_cache_dir, wait_period=wait_period
+                input_dir,
+                store_credentials,
+                s3_cache_dir,
+                wait_period=wait_period,
+                max_workers=max_workers,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]

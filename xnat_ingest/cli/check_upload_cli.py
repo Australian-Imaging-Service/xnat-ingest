@@ -97,6 +97,16 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help="The directory to use for temporary downloads (i.e. from s3) (XINGEST_TEMPDIR env. var)",
 )
 @click.option(
+    "--max-workers",
+    type=click.IntRange(min=1),
+    default=None,
+    envvar="XINGEST_MAX_WORKERS",
+    help=(
+        "Maximum concurrent S3 object downloads and XNAT checksum requests. "
+        "S3 downloads default to 10 (XINGEST_MAX_WORKERS env. var)."
+    ),
+)
+@click.option(
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
     default=True,
@@ -131,6 +141,7 @@ def check_upload_cmd(
     additional_loggers: ty.List[str],
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
+    max_workers: ty.Optional[int],
     verify_ssl: bool,
     use_curl_jsession: bool,
     disable_progress: bool,
@@ -153,4 +164,5 @@ def check_upload_cmd(
         verify_ssl=verify_ssl,
         use_curl_jsession=use_curl_jsession,
         disable_progress=disable_progress,
+        max_workers=max_workers,
     )

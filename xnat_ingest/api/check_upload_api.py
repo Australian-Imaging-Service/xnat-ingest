@@ -61,9 +61,10 @@ def check_upload(
         the frameset on XNAT. This can be used to include additional file formats that aren't
         defined in the frameset, or to include all file formats by using "all".
     max_workers : int, optional
-        the number of threads to use to fetch checksums from XNAT concurrently
-        (per-session), once the resources to check have been resolved. If None,
-        defaults to `concurrent.futures.ThreadPoolExecutor`'s default.
+        the maximum number of concurrent S3 object downloads and XNAT checksum
+        requests. S3 downloads default to 10 to match botocore's connection pool;
+        checksum requests default to `concurrent.futures.ThreadPoolExecutor`'s
+        default.
     """
 
     xnat_repo = Xnat(
@@ -108,7 +109,11 @@ def check_upload(
         sessions: ty.Iterable[SessionListing]
         if str(input_dir).startswith("s3://"):
             sessions = iterate_s3_sessions(
-                input_dir, store_credentials, temp_dir, wait_period=0
+                input_dir,
+                store_credentials,
+                temp_dir,
+                wait_period=0,
+                max_workers=max_workers,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]

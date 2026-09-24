@@ -17,6 +17,8 @@ import attrs
 import boto3.resources.base
 import paramiko
 import xnat
+from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 from fileformats.application import Json
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection
@@ -34,6 +36,8 @@ from .xnat_scan_types import (
     xnat_resource_label_from_sop_class,
     xnat_scan_type_from_sop_class,
 )
+
+DEFAULT_S3_MAX_WORKERS = 10
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -277,7 +281,7 @@ class S3SessionListing(SessionListing):
     bucket: ty.Any
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
-    max_workers: ty.Optional[int] = None
+    max_workers: int = DEFAULT_S3_MAX_WORKERS
     _downloaded: bool = attrs.field(default=False, init=False)
     _download_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
@@ -300,7 +304,12 @@ class S3SessionListing(SessionListing):
         return self._cache_path
 
     def _download_objects(self) -> None:
-        logger.info("Downloading session '%s' from S3 bucket", self.name)
+        logger.info(
+            "Downloading session '%s' from S3 bucket with %d workers",
+            self.name,
+            self.max_workers,
+        )
+        transfer_config = TransferConfig(max_concurrency=1, use_threads=False)
 
         def _download(item: ty.Tuple[ty.List[str], ty.Any]) -> None:
             relpath, obj = item
@@ -308,7 +317,7 @@ class S3SessionListing(SessionListing):
             obj_path.parent.mkdir(parents=True, exist_ok=True)
             logger.debug("Downloading %s to %s", obj, obj_path)
             with open(obj_path, "wb") as f:
-                self.bucket.download_fileobj(obj.key, f)
+                self.bucket.download_fileobj(obj.key, f, Config=transfer_config)
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             list(
@@ -374,6 +383,7 @@ def iterate_s3_sessions(
     store_credentials: StoreCredentials,
     temp_dir: Path | None,
     wait_period: int,
+    max_workers: int | None = None,
 ) -> ty.Iterator[SessionListing]:
     """Iterate over sessions stored in an S3 bucket
 
@@ -387,12 +397,21 @@ def iterate_s3_sessions(
         the temporary directory to download the sessions to, by default None
     wait_period : int
         the number of seconds after the last write before considering a session complete
+    max_workers : int, optional
+        maximum number of S3 objects to download concurrently. Defaults to 10,
+        matching botocore's default connection-pool size.
     """
+    if max_workers is None:
+        max_workers = DEFAULT_S3_MAX_WORKERS
+    elif max_workers < 1:
+        raise ValueError("max_workers must be greater than zero")
+
     # List sessions stored in s3 bucket
     s3: boto3.resources.base.ServiceResource = boto3.resource(
         "s3",
         aws_access_key_id=store_credentials.access_key,
         aws_secret_access_key=store_credentials.access_secret,
+        config=Config(max_pool_connections=max_workers),
     )
     bucket_name, prefix = bucket_path[5:].split("/", 1)
     bucket = s3.Bucket(bucket_name)
@@ -439,6 +458,7 @@ def iterate_s3_sessions(
                 objects=session_objs[session_name],
                 bucket=bucket,
                 cache_path=session_tmp_dir,
+                max_workers=max_workers,
             )
         else:
             logger.info(

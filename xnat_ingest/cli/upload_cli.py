@@ -117,6 +117,16 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
+    "--max-workers",
+    type=click.IntRange(min=1),
+    default=None,
+    envvar="XINGEST_MAX_WORKERS",
+    help=(
+        "Maximum concurrent S3 object downloads and XNAT resource uploads. "
+        "S3 downloads default to 10 (XINGEST_MAX_WORKERS env. var)."
+    ),
+)
+@click.option(
     "--require-manifest/--dont-require-manifest",
     default=None,
     envvar="XINGEST_REQUIRE_MANIFEST",
@@ -218,6 +228,7 @@ def upload_cmd(
     raise_errors: bool,
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
+    max_workers: ty.Optional[int],
     require_manifest: bool,
     verify_ssl: bool,
     use_curl_jsession: bool,
@@ -343,6 +354,7 @@ def upload_cmd(
                         if temp_dir is not None
                         else tempfile.mkdtemp()
                     ),
+                    max_workers=max_workers,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has
