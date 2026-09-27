@@ -37,7 +37,7 @@ from .xnat_scan_types import (
     xnat_scan_type_from_sop_class,
 )
 
-DEFAULT_S3_MAX_WORKERS = 10
+DEFAULT_MAX_WORKERS = 10
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -281,7 +281,7 @@ class S3SessionListing(SessionListing):
     bucket: ty.Any
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
-    max_workers: int = DEFAULT_S3_MAX_WORKERS
+    max_workers: int = DEFAULT_MAX_WORKERS
     _downloaded: bool = attrs.field(default=False, init=False)
     _download_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
@@ -402,7 +402,7 @@ def iterate_s3_sessions(
         matching botocore's default connection-pool size.
     """
     if max_workers is None:
-        max_workers = DEFAULT_S3_MAX_WORKERS
+        max_workers = DEFAULT_MAX_WORKERS
     elif max_workers < 1:
         raise ValueError("max_workers must be greater than zero")
 

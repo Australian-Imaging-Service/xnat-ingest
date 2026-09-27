@@ -16,6 +16,7 @@ from xnat.exceptions import XNATResponseError
 from xnat_ingest.helpers.arg_types import StoreCredentials
 from xnat_ingest.helpers.logging import logger
 from xnat_ingest.helpers.remotes import (
+    DEFAULT_MAX_WORKERS,
     LocalSessionListing,
     SessionListing,
     get_xnat_checksums,
@@ -34,7 +35,7 @@ def check_upload(
     verify_ssl: bool = True,
     use_curl_jsession: bool = False,
     disable_progress: bool = False,
-    max_workers: ty.Optional[int] = None,
+    max_workers: ty.Optional[int] = DEFAULT_MAX_WORKERS,
 ) -> None:
     """Checks the staged sessions against the XNAT server to check for any issues before upload.
 
@@ -62,9 +63,7 @@ def check_upload(
         defined in the frameset, or to include all file formats by using "all".
     max_workers : int, optional
         the maximum number of concurrent S3 object downloads and XNAT checksum
-        requests. S3 downloads default to 10 to match botocore's connection pool;
-        checksum requests default to `concurrent.futures.ThreadPoolExecutor`'s
-        default.
+        requests. Defaults to 10.
     """
 
     xnat_repo = Xnat(

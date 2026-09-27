@@ -18,6 +18,7 @@ from xnat_ingest.cli.base import cli
 from ..api import upload
 from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
 from ..helpers.logging import logger, set_logger_handling
+from ..helpers.remotes import DEFAULT_MAX_WORKERS
 
 
 @cli.command(
@@ -119,11 +120,12 @@ by setting the "XNAT_INGEST_HOST" environment variable.
 @click.option(
     "--max-workers",
     type=click.IntRange(min=1),
-    default=None,
+    default=DEFAULT_MAX_WORKERS,
+    show_default=True,
     envvar="XINGEST_MAX_WORKERS",
     help=(
         "Maximum concurrent S3 object downloads and XNAT resource uploads. "
-        "S3 downloads default to 10 (XINGEST_MAX_WORKERS env. var)."
+        "(XINGEST_MAX_WORKERS env. var)."
     ),
 )
 @click.option(

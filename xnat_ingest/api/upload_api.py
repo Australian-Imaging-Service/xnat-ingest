@@ -14,6 +14,7 @@ from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.helpers.remotes import (
+    DEFAULT_MAX_WORKERS,
     LocalSessionListing,
     SessionListing,
     SessionOnlyListing,
@@ -72,7 +73,7 @@ def upload(
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
-    max_workers: ty.Optional[int] = None,
+    max_workers: ty.Optional[int] = DEFAULT_MAX_WORKERS,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -106,8 +107,7 @@ def upload(
          Whether to list the sessions that would be uploaded instead of actually uploading them
     max_workers: int, optional
         The maximum number of concurrent S3 object downloads and XNAT resource
-        uploads. S3 downloads default to 10 to match botocore's connection pool;
-        local uploads default to `concurrent.futures.ThreadPoolExecutor`'s default.
+        uploads. Defaults to 10.
     """
 
     errors = []
