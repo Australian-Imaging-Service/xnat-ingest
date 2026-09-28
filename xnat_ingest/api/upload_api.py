@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
-from fileformats.medimage import DicomCollection
+from fileformats.medimage import DicomCollection, DicomImage
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
@@ -37,9 +37,14 @@ from ..model.session import ImagingSession
 
 
 def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
-    """Whether resources include DICOM files attached to an imaging scan."""
+    """Whether resources include readable DICOM files attached to a scan.
+
+    A full ``DicomCollection`` and a representative ``DicomImage`` can both be
+    consumed by XNAT's ``pullDataFromHeaders`` operation.
+    """
     return any(
-        resource.scan is not None and isinstance(resource.fileset, DicomCollection)
+        resource.scan is not None
+        and isinstance(resource.fileset, (DicomCollection, DicomImage))
         for resource in resources
     )
 
@@ -508,6 +513,7 @@ def upload(
                     if raise_errors and resource_errors:
                         raise RuntimeError(msg) from resource_errors[0][1]
                     logger.error(msg)
+                    continue
                 # Success is not announced here: metadata extraction and
                 # pipeline triggering still follow, and there is one report at
                 # the end of all of it.

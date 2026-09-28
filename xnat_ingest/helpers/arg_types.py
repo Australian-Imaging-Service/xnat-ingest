@@ -176,16 +176,23 @@ class LoggerConfig(MultiCliTyped):
 
 
 def target_converter(
-    value: str | tuple[ty.Type[FileSet], dict[str, str]],
+    value: str | tuple[ty.Type[FileSet], dict[str, ty.Any]],
     instance: "Convert",
-) -> tuple[ty.Type[FileSet], dict[str, str]]:
+) -> tuple[ty.Type[FileSet], dict[str, ty.Any]]:
+    return parse_target_spec(value, instance.source)
+
+
+def parse_target_spec(
+    value: str | tuple[ty.Type[FileSet], dict[str, ty.Any]],
+    source: ty.Type[FileSet],
+) -> tuple[ty.Type[FileSet], dict[str, ty.Any]]:
     """Parses 'mime-like' or 'mime-like:key=val,key2=val2' (e.g. 'application/zip:compression=stored')
     into (datatype, options)."""
     if isinstance(value, tuple):
         return value
     target_str, _, opts_str = value.partition(":")
     datatype = datatype_converter(target_str)
-    converter = datatype.get_converter(instance.source)
+    converter = datatype.get_converter(source)
     inputs = get_fields(converter.task) if converter is not None else {}
     options: dict[str, ty.Any] = {}
     errors: list[str] = []
@@ -231,7 +238,7 @@ def target_converter(
 @attrs.define
 class Convert(MultiCliTyped):
     source: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
-    _target_spec: tuple[ty.Type[FileSet], dict[str, str]] = attrs.field(
+    _target_spec: tuple[ty.Type[FileSet], dict[str, ty.Any]] = attrs.field(
         converter=attrs.Converter(target_converter, takes_self=True)
     )
 
@@ -240,8 +247,27 @@ class Convert(MultiCliTyped):
         return self._target_spec[0]
 
     @property
-    def options(self) -> dict[str, str]:
+    def options(self) -> dict[str, ty.Any]:
         return self._target_spec[1]
+
+
+@attrs.define
+class OutputResource(MultiCliTyped):
+    """A named output produced by converting a source resource.
+
+    ``target_spec`` deliberately remains a string until the package command has
+    resolved its source datatype. Converter discovery and option validation need
+    both ends of the conversion, while Click constructs each repeated option
+    independently.
+    """
+
+    label: str
+    target_spec: str
+
+    def resolve(
+        self, source: ty.Type[FileSet]
+    ) -> tuple[ty.Type[FileSet], dict[str, ty.Any]]:
+        return parse_target_spec(self.target_spec, source)
 
 
 @attrs.define

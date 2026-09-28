@@ -16,6 +16,8 @@ evoke the same modular behaviour via a Python workflow.
 
 .. autofunction:: xnat_ingest.api.deidentify
 
+.. autofunction:: xnat_ingest.api.package
+
 .. autofunction:: xnat_ingest.api.upload
 
 .. autofunction:: xnat_ingest.api.check_upload

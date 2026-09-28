@@ -306,6 +306,35 @@ combined with ``--unlink-source``, because the grouped data must remain availabl
 to every assignment pathway.
 
 
+Optional: package one resource into several upload resources
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``package`` replaces scan resources of one datatype with one or more named
+conversions. Run it after :doc:`deidentify` when an upload layout needs derived
+resources but de-identification should operate on the unpacked source. Every output
+is converted directly from that source rather than from another output.
+
+For example, with the Australian Imaging Service fileformat packages installed, a
+deidentified DICOM series can become a zip in XNAT's ``DICOM-zip`` resource and a
+single DICOM file in the resource XNAT chooses from its SOP class (``DICOM`` for
+primary images, ``secondary`` for other DICOM) without reopening the zip:
+
+.. code-block:: console
+
+    $ xnat-ingest package /data/staging/deidentified /data/staging/packaged \
+        medimage/dicom-series \
+        --output-resource DICOM-zip \
+            medimage/vnd.australianimagingservice.dicom-zip:compression=ZIP_STORED \
+        --output-resource auto \
+            medimage/vnd.australianimagingservice.dicom-sample
+
+Point ``upload`` at the packaged output. The input remains untouched unless
+``--unlink-source`` is supplied, and a new session is exposed in the output only
+after every conversion and manifest has been written successfully.
+Packaging rejects samples from different DICOM studies in one session. The upload
+creates the scan from the sample's SOP class, records the archive as ``ZIP``, and
+records the sample as ``DICOM``.
+
 3. Upload to XNAT
 --------------------
 
