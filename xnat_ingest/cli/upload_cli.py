@@ -18,6 +18,7 @@ from xnat_ingest.cli.base import cli
 from ..api import upload
 from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
 from ..helpers.logging import logger, set_logger_handling
+from ..helpers.remotes import DEFAULT_MAX_WORKERS
 
 
 @cli.command(
@@ -115,6 +116,22 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     default=None,
     envvar="XINGEST_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
+)
+@click.option(
+    "--s3-max-workers",
+    type=click.IntRange(min=1),
+    default=DEFAULT_MAX_WORKERS,
+    show_default=True,
+    envvar="XINGEST_S3_MAX_WORKERS",
+    help="Maximum concurrent S3 object downloads.",
+)
+@click.option(
+    "--xnat-max-workers",
+    type=click.IntRange(min=1),
+    default=DEFAULT_MAX_WORKERS,
+    show_default=True,
+    envvar="XINGEST_XNAT_MAX_WORKERS",
+    help="Maximum concurrent XNAT resource uploads.",
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
@@ -218,6 +235,8 @@ def upload_cmd(
     raise_errors: bool,
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
+    s3_max_workers: int,
+    xnat_max_workers: int,
     require_manifest: bool,
     verify_ssl: bool,
     use_curl_jsession: bool,
@@ -343,6 +362,8 @@ def upload_cmd(
                         if temp_dir is not None
                         else tempfile.mkdtemp()
                     ),
+                    s3_max_workers=s3_max_workers,
+                    xnat_max_workers=xnat_max_workers,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has

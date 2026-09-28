@@ -32,14 +32,18 @@ class RecordingBucket:
         self.download_count = 0
         self._lock = threading.Lock()
         self._payloads: dict[str, bytes] = {}
+        self.transfer_configs: list[ty.Any] = []
 
     def register(self, obj: FakeObject) -> FakeObject:
         self._payloads[obj.key] = obj.payload
         return obj
 
-    def download_fileobj(self, key: str, fileobj: ty.BinaryIO) -> None:
+    def download_fileobj(
+        self, key: str, fileobj: ty.BinaryIO, Config: ty.Any = None
+    ) -> None:
         with self._lock:
             self.download_count += 1
+            self.transfer_configs.append(Config)
         fileobj.write(self._payloads[key])
 
 
@@ -80,4 +84,8 @@ def test_cache_path_downloads_each_object_once(tmp_path: Path) -> None:
     assert bucket.download_count == len(expected), (
         f"expected {len(expected)} downloads for {len(expected)} objects, got "
         f"{bucket.download_count}: cache_path re-downloads on every read"
+    )
+    assert all(config.use_threads is False for config in bucket.transfer_configs)
+    assert all(
+        config.max_request_concurrency == 1 for config in bucket.transfer_configs
     )
