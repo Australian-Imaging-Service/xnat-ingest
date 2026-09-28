@@ -73,7 +73,8 @@ def upload(
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
-    max_workers: ty.Optional[int] = DEFAULT_MAX_WORKERS,
+    s3_max_workers: int = DEFAULT_MAX_WORKERS,
+    xnat_max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -105,9 +106,10 @@ def upload(
         the checksums of the files in the staged resources (if available) to verify that they were
     dry_run: bool
          Whether to list the sessions that would be uploaded instead of actually uploading them
-    max_workers: int, optional
-        The maximum number of concurrent S3 object downloads and XNAT resource
-        uploads. Defaults to 10.
+    s3_max_workers: int, optional
+        The maximum number of concurrent S3 object downloads. Defaults to 10.
+    xnat_max_workers: int, optional
+        The maximum number of concurrent XNAT resource uploads. Defaults to 10.
     """
 
     errors = []
@@ -162,7 +164,7 @@ def upload(
                 store_credentials,
                 s3_cache_dir,
                 wait_period=wait_period,
-                max_workers=max_workers,
+                max_workers=s3_max_workers,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
@@ -469,7 +471,7 @@ def upload(
                     logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
 
                 resource_errors: list[tuple[ImagingResource, BaseException]] = []
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                with ThreadPoolExecutor(max_workers=xnat_max_workers) as executor:
                     futures = {
                         executor.submit(
                             _upload_resource, resource, xresource, only_files

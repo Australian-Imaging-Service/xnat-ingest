@@ -35,7 +35,8 @@ def check_upload(
     verify_ssl: bool = True,
     use_curl_jsession: bool = False,
     disable_progress: bool = False,
-    max_workers: ty.Optional[int] = DEFAULT_MAX_WORKERS,
+    s3_max_workers: int = DEFAULT_MAX_WORKERS,
+    xnat_max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> None:
     """Checks the staged sessions against the XNAT server to check for any issues before upload.
 
@@ -61,9 +62,10 @@ def check_upload(
         A list of MIME types to always include in the check, even if they aren't defined in
         the frameset on XNAT. This can be used to include additional file formats that aren't
         defined in the frameset, or to include all file formats by using "all".
-    max_workers : int, optional
-        the maximum number of concurrent S3 object downloads and XNAT checksum
-        requests. Defaults to 10.
+    s3_max_workers : int, optional
+        the maximum number of concurrent S3 object downloads. Defaults to 10.
+    xnat_max_workers : int, optional
+        the maximum number of concurrent XNAT checksum requests. Defaults to 10.
     """
 
     xnat_repo = Xnat(
@@ -112,7 +114,7 @@ def check_upload(
                 store_credentials,
                 temp_dir,
                 wait_period=0,
-                max_workers=max_workers,
+                max_workers=s3_max_workers,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
@@ -261,7 +263,7 @@ def check_upload(
                     (scan_path, resource_name, session_desc, checksums, xresource)
                 )
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with ThreadPoolExecutor(max_workers=xnat_max_workers) as executor:
                 all_xchecksums = executor.map(
                     lambda item: get_xnat_checksums(item[4]), to_check
                 )

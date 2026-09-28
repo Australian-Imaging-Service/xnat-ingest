@@ -98,15 +98,20 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     help="The directory to use for temporary downloads (i.e. from s3) (XINGEST_TEMPDIR env. var)",
 )
 @click.option(
-    "--max-workers",
+    "--s3-max-workers",
     type=click.IntRange(min=1),
     default=DEFAULT_MAX_WORKERS,
     show_default=True,
-    envvar="XINGEST_MAX_WORKERS",
-    help=(
-        "Maximum concurrent S3 object downloads and XNAT checksum requests. "
-        "(XINGEST_MAX_WORKERS env. var)."
-    ),
+    envvar="XINGEST_S3_MAX_WORKERS",
+    help="Maximum concurrent S3 object downloads.",
+)
+@click.option(
+    "--xnat-max-workers",
+    type=click.IntRange(min=1),
+    default=DEFAULT_MAX_WORKERS,
+    show_default=True,
+    envvar="XINGEST_XNAT_MAX_WORKERS",
+    help="Maximum concurrent XNAT checksum requests.",
 )
 @click.option(
     "--verify-ssl/--dont-verify-ssl",
@@ -143,7 +148,8 @@ def check_upload_cmd(
     additional_loggers: ty.List[str],
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
-    max_workers: ty.Optional[int],
+    s3_max_workers: int,
+    xnat_max_workers: int,
     verify_ssl: bool,
     use_curl_jsession: bool,
     disable_progress: bool,
@@ -166,5 +172,6 @@ def check_upload_cmd(
         verify_ssl=verify_ssl,
         use_curl_jsession=use_curl_jsession,
         disable_progress=disable_progress,
-        max_workers=max_workers,
+        s3_max_workers=s3_max_workers,
+        xnat_max_workers=xnat_max_workers,
     )
