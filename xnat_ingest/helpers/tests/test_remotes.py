@@ -406,3 +406,47 @@ def test_get_xnat_resource_rejects_wrong_dicom_image_label(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="must be staged under XNAT resource 'DICOM'"):
         get_xnat_resource(resource, MagicMock())
+
+
+def test_get_xnat_resource_rejects_dicom_image_without_sop_class(
+    tmp_path: Path,
+) -> None:
+    dicom_path = tmp_path / "image.dcm"
+    _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
+    scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
+    resource = ImagingResource(
+        name="DICOM",
+        fileset=DicomImage(dicom_path),
+        checksums={"image.dcm": "digest"},
+        scan=scan,
+    )
+    resource.fileset.metadata["SOPClassUID"] = None
+    resource.metadata["SOPClassUID"] = _PET_IMAGE_SOP_CLASS
+
+    with pytest.raises(ValueError, match="DICOM image .* has no SOPClassUID"):
+        get_xnat_resource(resource, MagicMock())
+
+
+def test_get_xnat_resource_rejects_conflicting_scan_datatype(tmp_path: Path) -> None:
+    dicom_path = tmp_path / "image.dcm"
+    _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
+    scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
+    resource = ImagingResource(
+        name="DICOM",
+        fileset=DicomImage(dicom_path),
+        checksums={"image.dcm": "digest"},
+        scan=scan,
+    )
+    xscan = MagicMock()
+    xscan.__xsi_type__ = "xnat:mrScanData"
+    xscan.resources = {}
+    xsession = MagicMock()
+    xsession.scans = {"602": xscan}
+
+    with pytest.raises(
+        ValueError,
+        match="has datatype 'xnat:mrScanData'.*requires 'xnat:petScanData'",
+    ):
+        get_xnat_resource(resource, xsession)
+
+    xscan.create_resource.assert_not_called()
