@@ -1,9 +1,9 @@
 import math
-import shutil
 import tempfile
 import traceback
 import typing as ty
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
@@ -14,6 +14,7 @@ from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
 from xnat_ingest.helpers.remotes import (
+    DEFAULT_MAX_WORKERS,
     LocalSessionListing,
     SessionListing,
     SessionOnlyListing,
@@ -49,6 +50,21 @@ def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
     )
 
 
+@contextmanager
+def _staged_upload_batch(
+    source_dir: Path, files: ty.Sequence[Path]
+) -> ty.Iterator[Path]:
+    with tempfile.TemporaryDirectory(
+        prefix=f".{source_dir.name}-upload-", dir=source_dir.parent
+    ) as upload_dir_str:
+        upload_dir = Path(upload_dir_str)
+        for fspath in files:
+            dest = upload_dir / fspath.relative_to(source_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.hardlink_to(fspath)
+        yield upload_dir
+
+
 def upload(
     input_dir: str,
     xnat_repo: Xnat,
@@ -62,7 +78,8 @@ def upload(
     s3_cache_dir: ty.Optional[Path] = None,
     raise_errors: bool = False,
     dry_run: bool = False,
-    max_workers: ty.Optional[int] = None,
+    s3_max_workers: int = DEFAULT_MAX_WORKERS,
+    xnat_max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -94,12 +111,10 @@ def upload(
         the checksums of the files in the staged resources (if available) to verify that they were
     dry_run: bool
          Whether to list the sessions that would be uploaded instead of actually uploading them
-    max_workers: int, optional
-        The number of threads to use to upload resources within a session concurrently.
-        Different resources map to different scans/catalogs on XNAT so are safe to
-        upload in parallel; a failure uploading one resource doesn't stop the others
-        from being attempted. If None, defaults to
-        `concurrent.futures.ThreadPoolExecutor`'s default.
+    s3_max_workers: int, optional
+        The maximum number of concurrent S3 object downloads. Defaults to 10.
+    xnat_max_workers: int, optional
+        The maximum number of concurrent XNAT resource uploads. Defaults to 10.
     """
 
     errors = []
@@ -150,7 +165,11 @@ def upload(
                     f"Using temporary directory '{s3_cache_dir}' to cache S3 files during upload"
                 )
             sessions = iterate_s3_sessions(
-                input_dir, store_credentials, s3_cache_dir, wait_period=wait_period
+                input_dir,
+                store_credentials,
+                s3_cache_dir,
+                wait_period=wait_period,
+                max_workers=s3_max_workers,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
@@ -378,15 +397,9 @@ def upload(
                         upload_method = UploadMethod.select_method(
                             methods, type(resource.fileset)
                         )
-                        # Get the directory containing the files to upload
-                        # and create a temporary upload directory alongside it
-                        # to hardlink files to upload in each batch into
+                        # Keep batch directories alongside their source files so
+                        # that hard links stay on the same filesystem.
                         dir_to_upload = resource.fileset.parent
-                        upload_dir = dir_to_upload.parent / (
-                            "." + dir_to_upload.name + "-upload"
-                        )
-                        # Split the files to upload into batches and hardlink them into
-                        # separate directories so we can use upload_dir
                         files_to_upload = wanted_fspaths
                         num_files = len(files_to_upload)
                         batch_size = (
@@ -405,25 +418,21 @@ def upload(
                             upload_method,
                         )
                         for i in range(num_batches):
-                            # Create a temporary directory to upload the batch from
-                            if upload_dir.exists():
-                                shutil.rmtree(upload_dir)
-                            upload_dir.mkdir()
-                            for fspath in files_to_upload[
+                            batch_files = files_to_upload[
                                 i * batch_size : (i + 1) * batch_size
-                            ]:
-                                dest = upload_dir / fspath.relative_to(dir_to_upload)
-                                dest.hardlink_to(fspath)
-                            logger.debug(
-                                "Uploading batch %s of %s of '%s' to %s with '%s' method",
-                                i,
-                                num_batches,
-                                upload_dir,
-                                xresource,
-                                upload_method,
-                            )
-                            xresource.upload_dir(upload_dir, method=upload_method)
-                            shutil.rmtree(upload_dir)
+                            ]
+                            with _staged_upload_batch(
+                                dir_to_upload, batch_files
+                            ) as upload_dir:
+                                logger.debug(
+                                    "Uploading batch %s of %s of '%s' to %s with '%s' method",
+                                    i,
+                                    num_batches,
+                                    upload_dir,
+                                    xresource,
+                                    upload_method,
+                                )
+                                xresource.upload_dir(upload_dir, method=upload_method)
                     if check_checksums:
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
@@ -467,7 +476,7 @@ def upload(
                     logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
 
                 resource_errors: list[tuple[ImagingResource, BaseException]] = []
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                with ThreadPoolExecutor(max_workers=xnat_max_workers) as executor:
                     futures = {
                         executor.submit(
                             _upload_resource, resource, xresource, only_files
