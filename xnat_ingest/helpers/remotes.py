@@ -19,7 +19,7 @@ import paramiko
 import xnat
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from fileformats.application import Json, Zip
+from fileformats.application import Json
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
@@ -800,13 +800,6 @@ def get_xnat_resource(
     if sop_class_uids:
         resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
 
-    if isinstance(resource.fileset, Zip):
-        expected_format = "ZIP"
-    elif isinstance(resource.fileset, (DicomCollection, DicomImage)):
-        expected_format = "DICOM"
-    else:
-        expected_format = None
-
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
@@ -847,18 +840,6 @@ def get_xnat_resource(
     except KeyError:
         pass
     else:
-        existing_format = getattr(xresource, "format", None)
-        if (
-            expected_format is not None
-            and isinstance(existing_format, str)
-            and existing_format
-            and existing_format.upper() != expected_format
-        ):
-            raise ValueError(
-                f"XNAT resource {resource_name!r} in {resource.scan.path} has "
-                f"format {existing_format!r}, expected {expected_format!r}. "
-                "Recreate the incorrectly formatted resource before retrying."
-            )
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
         if comparison.repairable:
@@ -940,10 +921,7 @@ def get_xnat_resource(
         resource_name,
         resource.scan.path,
     )
-    if expected_format is None:
-        xresource = xscan.create_resource(resource_name)
-    else:
-        xresource = xscan.create_resource(resource_name, format=expected_format)
+    xresource = xscan.create_resource(resource_name)
     return xresource, None
 
 
