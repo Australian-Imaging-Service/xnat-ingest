@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from fileformats.core import from_mime
+from fileformats.core import FileSet, from_mime
 from fileformats.generic import File, SetOf
+from fileformats.image import Png
 from fileformats.medimage import DicomSeries
 from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_CountRate,
@@ -39,9 +40,9 @@ from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.model.session import (
     ImagingScan,
     ImagingSession,
+    _datatype_resource_label,
     _glob_to_regex,
     _metadata_diff,
-    _type_name_resource_label,
 )
 from xnat_ingest.model.store import DummyAxes
 
@@ -468,16 +469,16 @@ def test_from_paths_resource_label_defaults_to_mime_like_type_name(
 
 
 @pytest.mark.parametrize(
-    "type_name, expected",
+    "datatype, expected",
     [
-        ("VectraExport", "vectra-export"),
-        ("Sqlite3Db", "sqlite3-db"),
-        ("SyngoMi_Vr20b_ListMode", "syngo-mi_vr20b_list-mode"),
-        ("Png___SetOf", "png_set-of"),
+        (DicomSeries, "dicom-series"),
+        (SyngoMi_Vr20b_ListMode, "syngo-mi_vr20b_list-mode"),
+        (SetOf[Png], "png_set-of"),
+        (File, "file"),
     ],
 )
-def test_type_name_resource_label(type_name: str, expected: str) -> None:
-    assert _type_name_resource_label(type_name) == expected
+def test_datatype_resource_label(datatype: type[FileSet], expected: str) -> None:
+    assert _datatype_resource_label(datatype) == expected
 
 
 def _tree(root: Path) -> Path:
