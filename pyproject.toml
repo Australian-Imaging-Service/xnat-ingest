@@ -30,7 +30,7 @@ dependencies = [
     "cryptography >=38.0",
     "natsort",
     "paramiko >=2.12",
-    "xnat==0.7.2",
+    "xnat>=0.8.1",
     "frametree >=0.16.2",
     "frametree-xnat >=0.6.10",
 ]
