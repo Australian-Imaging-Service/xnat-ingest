@@ -15,7 +15,7 @@ dependencies = [
     # dependency that was only ever arriving transitively. And 0.18.1 replaced the
     # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
     # the new API does not exist.
-    "fileformats >=0.19.2",
+    "fileformats >=0.19.3",
     "fileformats-medimage >=0.14.0",
     "fileformats-medimage-extras >=0.14.0",
     "fileformats-vendor-siemens >=0.2.5",
