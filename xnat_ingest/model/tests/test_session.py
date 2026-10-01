@@ -10,8 +10,8 @@ import yaml
 from fileformats.application import Json
 from fileformats.core import FileSet, Loaded, extra_implementation, from_mime
 from fileformats.generic import File, SetOf
-from fileformats.medimage import DicomSeries, MedicalImagingData
 from fileformats.image import Png
+from fileformats.medimage import DicomSeries, MedicalImagingData
 from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_CountRate,
     SyngoMi_Vr20b_ListMode,
@@ -20,17 +20,17 @@ from fileformats.vendor.siemens.medimage import (
 from frametree.common import FileSystem  # type: ignore[import-untyped]
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
-    get_image as get_ac_image,  # type: ignore[import-untyped]
-)
+    get_image as get_ac_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
-    get_image as get_statistics_image,  # type: ignore[import-untyped]
-)
+    get_image as get_statistics_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
-    get_image as get_topogram_image,  # type: ignore[import-untyped]
-)
+    get_image as get_topogram_image,
+)  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
-    get_image as get_pet_image,  # type: ignore[import-untyped]
-)
+    get_image as get_pet_image,
+)  # type: ignore[import-untyped]
 
 from conftest import get_raw_data_files
 from xnat_ingest.helpers.arg_types import (
