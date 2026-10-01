@@ -9,7 +9,11 @@ from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
 import xnat_ingest.specs as _specs_pkg
-from xnat_ingest.api.deidentify_api import DEFAULT_SPEC_DIR, deidentify, load_specs
+from xnat_ingest.api.deidentify_api import (
+    DEFAULT_SPEC_DIR,
+    deidentify,
+    load_recipe_files,
+)
 from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
 
@@ -587,11 +591,11 @@ def test_deidentify_missing_spec_collected(dirs, tmp_path):
     assert len(errors) == 1
 
 
-# ── load_specs unit tests ────────────────────────────────────────────────────
+# ── load_recipe_files unit tests ────────────────────────────────────────────────────
 
 
-def test_load_specs_nonexistent_dir_returns_none(tmp_path: Path) -> None:
-    assert load_specs(tmp_path / "nonexistent") is None
+def test_load_recipe_files_nonexistent_dir_returns_none(tmp_path: Path) -> None:
+    assert load_recipe_files(tmp_path / "nonexistent") is None
 
 
 def _write_spec(spec_dir: Path, mime_like: str, content: str = "{}") -> Path:
@@ -603,48 +607,75 @@ def _write_spec(spec_dir: Path, mime_like: str, content: str = "{}") -> Path:
     return spec_file
 
 
-def test_load_specs_empty_dir_returns_empty_dict(tmp_path: Path) -> None:
+def test_load_recipe_files_empty_dir_returns_empty_dict(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
-    assert load_specs(spec_dir) == ({}, {})
+    assert load_recipe_files(spec_dir) == {}
 
 
-def test_load_specs_ignores_non_category_files(tmp_path: Path) -> None:
+def test_load_recipe_files_ignores_non_category_files(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
     (spec_dir / "README").write_text("docs")
     (spec_dir / "config.json").write_text("{}")
-    assert load_specs(spec_dir) == ({}, {})
+    assert load_recipe_files(spec_dir) == {}
 
 
-def test_load_specs_single_mime_like(tmp_path: Path) -> None:
+def test_load_recipe_files_single_mime_like(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
     spec_file = _write_spec(spec_dir, "medimage/dicom-series")
-    specs, transforms = load_specs(spec_dir)
-    assert specs == {DicomSeries: spec_file}
-    assert transforms == {}
+    recipe_files = load_recipe_files(spec_dir)
+    assert recipe_files == {DicomSeries: spec_file}
 
 
-def test_load_specs_multiple_mime_likes(tmp_path: Path) -> None:
+def test_load_recipe_files_multiple_mime_likes(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
     dcm_file = _write_spec(spec_dir, "medimage/dicom-series")
     mf_file = _write_spec(spec_dir, "testing/my-format")
     mfgz_file = _write_spec(spec_dir, "testing/my-format-gz")
-    specs, transforms = load_specs(spec_dir)
-    assert specs == {DicomSeries: dcm_file, MyFormat: mf_file, MyFormatGz: mfgz_file}
-    assert transforms == {}
+    recipe_files = load_recipe_files(spec_dir)
+    assert recipe_files == {
+        DicomSeries: dcm_file,
+        MyFormat: mf_file,
+        MyFormatGz: mfgz_file,
+    }
 
 
-def test_load_specs_mixed_files_only_picks_mime_names(tmp_path: Path) -> None:
+def test_load_recipe_files_mixed_files_only_picks_mime_names(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs"
     spec_dir.mkdir()
     spec_file = _write_spec(spec_dir, "medimage/dicom-series")
     (spec_dir / "README").write_text("docs")
-    specs, transforms = load_specs(spec_dir)
-    assert specs == {DicomSeries: spec_file}
-    assert transforms == {}
+    recipe_files = load_recipe_files(spec_dir)
+    assert recipe_files == {DicomSeries: spec_file}
+
+
+def test_load_recipe_files_skips_side_cars(tmp_path: Path) -> None:
+    """Side-cars of the recipe, including ones whose stem resolves to the file type
+    (e.g. "dicom-series.salt"), aren't treated as recipe files"""
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
+    spec_file = _write_spec(
+        spec_dir, "medimage/dicom-series.deid", "FORMAT dicom\n\n%header\n"
+    )
+    (spec_dir / "medimage" / "dicom-series.transforms.py").write_text(
+        "TRANSFORMS = {}\n"
+    )
+    (spec_dir / "medimage" / "dicom-series.salt").write_bytes(b"key")
+    assert load_recipe_files(spec_dir) == {DicomSeries: spec_file}
+
+
+def test_load_recipe_files_multiple_recipes_raises(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
+    _write_spec(spec_dir, "medimage/dicom-series.deid", "FORMAT dicom\n")
+    _write_spec(spec_dir, "medimage/dicom-series.json", "FORMAT dicom\n")
+    with pytest.raises(
+        ValueError, match="Expected exactly one deidentification recipe"
+    ):
+        load_recipe_files(spec_dir)
 
 
 # ── deidentify fallback / error tests ────────────────────────────────────────
@@ -691,10 +722,10 @@ def test_deidentify_uses_project_spec_over_default(
         project_dir, "medimage/dicom-series", '{"project": true}'
     )
 
-    received_specs: list = []
+    received_recipe_files: list = []
 
     def capturing_deidentify(self, *_, **kwargs):
-        received_specs.append(kwargs.get("specs"))
+        received_recipe_files.append(kwargs.get("recipe_files"))
         # `self`, not new_empty(): an empty output is an INCOMPLETE one and the
         # gate reports it, so this test would fail on an assertion about specs.
         return self, dict(REID_MDATA)
@@ -708,9 +739,10 @@ def test_deidentify_uses_project_spec_over_default(
         )
 
     assert errors == []
-    assert len(received_specs) == 1
-    # The spec passed in should map DicomSeries to the project file, not the default
-    assert received_specs[0].get(DicomSeries) == project_spec_file
+    assert len(received_recipe_files) == 1
+    # The recipe files passed in should map DicomSeries to the project file, not the
+    # default
+    assert received_recipe_files[0].get(DicomSeries) == project_spec_file
 
 
 def test_deidentify_passes_max_workers_through(

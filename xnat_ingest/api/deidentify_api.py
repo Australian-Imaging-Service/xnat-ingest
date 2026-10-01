@@ -1,4 +1,3 @@
-import importlib.util
 import json
 import os
 import shutil
@@ -17,11 +16,10 @@ from xnat_ingest.model.resource import ImagingResource
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
-from ..model.session import ImagingSession, Transform
+from ..model.session import ImagingSession, recipe_formats_for
 from .group_api import BUILD_NAME_DEFAULT
 
 DEFAULT_SPEC_DIR = "__default__"
-TRANSFORMS_SUFFIX = ".transforms.py"
 
 
 def _data_file_count(session_dir: Path) -> int:
@@ -209,7 +207,7 @@ def deidentify(
     errors: list[str] = []
     n_skeletons = 0
 
-    default_loaded = load_specs(spec_dir / DEFAULT_SPEC_DIR)
+    default_loaded = load_recipe_files(spec_dir / DEFAULT_SPEC_DIR)
 
     for session_listing in tqdm(
         sessions,
@@ -222,17 +220,17 @@ def deidentify(
                 require_manifest=require_manifest,
                 check_checksums=False,
             )
-            # Get the project-specific deidentification specs for this session
-            # for each file type
-            loaded = load_specs(spec_dir / session.project_id)
+            # Get the project-specific deidentification recipe files for this
+            # session for each file type
+            loaded = load_recipe_files(spec_dir / session.project_id)
             if loaded is None or not any(loaded):
                 if default_loaded is None or not any(default_loaded):
                     raise ValueError(
-                        f"No deidentification specs found for project '{session.project_id}' "
-                        "and no default specs provided."
+                        f"No deidentification recipe files found for project "
+                        f"'{session.project_id}' and no default recipe files provided."
                     )
                 loaded = default_loaded
-            specs, transforms = loaded
+            recipe_files = loaded
 
             # Create a scratch directory for temporary files during deidentification
             # Scratch lives under __build__, which is invisible to every consumer:
@@ -386,8 +384,7 @@ def deidentify(
                     scratch_dir,
                     copy_mode=copy_mode,
                     on_resource_clash=on_resource_clash,
-                    specs=specs,
-                    transforms=transforms,
+                    recipe_files=recipe_files,
                     max_workers=max_workers,
                 )
                 # Where save() WILL put it, worked out with save()'s own rule.
@@ -557,71 +554,66 @@ def deidentify(
     return errors
 
 
-def load_specs(
+def load_recipe_files(
     spec_dir: Path,
-) -> (
-    tuple[
-        ty.Mapping[type[MedicalImagingData], Path],
-        ty.Mapping[type[MedicalImagingData], dict[str, Transform]],
-    ]
-    | None
-):
-    """Loads the deidentification specifications from the given directory,
-    returning a mapping of file-formats to their corresponding spec file paths
-    and a mapping of file-formats to their transforms.
+) -> ty.Mapping[type[MedicalImagingData], Path] | None:
+    """Loads the deidentification recipe files from the given directory, returning a
+    mapping of file-formats to their corresponding recipe file paths.
 
     The directory structure mirrors the MIME-like hierarchy of the file formats::
 
         spec_dir/
         └── <category>/          # e.g. "medimage"
-            ├── <format>         # e.g. "dicom-series" (any extension or none)
-            └── <format>.transforms.py   # optional transforms
+            ├── <format>         # recipe file, e.g. "dicom-series" (any extension or none)
+            └── <format>.<side-car-ext>  # optional side-cars of the recipe format
 
-    Transforms files must define a ``TRANSFORMS`` dict mapping transform
-    names to callables that accept a dataset/mapping and return a value.
+    Side-cars of the recipe file (e.g. the ``.transforms.py`` and ``.salt`` side-cars of
+    a `DeidRecipeX`) are picked up by the recipe format when the recipe is loaded,
+    and are skipped here.
 
     If the spec directory does not exist, returns None.
 
     Parameters
     ----------
     spec_dir : Path
-        the directory containing the deidentification specification files
+        the directory containing the deidentification recipe files
 
     Returns
     -------
-    tuple or None
-        A 2-tuple of (specs, transforms) where *specs* maps file-format
-        types to their corresponding spec file paths and *transforms*
-        maps file-format types to their transform dicts.  Returns None if the
-        spec directory does not exist.
+    Mapping[type[MedicalImagingData], Path] or None
+        maps file-format types to their corresponding recipe file paths, or None if
+        the spec directory does not exist.
     """
     if not spec_dir.exists():
         return None
-    specs: dict[type[MedicalImagingData], Path] = {}
-    transforms: dict[type[MedicalImagingData], dict[str, Transform]] = {}
+    candidates: dict[type[MedicalImagingData], list[Path]] = {}
     for category_dir in spec_dir.iterdir():
         if not category_dir.is_dir() or category_dir.name.startswith((".", "_")):
             continue
         for p in category_dir.iterdir():
             if p.is_dir() or p.name.startswith("."):
                 continue
-            if p.name.endswith(TRANSFORMS_SUFFIX):
-                # e.g. medimage/dicom-series.transforms.py
-                format_name = p.name[: -len(TRANSFORMS_SUFFIX)]
-                filetype = _resolve_mime_type(category_dir.name, format_name)
-                if filetype is None:
-                    continue
-                loaded = _load_transforms(p)
-                if loaded:
-                    transforms[filetype] = loaded
-            else:
-                # Spec file — use full name first, then stem (strip extension)
-                filetype = _resolve_mime_type(
-                    category_dir.name, p.name
-                ) or _resolve_mime_type(category_dir.name, p.stem)
-                if filetype is not None:
-                    specs[filetype] = p
-    return specs, transforms
+            # Recipe file — use full name first, then stem (strip extension)
+            filetype = _resolve_mime_type(
+                category_dir.name, p.name
+            ) or _resolve_mime_type(category_dir.name, p.stem)
+            if filetype is not None:
+                candidates.setdefault(filetype, []).append(p)
+    recipe_files: dict[type[MedicalImagingData], Path] = {}
+    for filetype, paths in candidates.items():
+        if len(paths) > 1:
+            # Side-cars of the recipe can also resolve to the file type by their stem
+            # (e.g. "dicom-series.salt"), so only keep the ones that are valid recipes
+            recipe_formats = recipe_formats_for(filetype)
+            if recipe_formats is not None:
+                paths = [p for p in paths if any(f.matches(p) for f in recipe_formats)]
+        if len(paths) != 1:
+            raise ValueError(
+                f"Expected exactly one deidentification recipe file for {filetype} in "
+                f"{spec_dir}, found {[p.name for p in candidates[filetype]]}"
+            )
+        recipe_files[filetype] = paths[0]
+    return recipe_files
 
 
 def _resolve_mime_type(
@@ -638,35 +630,3 @@ def _resolve_mime_type(
         return from_mime(mime_like)
     except Exception:
         return None
-
-
-def _load_transforms(
-    transforms_path: Path,
-) -> dict[str, Transform] | None:
-    """Load a TRANSFORMS dict from a Python file.
-
-    Parameters
-    ----------
-    transforms_path : Path
-        path to a ``.transforms.py`` file that defines ``TRANSFORMS``
-
-    Returns
-    -------
-    dict or None
-        the transforms dict, or None if the file does not define one
-    """
-    spec = importlib.util.spec_from_file_location(
-        f"xnat_ingest._deid_transforms.{transforms_path.stem}", transforms_path
-    )
-    if spec is None or spec.loader is None:
-        logger.warning("Could not load transforms from '%s'", transforms_path)
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    loaded = getattr(module, "TRANSFORMS", None)
-    if loaded is None:
-        logger.warning(
-            "Transforms file '%s' does not define TRANSFORMS",
-            transforms_path,
-        )
-    return loaded

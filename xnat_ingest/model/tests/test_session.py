@@ -1,13 +1,16 @@
 import functools
+import json
 import logging
+import os
 import typing as ty
 from pathlib import Path
 
 import pytest
 import yaml
-from fileformats.core import from_mime
+from fileformats.application import Json
+from fileformats.core import Loaded, extra_implementation, from_mime
 from fileformats.generic import File, SetOf
-from fileformats.medimage import DicomSeries
+from fileformats.medimage import DicomSeries, MedicalImagingData
 from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_CountRate,
     SyngoMi_Vr20b_ListMode,
@@ -40,6 +43,7 @@ from xnat_ingest.model.session import (
     ImagingScan,
     ImagingSession,
     _glob_to_regex,
+    _load_recipe,
     _metadata_diff,
     _type_name_resource_label,
 )
@@ -473,7 +477,7 @@ def test_from_paths_resource_label_defaults_to_mime_like_type_name(
         ("VectraExport", "vectra-export"),
         ("Sqlite3Db", "sqlite3-db"),
         ("SyngoMi_Vr20b_ListMode", "syngo-mi_vr20b_list-mode"),
-        ("Png___SetOf", "png_set-of"),
+        ("Png__SetOf", "png_set-of"),
     ],
 )
 def test_type_name_resource_label(type_name: str, expected: str) -> None:
@@ -1440,10 +1444,35 @@ def test_metadata_diff_mapping_replaced_by_non_mapping() -> None:
 DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
 
 
+class DeidTestFile(File, MedicalImagingData):
+    """Generic file containing PHI, with a registered deidentify implementation (whose
+    signature determines the format the recipe is loaded from), which is overridden
+    per-instance by the stand-ins below"""
+
+    contains_phi = True
+
+
+@extra_implementation(MedicalImagingData.deidentify)
+def deid_test_file_deidentify(
+    fileset: DeidTestFile,
+    out_dir: os.PathLike[str],
+    recipe: Loaded[Json] | None = None,
+    **kwargs: ty.Any,
+) -> DeidTestFile:
+    raise NotImplementedError("overridden per-instance in tests")
+
+
+@pytest.fixture
+def recipe_file(tmp_path: Path) -> Path:
+    fspath = tmp_path / "recipe.json"
+    fspath.write_text(json.dumps({"remove": ["PatientName"]}))
+    return fspath
+
+
 def _deidentify_test_impl(
     fileset: File,
     out_dir: Path,
-    spec: ty.Any = None,
+    recipe: ty.Any = None,
     **kwargs: ty.Any,
 ) -> File:
     dest = Path(out_dir)
@@ -1457,17 +1486,16 @@ def _deidentify_test_impl(
     return deidentified
 
 
-def _make_deid_fileset(seed: int, expected_reid: dict) -> File:
-    """Return a File instance with contains_phi=True and an injected deidentify().
+def _make_deid_fileset(seed: int, expected_reid: dict) -> DeidTestFile:
+    """Return a DeidTestFile instance (contains_phi=True) with an injected deidentify().
 
-    Setting contains_phi=True routes it through the deidentify branch in
+    contains_phi=True routes it through the deidentify branch in
     session.deidentify(). expected_reid is written to the fileset's metadata overlay
     so that session.deidentify()'s before/after diff reconstructs it. The injected
     method is a functools.partial binding a module-level function (not a closure),
     just for consistency/reuse across the fixtures in this module.
     """
-    f = File.sample(seed=seed)
-    f.contains_phi = True
+    f = DeidTestFile.sample(seed=seed)
     f.metadata.update(expected_reid)
     f.deidentify = functools.partial(_deidentify_test_impl, f)
     return f
@@ -1502,7 +1530,7 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
                 assert fspath.exists()
 
 
-def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
+def test_deidentify_collects_reid_metadata(tmp_path: Path, recipe_file: Path) -> None:
     """deidentify() returns reid metadata from resources that implement deidentify."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
@@ -1512,13 +1540,15 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path) -> None:
         session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
-    deid_session, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
+    deid_session, reid_mdata = session.deidentify(
+        tmp_path / "dest", recipe_files={DeidTestFile: recipe_file}
+    )
     assert reid_mdata == DEIDENTIFY_REID_MDATA
     assert "1" in deid_session.scans
 
 
-def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
-    """Empty project_spec with require_matching_spec=True raises KeyError."""
+def test_deidentify_missing_recipe_file_raises(tmp_path: Path) -> None:
+    """No recipe files with require_matching_recipe_file=True raises KeyError."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
         uid="12345",
@@ -1528,13 +1558,16 @@ def test_deidentify_missing_spec_raises(tmp_path: Path) -> None:
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
-        session.deidentify(tmp_path / "dest", specs={}, require_matching_spec=True)
+        session.deidentify(
+            tmp_path / "dest", recipe_files={}, require_matching_recipe_file=True
+        )
 
 
-def test_deidentify_missing_spec_warns(
+def test_deidentify_missing_recipe_file_warns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Empty project_spec with require_matching_spec=False logs a warning and proceeds."""
+    """No recipe files with require_matching_recipe_file=False logs a warning and
+    proceeds."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = ImagingSession(
         uid="12345",
@@ -1545,14 +1578,16 @@ def test_deidentify_missing_spec_warns(
     )
     with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
         deid_session, reid_mdata = session.deidentify(
-            tmp_path / "dest", specs={}, require_matching_spec=False
+            tmp_path / "dest", recipe_files={}, require_matching_recipe_file=False
         )
-    assert "No deidentification specification" in caplog.text
+    assert "No deidentification recipe file" in caplog.text
     assert "1" in deid_session.scans
     assert reid_mdata == DEIDENTIFY_REID_MDATA
 
 
-def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> None:
+def test_deidentify_merges_reid_metadata_across_resources(
+    tmp_path: Path, recipe_file: Path
+) -> None:
     """Reid metadata from multiple resources is collated into a single dict."""
     f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
@@ -1566,11 +1601,15 @@ def test_deidentify_merges_reid_metadata_across_resources(tmp_path: Path) -> Non
             ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),
         ],
     )
-    _, reid_mdata = session.deidentify(tmp_path / "dest", specs={File: {}})
+    _, reid_mdata = session.deidentify(
+        tmp_path / "dest", recipe_files={DeidTestFile: recipe_file}
+    )
     assert reid_mdata == {"PatientName": "Alice", "DOB": "19901201"}
 
 
-def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
+def test_deidentify_passes_max_workers_to_resource(
+    tmp_path: Path, recipe_file: Path
+) -> None:
     """max_workers passed to session.deidentify() should reach each resource's
     own FileSet.deidentify() call unchanged.
     """
@@ -1579,11 +1618,11 @@ def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
     def _capturing_deidentify_impl(
         fileset: File,
         out_dir: Path,
-        spec: ty.Any = None,
+        recipe: ty.Any = None,
         **kwargs: ty.Any,
     ) -> File:
         received_max_workers.append(kwargs.get("max_workers"))
-        return _deidentify_test_impl(fileset, out_dir, spec=spec, **kwargs)
+        return _deidentify_test_impl(fileset, out_dir, recipe=recipe, **kwargs)
 
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     f.deidentify = functools.partial(_capturing_deidentify_impl, f)
@@ -1594,7 +1633,9 @@ def test_deidentify_passes_max_workers_to_resource(tmp_path: Path) -> None:
         session_id="SESS",
         scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
     )
-    session.deidentify(tmp_path / "dest", specs={File: {}}, max_workers=3)
+    session.deidentify(
+        tmp_path / "dest", recipe_files={DeidTestFile: recipe_file}, max_workers=3
+    )
     assert received_max_workers == [3]
 
 
@@ -1624,10 +1665,97 @@ def test_deidentify_carries_session_level_resources(tmp_path: Path) -> None:
     session.add_session_resource("report", File.sample(seed=42))
     assert "report" in session.session_resources
 
-    deid, _ = session.deidentify(tmp_path / "out", require_matching_spec=False)
+    deid, _ = session.deidentify(tmp_path / "out", require_matching_recipe_file=False)
 
     assert "report" in deid.session_resources, (
         "the session-level resource was dropped by deidentify(), so it never "
         "reaches XNAT and the completeness gate refuses the unlink for ever"
     )
     assert set(deid.scans) == set(session.scans), "scans must be unaffected"
+
+
+def test_load_recipe_dicom(tmp_path: Path) -> None:
+    """A recipe file is loaded into the type given by the ``Loaded[...]`` annotation
+    of the ``recipe`` argument of the deidentify implementation for the fileset"""
+    deid = pytest.importorskip("deid.config")
+    from fileformats.core import check_loaded
+    from fileformats.medimage import DeidRecipe
+
+    recipe_file = tmp_path / "deid.dicom"
+    recipe_file.write_text("FORMAT dicom\n\n%header\n\nREMOVE PatientName\n")
+    series = DicomSeries(get_ac_image().iterdir())
+
+    recipe = _load_recipe(series, recipe_file)
+
+    assert isinstance(recipe, deid.DeidRecipe)
+    check_loaded(DeidRecipe, recipe)
+
+
+def test_load_recipe_dicom_with_side_cars(tmp_path: Path) -> None:
+    """A recipe file with side-cars is loaded as the format that includes them
+    (DeidRecipeX), so its transforms (salted with the key in the salt side-car) are
+    bundled into the loaded recipe"""
+    pytest.importorskip("deid.config")
+
+    recipe_file = tmp_path / "dicom-series.deid"
+    recipe_file.write_text(
+        "FORMAT dicom\n\n%header\n\nREPLACE PatientName var:anon_patient_name\n"
+    )
+    (tmp_path / "dicom-series.transforms.py").write_text(
+        'TRANSFORMS = {"anon_patient_name": lambda ds: SALT.decode()}\n'
+    )
+    salt_file = tmp_path / "dicom-series.salt"
+    salt_file.write_bytes(b"secret\n")
+    salt_file.chmod(0o600)
+    series = DicomSeries(get_ac_image().iterdir())
+
+    recipe = _load_recipe(series, recipe_file)
+
+    assert set(recipe.transforms) == {"anon_patient_name"}
+    assert recipe.transforms["anon_patient_name"](None) == "secret"
+
+
+def test_load_recipe_test_format(recipe_file: Path) -> None:
+    assert _load_recipe(DeidTestFile.sample(), recipe_file) == {
+        "remove": ["PatientName"]
+    }
+    assert _load_recipe(DeidTestFile.sample(), None) is None
+
+
+def test_load_recipe_not_a_path() -> None:
+    with pytest.raises(TypeError, match="Expected a path"):
+        _load_recipe(DeidTestFile.sample(), {"already": "loaded"})  # type: ignore[arg-type]
+
+
+def test_load_recipe_no_implementation(recipe_file: Path) -> None:
+    with pytest.raises(NotImplementedError, match="No deidentify implementation"):
+        _load_recipe(File.sample(), recipe_file)
+
+
+def test_load_recipe_implementation_without_recipe(tmp_path: Path) -> None:
+    """Implementations whose recipe argument is annotated ``None`` can only be passed
+    None"""
+    pytest.importorskip("fileformats.extras.vendor.canfield.medimage")
+    from fileformats.vendor.canfield.medimage import TomSeedLog
+
+    log_file = tmp_path / "capture.tom-seed.log"
+    log_file.write_text("log")
+    recipe_file = tmp_path / "recipe"
+    recipe_file.write_text("recipe")
+
+    assert _load_recipe(TomSeedLog(log_file), None) is None
+    with pytest.raises(ValueError, match="doesn't accept a recipe"):
+        _load_recipe(TomSeedLog(log_file), recipe_file)
+
+
+def test_load_recipe_no_matching_format(tmp_path: Path) -> None:
+    """A recipe file that doesn't match any of the formats accepted by the
+    implementation (e.g. a deid recipe without a FORMAT line) raises"""
+    from fileformats.core.exceptions import FormatMismatchError
+
+    recipe_file = tmp_path / "dicom-series.deid"
+    recipe_file.write_text("%header\n\nREMOVE PatientName\n")
+    series = DicomSeries(get_ac_image().iterdir())
+
+    with pytest.raises(FormatMismatchError, match="doesn't match any of the recipe"):
+        _load_recipe(series, recipe_file)

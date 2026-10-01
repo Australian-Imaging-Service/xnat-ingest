@@ -19,11 +19,19 @@ import requests
 import yaml
 from dateutil.parser import isoparse
 from fileformats.application import Yaml
-from fileformats.core import FileSet, from_mime, from_paths, to_mime
+from fileformats.core import (
+    FileSet,
+    LoadedMarker,
+    find_extra_implementation,
+    from_mime,
+    from_paths,
+    to_mime,
+)
+from fileformats.core.exceptions import FormatMismatchError
 from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
 from fileformats.generic import Directory, SetOf
-from fileformats.medimage import DicomCollection
+from fileformats.medimage import DicomCollection, MedicalImagingData
 from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
@@ -44,8 +52,6 @@ from .resource import ImagingResource
 from .scan import ImagingScan
 
 logger = logging.getLogger("xnat-ingest")
-
-Transform = ty.Callable[[ty.Mapping[str, ty.Any]], ty.Any]
 
 # Sentinel returned by ``IDSpec.get_value_from_matching_spec`` when no scan spec
 # applies to a fileset's type, signalling that the scan should take the resource's name
@@ -307,15 +313,123 @@ def _recursive_collect(
                 stack.append(child)
 
 
+def recipe_formats_for(datatype: type[FileSet]) -> list[type[FileSet]] | None:
+    """Determines the formats that deidentification recipes for the datatype can be
+    loaded from, i.e. the formats given by the ``Loaded[<recipe format>]`` annotation
+    (or union of them, in order of preference) of the ``recipe`` argument of its
+    `deidentify` implementation (e.g. ``Loaded[DeidRecipeX] | Loaded[DeidRecipe]`` for
+    DICOM)
+
+    Parameters
+    ----------
+    datatype : type[FileSet]
+        the type of the filesets to be deidentified
+
+    Returns
+    -------
+    list[type[FileSet]] | None
+        the formats the recipe can be loaded from, in order of preference, or None if
+        the implementation doesn't accept a recipe (i.e. its ``recipe`` argument is
+        annotated with ``None``)
+
+    Raises
+    ------
+    NotImplementedError
+        if there is no deidentify implementation registered for the fileset type
+    TypeError
+        if the implementation doesn't have a ``recipe`` argument annotated with either
+        ``Loaded[<recipe format>]`` (or a union of them) or ``None``
+    """
+    implementation = find_extra_implementation(MedicalImagingData.deidentify, datatype)
+    if implementation is None:
+        raise NotImplementedError(
+            f"No deidentify implementation is registered for {datatype} filesets"
+        )
+    try:
+        recipe_param = inspect.signature(implementation).parameters["recipe"]
+    except KeyError:
+        raise TypeError(
+            f"The deidentify implementation for {datatype} filesets, "
+            f"{implementation.__qualname__}, doesn't have a 'recipe' argument"
+        ) from None
+    recipe_hint = recipe_param.annotation
+    # Only evaluate the "recipe" annotation, as other string annotations may reference
+    # optional dependencies that aren't installed
+    if isinstance(recipe_hint, str):
+        recipe_hint = eval(recipe_hint, implementation.__globals__)
+    if recipe_hint is None or recipe_hint is type(None):
+        return None
+    markers = LoadedMarker.all_from_hint(recipe_hint)
+    if markers is None:
+        raise TypeError(
+            f"The 'recipe' argument of the deidentify implementation for {datatype} "
+            f"filesets, {implementation.__qualname__}, should be annotated with either "
+            f"'Loaded[<recipe format>]' (or a union of them) or 'None', not "
+            f"{recipe_hint!r}"
+        )
+    return [m.format for m in markers]
+
+
+def _load_recipe(fileset: FileSet, recipe_file: Path | None) -> ty.Any:
+    """Loads the deidentification recipe from the recipe file into the type expected
+    by the `deidentify` implementation for the fileset, using the first of the formats
+    it accepts (see `recipe_formats_for`) that the recipe file matches, e.g.
+    ``DeidRecipeX`` if the recipe has the side-cars it requires, otherwise ``DeidRecipe``
+
+    Parameters
+    ----------
+    fileset : FileSet
+        the fileset to be deidentified
+    recipe_file : Path | None
+        the path to the recipe file
+
+    Returns
+    -------
+    Any
+        the loaded recipe, or None if no recipe file was provided
+
+    Raises
+    ------
+    TypeError
+        if the recipe file isn't a path
+    ValueError
+        if a recipe file is provided for a fileset whose deidentify implementation
+        doesn't accept a recipe
+    FormatMismatchError
+        if the recipe file doesn't match any of the formats the implementation accepts
+    """
+    if recipe_file is not None and not isinstance(recipe_file, (str, os.PathLike)):
+        raise TypeError(
+            f"Expected a path to a deidentification recipe file, not {recipe_file!r}"
+        )
+    recipe_formats = recipe_formats_for(type(fileset))
+    if recipe_formats is None:
+        if recipe_file is not None:
+            raise ValueError(
+                f"A deidentification recipe file, '{recipe_file}', was provided for "
+                f"{type(fileset)} filesets, but their deidentify implementation doesn't "
+                "accept a recipe"
+            )
+        return None
+    if recipe_file is None:
+        return None
+    for recipe_format in recipe_formats:
+        if recipe_format.matches(recipe_file):
+            return recipe_format(recipe_file).load()
+    raise FormatMismatchError(
+        f"Deidentification recipe file '{recipe_file}' doesn't match any of the recipe "
+        f"formats accepted for {type(fileset)} filesets, {recipe_formats}"
+    )
+
+
 def _deidentify_or_copy_resource(
     fileset: FileSet,
     resource_name: str,
     resource_dest_dir: Path,
     contains_phi: bool,
-    spec: ty.Any,
+    recipe_file: Path | None,
     copy_mode: FileSet.CopyMode,
     max_workers: int | None,
-    transforms: dict[str, Transform] | None = None,
 ) -> tuple[FileSet, ty.Mapping[str, ty.Any]]:
     """Deidentifies (or, for filesets that don't contain PHI, just copies) a single
     resource.
@@ -333,9 +447,8 @@ def _deidentify_or_copy_resource(
     orig_metadata = dict(fileset.metadata)
     deid_resource = fileset.deidentify(
         resource_dest_dir,
-        spec=spec,
+        recipe=_load_recipe(fileset, recipe_file),
         max_workers=max_workers,
-        transforms=transforms,
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
@@ -1167,12 +1280,11 @@ class ImagingSession:
     def deidentify(
         self,
         dest_dir: Path,
-        specs: dict[type[FileSet], ty.Any] | None = None,
+        recipe_files: dict[type[FileSet], Path] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         on_resource_clash: OnResourceClash = "error",
-        require_matching_spec: bool = True,
+        require_matching_recipe_file: bool = True,
         max_workers: int | None = None,
-        transforms: dict[type[FileSet], dict[str, Transform]] | None = None,
     ) -> tuple[Self, dict[str, ty.Any]]:
         """Creates a new session with deidentified images
 
@@ -1180,11 +1292,12 @@ class ImagingSession:
         ----------
         dest_dir : Path
             the directory to save the deidentified files into
-        specs : dict[type[FileSet], Any], optional
-            a project-specific specification that defines how to deidentify the different
-            file types within the imaging session. The keys of the project spec are
-            the mime-like of the file types (see https://arcanaframework.github.io/fileformats/)
-            and the values are arbitrary file-format-specific specifications.
+        recipe_files : dict[type[FileSet], Path], optional
+            project-specific deidentification recipe files for the different file types
+            within the imaging session. The keys are the file types (see
+            https://arcanaframework.github.io/fileformats/) and the values are paths to
+            the recipe files, which are loaded into the format expected by the
+            deidentify implementation for each file type (e.g. ``DeidRecipe`` for DICOM)
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
@@ -1194,8 +1307,9 @@ class ImagingSession:
             if "merge", existing sessions with the same name will be merged.
             if "error", an error will be raised if a session with the same name already exists in the staging directory.
             if "overwrite", an existing resource with the same name will be overwritten.
-        require_matching_spec : bool, optional
-            whether to require a matching specification for each fileset, by default True
+        require_matching_recipe_file : bool, optional
+            whether to require a matching recipe file for each fileset whose deidentify
+            implementation accepts a recipe, by default True
         max_workers : int, optional
             passed through as `max_workers` to each resource's `FileSet.deidentify`, for
             formats whose deidentification implementation can parallelise work *within* a
@@ -1203,11 +1317,6 @@ class ImagingSession:
             Formats that don't accept/use it just ignore it. Resources themselves are
             deidentified/copied sequentially, one at a time, to keep failures easy to
             trace back to the resource that caused them.
-        transforms : dict[type[FileSet], dict[str, Transform]], optional
-            per-format transforms that compute de-identification replacement values.
-            Keys are file-format types; values are dicts mapping transform names to
-            callables that accept a dataset/mapping and return a replacement value.
-            Passed through as ``variable_builders`` to ``FileSet.deidentify()``.
 
         Returns
         -------
@@ -1217,47 +1326,26 @@ class ImagingSession:
             a mapping containing the original values of metadata fields that
             have been removed or modified
         """
-        if specs is None:
-            specs = {}
-        if transforms is None:
-            transforms = {}
+        if recipe_files is None:
+            recipe_files = {}
 
-        def select_spec(fileset: FileSet) -> ty.Any:
-            """Select the appropriate deidentification specification for the
+        def select_recipe_file(fileset: FileSet) -> Path | None:
+            """Select the appropriate deidentification recipe file for the
             resource based on its file type
             """
-            matching_specs = {k: v for k, v in specs.items() if isinstance(fileset, k)}
-            if not matching_specs:
-                return None
-            elif len(matching_specs) > 1:
-                for k in matching_specs:
-                    if all(issubclass(k, other_k) for other_k in matching_specs):
-                        return matching_specs[k]
-                raise KeyError(
-                    f"Multiple deidentification specifications found for '{to_mime(type(fileset))}'"
-                    f"file types. Please provide a more specific formats to map the specification"
-                    f"specifications: {list(matching_specs)}"
-                )
-            return next(iter(matching_specs.values()))
-
-        def select_transforms(
-            fileset: FileSet,
-        ) -> dict[str, Transform] | None:
-            """Select the transforms that match this fileset's type."""
-            matching = {k: v for k, v in transforms.items() if isinstance(fileset, k)}
+            matching = {k: v for k, v in recipe_files.items() if isinstance(fileset, k)}
             if not matching:
                 return None
-            if len(matching) == 1:
-                return next(iter(matching.values()))
-            # Prefer the most specific type
-            for k in matching:
-                if all(issubclass(k, other_k) for other_k in matching):
-                    return matching[k]
-            # Fall back to merging all matching transforms
-            merged: dict[str, Transform] = {}
-            for v in matching.values():
-                merged.update(v)
-            return merged
+            elif len(matching) > 1:
+                for k in matching:
+                    if all(issubclass(k, other_k) for other_k in matching):
+                        return matching[k]
+                raise KeyError(
+                    f"Multiple deidentification recipe files found for "
+                    f"'{to_mime(type(fileset))}' file types. Please provide recipe files "
+                    f"for more specific formats: {list(matching)}"
+                )
+            return next(iter(matching.values()))
 
         # Create a new session to save the deidentified files into
         deidentified = self.new_empty()
@@ -1267,27 +1355,28 @@ class ImagingSession:
             for resource_name, resource in scan.resources.items():
                 resource_dest_dir = dest_dir / scan.id / resource_name
                 contains_phi = getattr(resource.fileset, "contains_phi", False)
-                resource_spec = None
-                resource_transforms = None
+                resource_recipe_file = None
                 if contains_phi:
-                    resource_spec = select_spec(resource.fileset)
-                    resource_transforms = select_transforms(resource.fileset)
-                    if resource_spec is None:
+                    resource_recipe_file = select_recipe_file(resource.fileset)
+                    if (
+                        resource_recipe_file is None
+                        and recipe_formats_for(type(resource.fileset)) is not None
+                    ):
                         msg = (
-                            "No deidentification specification found for %s fileset in %s/%s resource. "
-                            "Please provide a project specification for %s in the file format hierarchy to "
+                            "No deidentification recipe file found for %s fileset in %s/%s resource. "
+                            "Please provide a project recipe file for %s in the file format hierarchy to "
                             "deidentify this resource. Returning None and copying the files without "
                             "deidentification, which may lead to PHI being uploaded to XNAT if the fileset "
-                            "contains PHI. Matching specifications found in project spec: %s"
+                            "contains PHI. Recipe files found for project: %s"
                         )
                         msg_vars = (
                             type(resource.fileset).__name__,
                             scan.id,
                             resource_name,
                             type(resource.fileset).__name__,
-                            list(specs),
+                            list(recipe_files),
                         )
-                        if require_matching_spec:
+                        if require_matching_recipe_file:
                             raise KeyError(msg % msg_vars)
                         else:
                             logger.warning(msg, *msg_vars)
@@ -1296,10 +1385,9 @@ class ImagingSession:
                     resource_name,
                     resource_dest_dir,
                     contains_phi,
-                    resource_spec,
+                    resource_recipe_file,
                     copy_mode,
                     max_workers,
-                    transforms=resource_transforms,
                 )
                 if reid_mdata is not None:
                     reid_series.append(reid_mdata)
@@ -1330,28 +1418,29 @@ class ImagingSession:
         # where save() puts them and where load() looks for them.
         for resource_name, resource in self.session_resources.items():
             contains_phi = getattr(resource.fileset, "contains_phi", False)
-            resource_spec = None
-            resource_transforms = None
+            resource_recipe_file = None
             if contains_phi:
-                resource_spec = select_spec(resource.fileset)
-                resource_transforms = select_transforms(resource.fileset)
-                if resource_spec is None:
+                resource_recipe_file = select_recipe_file(resource.fileset)
+                if (
+                    resource_recipe_file is None
+                    and recipe_formats_for(type(resource.fileset)) is not None
+                ):
                     msg = (
-                        "No deidentification specification found for %s fileset in the "
+                        "No deidentification recipe file found for %s fileset in the "
                         "session-level %s resource. Please provide a project "
-                        "specification for %s in the file format hierarchy to "
+                        "recipe file for %s in the file format hierarchy to "
                         "deidentify this resource. Returning None and copying the files "
                         "without deidentification, which may lead to PHI being uploaded "
-                        "to XNAT if the fileset contains PHI. Matching specifications "
-                        "found in project spec: %s"
+                        "to XNAT if the fileset contains PHI. Recipe files found for "
+                        "project: %s"
                     )
                     msg_vars = (
                         type(resource.fileset).__name__,
                         resource_name,
                         type(resource.fileset).__name__,
-                        list(specs),
+                        list(recipe_files),
                     )
-                    if require_matching_spec:
+                    if require_matching_recipe_file:
                         raise KeyError(msg % msg_vars)
                     else:
                         logger.warning(msg, *msg_vars)
@@ -1360,10 +1449,9 @@ class ImagingSession:
                 resource_name,
                 dest_dir / resource_name,
                 contains_phi,
-                resource_spec,
+                resource_recipe_file,
                 copy_mode,
                 max_workers,
-                transforms=resource_transforms,
             )
             if reid_mdata is not None:
                 reid_series.append(reid_mdata)
