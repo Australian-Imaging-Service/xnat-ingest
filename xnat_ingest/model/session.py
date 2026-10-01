@@ -28,7 +28,9 @@ from fileformats.core import (
     to_mime,
 )
 from fileformats.core.exceptions import (
-  FormatDefinitionError, FormatRecognitionError, FormatMismatchError
+    FormatDefinitionError,
+    FormatMismatchError,
+    FormatRecognitionError,
 )
 from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
