@@ -27,7 +27,9 @@ from fileformats.core import (
     from_paths,
     to_mime,
 )
-from fileformats.core.exceptions import FormatMismatchError
+from fileformats.core.exceptions import (
+  FormatDefinitionError, FormatRecognitionError, FormatMismatchError
+)
 from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
 from fileformats.generic import Directory, SetOf
@@ -158,16 +160,25 @@ def _set_content_types(fileset: FileSet) -> tuple[type[FileSet], ...]:
     return tuple(content_types) if content_types else (type(fileset),)
 
 
-def _type_name_resource_label(type_name: str) -> str:
-    """Fallback resource label for a fileset with no ``--resource`` spec: the
-    mime-like rendering of its type name, e.g. 'vectra-export', 'sqlite3-db',
-    run through the same ID/label escaping as session/scan IDs
-    (:attr:`IDSpec.xnat_id_escape_re`) so the '.'/'+' that ``to_mime_format_name``
-    emits for vendor/classifier type names (``SyngoMi_Vr20b_ListMode`` ->
-    ``syngo-mi.vr20b.list-mode``, ``Png___SetOf`` -> ``png+set-of``) collapse to
-    '_' while '-' is kept.
+def _datatype_resource_label(datatype: type[FileSet]) -> str:
+    """Fallback resource label for a fileset with no ``--resource`` spec: the format
+    part of its type's mime-like string (i.e. without the namespace and vendor), e.g.
+    'vectra-export', 'sqlite3-db', run through the same ID/label escaping as
+    session/scan IDs (:attr:`IDSpec.xnat_id_escape_re`) so the '.', '+' and '[]' in
+    vendor and classified types (``SyngoMi_Vr20b_ListMode`` ->
+    ``syngo-mi.vr20b.list-mode``, ``SetOf[Png]`` -> ``png+set-of``) collapse to '_'
+    while '-' is kept.
     """
-    return IDSpec.xnat_id_escape_re.sub("_", to_mime_format_name(type_name))
+    try:
+        mime_like = datatype.mime_like
+    except (FormatDefinitionError, FormatRecognitionError):
+        # e.g. types defined outside of the fileformats namespace
+        format_name = to_mime_format_name(datatype.__name__)
+    else:
+        format_name = mime_like.split("/", 1)[1]
+        if datatype.vendor:
+            format_name = format_name.removeprefix(f"vnd.{datatype.vendor}.")
+    return IDSpec.xnat_id_escape_re.sub("_", format_name)
 
 
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -930,7 +941,7 @@ class ImagingSession:
             elif not resource_field:
                 # No --resource spec given: label the resource with the mime-like
                 # rendering of the fileset's type name, e.g. 'vectra-export'
-                resource_label = _type_name_resource_label(fileset.type_name)
+                resource_label = _datatype_resource_label(type(fileset))
                 resource_derived = True
             else:
                 resource_label = IDSpec.get_value_from_matching_spec(
