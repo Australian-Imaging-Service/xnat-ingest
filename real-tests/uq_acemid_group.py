@@ -1,4 +1,5 @@
 import logging
+import shutil
 import traceback
 
 import click
@@ -20,6 +21,8 @@ WORK_DIR = "/Users/tclo7153/Data/ACEMID/uq-test"
 
 logging.basicConfig(level=logging.DEBUG)
 
+shutil.rmtree(f"{WORK_DIR}/grouped")
+
 result = runner.invoke(
     group_cmd,
     [
@@ -35,9 +38,9 @@ result = runner.invoke(
         "--datatype",
         "medimage/vnd.canfield.dexi-data-dir",
         "--exclude-path",
-        f"{WORK_DIR}/*/*/*.png",
+        "*/*/*/*.png",
         "--exclude-path",
-        f"{WORK_DIR}/*/*/*.jpg",
+        "*/*/*/*.jpg",
         "--allow-unrecognised",
         ".*",
         "--session",
@@ -55,6 +58,9 @@ result = runner.invoke(
         "--resource",
         "CaptureDevice",
         "image/png|image/jpeg",
+        "--resource",
+        "__datatype__",
+        "medimage/vnd.canfield.whole-body-analysis-dir|medimage/vnd.canfield.dexi-data-dir",
         "--on-resource-clash",
         "merge",
         "image/png|image/jpeg",
@@ -70,7 +76,7 @@ result = runner.invoke(
         "--metadata-table",
         f"{WORK_DIR}/input/Dermoscopy/LesionDermoscopyData_20260805155613.csv",
         "fileset[image/png|image/jpeg]",
-        "ImagePath='=HYPERLINK(\"{subject_uid}/{filename}\")'",
+        'ImagePath==HYPERLINK("{subject_uid}/{filename}")',
     ],  # XINGEST_DIR
     catch_exceptions=False,
 )
