@@ -126,6 +126,9 @@ class ImagingScan:
         scan_id, scan_type = scan_dir.name.split(".", 1)
         scan = cls(scan_id, scan_type or None)
         for resource_dir in scan_dir.iterdir():
+            if resource_dir.name == Metadata.FNAME:
+                scan.metadata = Metadata.load(scan_dir, scan)
+                continue
             if resource_dir.is_dir():
                 resource = ImagingResource.load(
                     resource_dir,
@@ -134,8 +137,6 @@ class ImagingScan:
                 )
                 resource.scan = scan
                 scan.resources[resource.name] = resource
-        if (scan_dir / Metadata.FNAME).exists():
-            scan.metadata = Metadata.load(scan_dir, scan)
         return scan
 
     @property

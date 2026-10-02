@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 import traceback
 import typing as ty
@@ -32,6 +33,28 @@ sch.setFormatter(formatter)
 logger.addHandler(sch)
 
 PROJECT_ID = "PROJECT_ID"
+
+
+class _DropThirdPartyLogs(logging.Filter):
+    """Drops log records below ERROR from noisy third-party loggers (pydicom and
+    xnatpy, whose loggers are named "xnat-<connection-id>" per session) from the logs
+    pytest captures and shows for failing tests"""
+
+    NAME_RE = re.compile(r"pydicom(\..*)?|xnat-[0-9a-f]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.ERROR or not self.NAME_RE.fullmatch(
+            record.name
+        )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    logging_plugin = config.pluginmanager.get_plugin("logging-plugin")
+    if logging_plugin is not None:
+        for handler in (logging_plugin.caplog_handler, logging_plugin.report_handler):
+            handler.addFilter(_DropThirdPartyLogs())
+
 
 # For debugging in IDE's don't catch raised exceptions and let the IDE
 # break at it

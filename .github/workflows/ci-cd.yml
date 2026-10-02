@@ -111,7 +111,7 @@ jobs:
         echo "password admin" >> $HOME/.netrc
 
     - name: Pytest
-      run: uv run --no-sync pytest -vvs --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
+      run: uv run --no-sync pytest -q -ra --tb=short --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2
