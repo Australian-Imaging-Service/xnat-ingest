@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click
+import pytest
 import xnat4tests  # type: ignore[import-untyped]
 from fileformats.application import Json
 from fileformats.core import SampleFileGenerator, extra_implementation
@@ -1365,6 +1366,9 @@ def test_check_upload_missing_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
+@pytest.mark.xfail(
+    reason="Requires https://gitlab.com/radiology/infrastructure/xnatpy/-/merge_requests/68 to be merged and released"
+)
 @mock_aws
 def test_check_upload_empty_scan(
     xnat_server: str,
@@ -1472,7 +1476,10 @@ def test_check_upload_empty_scan(
         xsession = xproject.experiments["1"]
         xscan = xsession.scans["1"]
         xresource = next(iter(xscan.resources))
-        xresource.delete()
+        # Delete via the REST API rather than xresource.delete(), as in xnatpy >=0.8
+        # that also purges the object from every cached listing in the process,
+        # which fails on listings left over from sessions that are already closed
+        xnat_login.delete(xresource.uri)
 
     assert result.exit_code == 0, show_cli_trace(result)
 
@@ -1501,6 +1508,9 @@ def test_check_upload_empty_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
+@pytest.mark.xfail(
+    reason="Requires https://gitlab.com/radiology/infrastructure/xnatpy/-/merge_requests/68 to be merged and released"
+)
 @mock_aws
 def test_check_upload_missing_resource(
     xnat_server: str,
@@ -1609,7 +1619,10 @@ def test_check_upload_missing_resource(
         xsession = xproject.experiments["1"]
         xscan = xsession.scans["1"]
         xresource = next(iter(xscan.resources))
-        xresource.delete()
+        # Delete via the REST API rather than xresource.delete(), as in xnatpy >=0.8
+        # that also purges the object from every cached listing in the process,
+        # which fails on listings left over from sessions that are already closed
+        xnat_login.delete(xresource.uri)
 
     assert result.exit_code == 0, show_cli_trace(result)
 
