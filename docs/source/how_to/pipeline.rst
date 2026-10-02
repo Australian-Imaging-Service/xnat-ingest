@@ -33,7 +33,7 @@ If no ``--resource`` spec matches a fileset, its resource is named after the
 fileset's type (``dicom-series``, ``vectra-export``, ...); if no ``--scan``
 spec matches, the scan takes that same name. Override any of these with
 ``--session``/``--scan``/``--resource`` for other data — each takes
-``<specifier> <datatype>`` and can be repeated to treat datatypes
+``<expr> <datatype>`` and can be repeated to treat datatypes
 differently (see :doc:`/cli`).
 
 Add ``--unlink-source all`` to remove each source file once it's been staged
@@ -65,7 +65,7 @@ doesn't write it anywhere in the file:
 Here, anything found under a ``.../cohort-A/...`` directory gets a ``cohort``
 metadata field set to ``cohort-A``, alongside whatever's read from its DICOM headers —
 usable anywhere a metadata field is, e.g. as part of a ``--project``/``--session``
-specifier in ``assign``, or in the compound ``{...}`` format strings below.
+expr in ``assign``, or in the compound ``{...}`` format strings below.
 
 * the regex is matched (via ``re.match``, so from the start of the string, but not
   necessarily the whole thing unless you anchor it with ``$`` as above) against the
@@ -83,7 +83,7 @@ specifier in ``assign``, or in the compound ``{...}`` format strings below.
 Composing IDs from more than one field
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A field specifier (``--session``/``--scan``/``--resource`` here; ``--project``/
+A field expr (``--session``/``--scan``/``--resource`` here; ``--project``/
 ``--subject``/``--session``/``--scan`` in ``assign``, below) doesn't have to name a
 single metadata field. It can instead be a Python format string over several fields,
 to compose an ID from more than one and/or apply formatting:
@@ -92,14 +92,14 @@ to compose an ID from more than one and/or apply formatting:
 
     $ xnat-ingest group ... --session '{PatientID}_{StudyDate:%Y%m%d}' all
 
-This is detected automatically (a specifier is treated as a format string if it
-contains a ``{``, and as a plain field name otherwise, so existing specifiers like
+This is detected automatically (a expr is treated as a format string if it
+contains a ``{``, and as a plain field name otherwise, so existing exprs like
 ``SeriesNumber`` or ``ImageType[2:]`` keep working unchanged). A ``%``-style format
 spec on a field (``{StudyDate:%Y%m%d}``) works whether that field is still a live date
 value or has become a plain string (e.g. after being reloaded from a
 ``__METADATA__.json`` file written by an earlier stage) — a plain string is parsed as
 a date first if the format spec looks like it wants one. If a field referenced in the
-specifier can't be resolved at all, that part of the ID falls back to the same
+expr can't be resolved at all, that part of the ID falls back to the same
 placeholder mechanism described below for ``assign``.
 
 Recursing into nested directory formats
@@ -147,8 +147,8 @@ Handling resource-name clashes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If two filesets resolve to the same ``<scan>/<resource>`` name, the run aborts unless
-you say what to do about it. ``--on-resource-clash`` takes ``<policy> <scope>`` and
-is repeatable; a clash is resolved by the first entry whose ``<scope>`` (a MIME-like,
+you say what to do about it. ``--on-resource-clash`` takes ``<policy> <datatype>`` and
+is repeatable; a clash is resolved by the first entry whose ``<datatype>`` (a MIME-like,
 a ``|``-union, or ``all``) covers **both** filesets:
 
 * ``merge`` folds them into a single ``SetOf[...]`` resource (e.g. the PNG and JPEG
@@ -156,9 +156,9 @@ a ``|``-union, or ``all``) covers **both** filesets:
 * ``avoid`` appends a ``__2``/``__3`` suffix
 * ``overwrite`` replaces the existing resource
 
-A clash that no entry's scope covers (e.g. a PNG colliding with a directory format)
-always raises — tighten ``--scan``/``--resource`` so the two don't collide, or add a
-scope that deliberately covers both.
+A clash that no entry's datatype covers (e.g. a PNG colliding with a directory format)
+always raises — tighten ``--scan``/``--resource`` so the two don't collide, or add an
+entry whose datatype deliberately covers both.
 
 
 Grouping straight from an Orthanc server
@@ -219,7 +219,7 @@ Unlike ``group``, which reads each file's full DICOM header, ``group-orthanc`` o
 sees the tags Orthanc itself indexes: the study-level ``MainDicomTags`` and
 ``PatientMainDicomTags``. These are what end up in the session's
 ``__METADATA__.json``, and therefore what ``assign``'s
-``--project``/``--subject``/``--session`` specifiers can draw on:
+``--project``/``--subject``/``--session`` exprs can draw on:
 
 * study tags — ``StudyInstanceUID``, ``StudyID``, ``StudyDate``, ``StudyTime``,
   ``StudyDescription``, ``AccessionNumber``, ``InstitutionName``,
