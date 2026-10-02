@@ -40,3 +40,5 @@ the original DICOM files, a derived NIfTI conversion).
 
 .. autoclass:: xnat_ingest.model.resource.ImagingResource
     :members: name, fileset, checksums, scan, metadata, save, load
+
+.. autofunction:: xnat_ingest.model.session.recipe_formats_for
