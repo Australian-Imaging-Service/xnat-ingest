@@ -140,20 +140,20 @@ class SessionListing(metaclass=abc.ABCMeta):
             return False
 
         xresources = {}
+        xresources_by_scan_id: dict[str, list[ty.Any]] = defaultdict(list)
         for xscan in xsession.scans.values():
             for xresource in xscan.resources.values():
                 xresources[f"{xscan.id}.{xscan.type}/{xresource.label}"] = xresource
+                xresources_by_scan_id[str(xscan.id)].append(xresource)
         for xresource in xsession.resources.values():
             xresources[xresource.label] = xresource
-        if not set(xresources).issuperset(self.resource_paths):
-            return False
 
         # A resource that EXISTS is not necessarily a resource that is
         # COMPLETE: one holding 5 of 8 files carries the same label as one
         # holding all 8, so labels alone cannot decide this.
         #
         # Manifests are the source of truth for what should be there. A session
-        # staged without them leaves this loop empty, so it is not newly strict.
+        # staged without them is checked by resource path alone, as before.
         try:
             manifests = self.resource_manifests
         except Exception:  # noqa: BLE001 - see below, any failure means "unknown"
@@ -171,27 +171,59 @@ class SessionListing(metaclass=abc.ABCMeta):
                 exc_info=True,
             )
             return False
-        for resource_path, manifest in manifests.items():
+
+        xnat_checksums_cache: dict[int, dict[str, str]] = {}
+
+        def xnat_checksums(xresource: ty.Any) -> dict[str, str]:
+            key = id(xresource)
+            if key not in xnat_checksums_cache:
+                xnat_checksums_cache[key] = get_xnat_checksums(xresource)
+            return xnat_checksums_cache[key]
+
+        for resource_path in sorted(self.resource_paths):
+            manifest = manifests.get(resource_path)
             local_checksums = manifest.get("checksums") if manifest else None
-            if not local_checksums:
-                continue
             xresource = xresources.get(resource_path)
-            if xresource is None:
-                return False
-            comparison = compare_resource_with_xnat(
-                local_checksums, get_xnat_checksums(xresource)
-            )
-            if not comparison.complete:
-                logger.info(
-                    "'%s' in '%s' exists on XNAT but is not complete: %d file(s) "
-                    "missing, %d unexpected, %d differing. Not skipping the session.",
-                    resource_path,
-                    self.name,
-                    len(comparison.missing),
-                    len(comparison.extra),
-                    len(comparison.differing),
+            if xresource is not None:
+                if not local_checksums:
+                    continue
+                comparison = compare_resource_with_xnat(
+                    local_checksums, xnat_checksums(xresource)
                 )
-                return False
+                if not comparison.complete:
+                    logger.info(
+                        "'%s' in '%s' exists on XNAT but is not complete: %d file(s) "
+                        "missing, %d unexpected, %d differing. Not skipping the "
+                        "session.",
+                        resource_path,
+                        self.name,
+                        len(comparison.missing),
+                        len(comparison.extra),
+                        len(comparison.differing),
+                    )
+                    return False
+                continue
+            # Upload can store a staged resource under a different scan ID or
+            # label than its staged path. So look for its files, by
+            # name and checksum, across every resource in the matching scans.
+            if local_checksums and "/" in resource_path:
+                scan_id = resource_path.split("/", 1)[0].split(".", 1)[0]
+                candidates = [
+                    xr
+                    for xscan_id, xrs in xresources_by_scan_id.items()
+                    if xscan_id == scan_id or xscan_id.startswith(f"{scan_id}-")
+                    for xr in xrs
+                ]
+                if candidates and _files_held_in(
+                    local_checksums, [xnat_checksums(xr) for xr in candidates]
+                ):
+                    continue
+            logger.info(
+                "'%s' in '%s' was not found on XNAT. Not skipping the session.",
+                resource_path,
+                self.name,
+            )
+            return False
         return True
 
 
@@ -551,6 +583,23 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
             )
         xsession = SessionClass(label=session.session_id, parent=xsubject)
     return xsession
+
+
+def _files_held_in(
+    local_checksums: ty.Mapping[str, str],
+    xnat_checksums_list: ty.Iterable[ty.Mapping[str, str]],
+) -> bool:
+    """Whether every staged file is held, by name and checksum, somewhere in the
+    given XNAT resources. As in compare_resource_with_xnat, a file XNAT has not
+    yet calculated a digest for ('') is matched by name only."""
+    held: dict[str, set[str]] = defaultdict(set)
+    for xnat_checksums in xnat_checksums_list:
+        for name, digest in xnat_checksums.items():
+            held[name].add(digest)
+    return all(
+        name in held and (checksum in held[name] or "" in held[name])
+        for name, checksum in local_checksums.items()
+    )
 
 
 @attrs.define

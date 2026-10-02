@@ -115,3 +115,98 @@ def test_unreadable_manifests_do_not_vote_the_session_complete(
             "a session whose completeness cannot be determined must not be "
             "reported as uploaded"
         )
+
+
+# Upload can store a staged resource under a different label (from the DICOM SOP
+# class) or scan ID (split by modality into '<scan-id>-<modality>'), so a session
+# that is fully uploaded must still be recognised as such by its files.
+
+
+class _XResource:
+    def __init__(self, label: str, files: dict[str, str]) -> None:
+        self.label = label
+        self.files = files
+
+
+class _XScan:
+    def __init__(self, id: str, type: str, resources: list[_XResource]) -> None:
+        self.id = id
+        self.type = type
+        self.resources = {r.label: r for r in resources}
+
+
+class _XSession:
+    def __init__(self, scans: list[_XScan]) -> None:
+        self.scans = {s.id: s for s in scans}
+        self.resources: dict[str, ty.Any] = {}
+
+
+class _Connection:
+    def __init__(self, xsession: _XSession) -> None:
+        self.projects = {"proj": mock.MagicMock(experiments={"sess": xsession})}
+
+
+def _renamed_listing(
+    tmp_path: ty.Any, manifests: dict[str, dict[str, str]]
+) -> S3SessionListing:
+    # Subclass so the patched properties don't leak into other tests
+    class Listing(S3SessionListing):
+        @property
+        def resource_paths(self) -> set[str]:
+            return set(manifests)
+
+        @property
+        def resource_manifests(self) -> dict[str, dict[str, ty.Any]]:
+            return {p: {"checksums": c} for p, c in manifests.items()}
+
+    return Listing(name="proj.subj.sess", objects=[], bucket=None, cache_path=tmp_path)
+
+
+def _all_uploaded(listing: S3SessionListing, scans: list[_XScan]) -> bool:
+    with mock.patch(
+        "xnat_ingest.helpers.remotes.get_xnat_checksums",
+        side_effect=lambda xresource: dict(xresource.files),
+    ):
+        return listing.all_uploaded(_Connection(_XSession(scans)))  # type: ignore[arg-type]
+
+
+def test_resource_relabelled_on_upload_is_uploaded(tmp_path: ty.Any) -> None:
+    listing = _renamed_listing(tmp_path, {"501.Dose Report/DICOM": {"x.dcm": "d1"}})
+    scans = [_XScan("501", "Dose Report", [_XResource("secondary", {"x.dcm": "d1"})])]
+    assert _all_uploaded(listing, scans) is True
+
+
+def test_scan_split_by_modality_on_upload_is_uploaded(tmp_path: ty.Any) -> None:
+    listing = _renamed_listing(
+        tmp_path, {"1.3D Application Data/DICOM": {"a.dcm": "d1", "b.dcm": "d2"}}
+    )
+    scans = [
+        _XScan("1-OT", "3D Application Data", [_XResource("DICOM", {"a.dcm": "d1"})]),
+        _XScan("1-CT", "3D Application Data", [_XResource("DICOM", {"b.dcm": "d2"})]),
+    ]
+    assert _all_uploaded(listing, scans) is True
+
+
+def test_renamed_resource_missing_a_file_is_not_uploaded(tmp_path: ty.Any) -> None:
+    listing = _renamed_listing(
+        tmp_path, {"501.Dose Report/DICOM": {"x.dcm": "d1", "y.dcm": "d2"}}
+    )
+    scans = [_XScan("501", "Dose Report", [_XResource("secondary", {"x.dcm": "d1"})])]
+    assert _all_uploaded(listing, scans) is False
+
+
+def test_renamed_resource_with_differing_checksum_is_not_uploaded(
+    tmp_path: ty.Any,
+) -> None:
+    listing = _renamed_listing(tmp_path, {"501.Dose Report/DICOM": {"x.dcm": "d1"}})
+    scans = [
+        _XScan("501", "Dose Report", [_XResource("secondary", {"x.dcm": "other"})])
+    ]
+    assert _all_uploaded(listing, scans) is False
+
+
+def test_files_in_a_different_scan_are_not_matched(tmp_path: ty.Any) -> None:
+    """Scan '1' must not pick up files from scan '10'."""
+    listing = _renamed_listing(tmp_path, {"1.scan_one/DICOM": {"x.dcm": "d1"}})
+    scans = [_XScan("10", "scan_ten", [_XResource("DICOM", {"x.dcm": "d1"})])]
+    assert _all_uploaded(listing, scans) is False
