@@ -498,7 +498,10 @@ def upload(
 
                 if repaired_on_xnat:
                     # A repair means an earlier pass left this session short,
-                    # so it is worth a session-level line of its own.
+                    # so it is worth a session-level line of its own. It is
+                    # logged whether or not the re-send worked; the line that
+                    # says it DID is repair_completed_message(), after the
+                    # verdict below.
                     logger.info(
                         "Repaired %d incomplete resource(s) on XNAT in '%s': %s",
                         len(repaired_on_xnat),
@@ -559,6 +562,18 @@ def upload(
                 # Guarded by the verdict: unconditional, this claimed success
                 # in the same pass that reported the session as failed.
                 if msg is None:
+                    # Same gate as the success line, same pass as the repair:
+                    # the only point where a repair is known to have worked.
+                    completed = repair_completed_message(session.name, repaired_on_xnat)
+                    if completed is not None:
+                        logger.info(
+                            completed,
+                            extra={
+                                "event": "xnat_repair_completed",
+                                "session": session.name,
+                                "resources": len(repaired_on_xnat),
+                            },
+                        )
                     logger.info(f"Successfully uploaded all files in '{session.name}'")
             except Exception as e:
                 if not raise_errors:
@@ -626,6 +641,40 @@ def select_files_to_upload(
             "disagree. Delete the resource on XNAT to have it uploaded afresh."
         )
     return wanted
+
+
+def repair_completed_message(
+    session_name: str, repaired_paths: ty.Sequence[str]
+) -> ty.Optional[str]:
+    """The line saying a repair in this pass completed, or None if none ran.
+
+    "Repaired N incomplete resource(s)" is logged when a re-send is ATTEMPTED,
+    before the verdict, so it appears even when the re-send failed. This one is
+    logged only after a clean verdict: every re-sent resource uploaded without
+    error and, with checksum checking on (the default), was re-listed on XNAT
+    and found complete. With --dont-check-checksums it means only that no
+    upload call failed. Its wording deliberately matches neither
+    "Repaired <N> incomplete resource" nor "Successfully uploaded all files in",
+    which downstream alert rules key on.
+
+    Parameters
+    ----------
+    session_name : str
+        the session being reported on
+    repaired_paths : Sequence[str]
+        resources that were short on XNAT and re-sent in this pass
+
+    Returns
+    -------
+    str or None
+        the log line, or None if nothing was repaired
+    """
+    if not repaired_paths:
+        return None
+    return (
+        f"Completed repair of {len(repaired_paths)} incomplete resource(s) on XNAT "
+        f"in '{session_name}': {sorted(repaired_paths)}"
+    )
 
 
 def session_upload_verdict(
