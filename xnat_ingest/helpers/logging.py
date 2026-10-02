@@ -56,12 +56,37 @@ def _select_formatter(clean_format: bool) -> logging.Formatter:
     return logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
+# Marks the handlers added by `set_logger_handling`, so they can be replaced when it is
+# called again (e.g. when several CLI commands are invoked in the same process)
+_HANDLER_FLAG = "_set_by_xnat_ingest"
+
+
+class _StdStreamHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """Stream handler that writes to whatever `sys.stdout` or `sys.stderr` currently
+    is, rather than the stream that was current when the handler was created (which
+    may since have been replaced and closed, e.g. by click's CliRunner in tests)"""
+
+    def __init__(self, stream_name: str) -> None:
+        self._stream_name = stream_name
+        super().__init__()
+
+    @property
+    def stream(self) -> ty.Any:  # type: ignore[override]
+        return getattr(sys, self._stream_name)
+
+    @stream.setter
+    def stream(self, value: ty.Any) -> None:
+        # Always resolved from sys at emit time, so ignore attempts to set it
+        pass
+
+
 def set_logger_handling(
     logger_configs: ty.Sequence[LoggerConfig],
     additional_loggers: ty.Sequence[str] = (),
     clean_format: bool = False,
 ) -> None:
-    """Set up logging for the application"""
+    """Set up logging for the application, replacing any handlers set up by previous
+    calls"""
 
     if not logger_configs:
         logger_configs = [LoggerConfig("stream", "info", "stdout")]
@@ -74,6 +99,10 @@ def set_logger_handling(
 
     for logr in loggers:
         logr.setLevel(min_log_level)
+        for handler in list(logr.handlers):
+            if getattr(handler, _HANDLER_FLAG, False):
+                logr.removeHandler(handler)
+                handler.close()
 
     # Configure the file logger
     for config in logger_configs:
@@ -82,14 +111,16 @@ def set_logger_handling(
             Path(config.location).parent.mkdir(parents=True, exist_ok=True)
             log_handle = logging.FileHandler(config.location)
         elif config.type == "stream":
-            stream = sys.stderr if config.location == "stderr" else sys.stdout
-            log_handle = logging.StreamHandler(stream)
+            log_handle = _StdStreamHandler(
+                "stderr" if config.location == "stderr" else "stdout"
+            )
         elif config.type == "discord":
             log_handle = DiscordHandler(config.location)
         else:
             raise ValueError(f"Unknown logger type: {config.type}")
         log_handle.setLevel(config.loglevel_int)
         log_handle.setFormatter(_select_formatter(clean_format))
+        setattr(log_handle, _HANDLER_FLAG, True)
         for logr in loggers:
             logr.addHandler(log_handle)
 
