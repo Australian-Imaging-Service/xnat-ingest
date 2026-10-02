@@ -16,8 +16,8 @@ dependencies = [
     # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
     # the new API does not exist.
     "fileformats >=0.19.3",
-    "fileformats-medimage >=0.14.0",
-    "fileformats-medimage-extras >=0.14.0",
+    "fileformats-medimage >=0.14.1",
+    "fileformats-medimage-extras >=0.14.1",
     "fileformats-vendor-siemens >=0.2.5",
     "fileformats-vendor-siemens-extras >=0.2.5",
     "fileformats-vendor-mrtrix3 >=3.1.0a8",
