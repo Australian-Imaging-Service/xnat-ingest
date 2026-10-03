@@ -194,6 +194,11 @@ study/series/instance hierarchy. These groupings are currently fixed, there are 
 *metadata* is available for the later ``assign`` stage can be extended through the
 Orthanc configuration however (see below).
 
+Like ``group``, ``--convert <src-mime-like> <tgt-spec>`` converts matching series as
+they are staged, e.g. ``--convert medimage/dicom-series medimage/nifti-gz-x``. The
+source is always ``medimage/dicom-series``. Conversion happens before the processed
+label is applied, so a study whose conversion fails is retried on the next run.
+
 Controlling which studies get processed
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

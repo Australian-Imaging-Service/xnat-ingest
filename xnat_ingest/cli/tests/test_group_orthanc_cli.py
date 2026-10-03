@@ -18,6 +18,8 @@ import typing as ty
 from pathlib import Path
 from unittest.mock import patch
 
+from fileformats.medimage import DicomSeries, NiftiGzX
+
 from conftest import show_cli_trace
 from xnat_ingest.cli import group_orthanc_cmd
 from xnat_ingest.model.session import ImagingSession
@@ -85,3 +87,32 @@ def test_group_orthanc_cli_defaults_to_no_to_process_label(
     assert result.exit_code == 0, show_cli_trace(result)
     _, kwargs = mock_from_orthanc.call_args
     assert kwargs["to_process_label"] is None
+
+
+def test_group_orthanc_cli_passes_conversions_through(
+    cli_runner: ty.Any, tmp_path: Path
+) -> None:
+    store_dir = tmp_path / "orthanc-store"
+    store_dir.mkdir()
+    output_dir = tmp_path / "staged"
+
+    with patch.object(
+        ImagingSession, "from_orthanc", return_value=[]
+    ) as mock_from_orthanc:
+        result = cli_runner(
+            group_orthanc_cmd,
+            [
+                "http://orthanc.example.org:8042",
+                str(store_dir),
+                str(output_dir),
+                "orthanc-user",
+                "orthanc-pass",
+                "--convert",
+                "medimage/dicom-series",
+                "medimage/nifti-gz-x:compress=y",
+            ],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    _, kwargs = mock_from_orthanc.call_args
+    assert kwargs["conversion_map"] == {DicomSeries: (NiftiGzX, {"compress": "y"})}
