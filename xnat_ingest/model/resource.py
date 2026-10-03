@@ -7,6 +7,7 @@ from pathlib import Path
 import attrs
 from fileformats.application import Json
 from fileformats.core import FileSet
+from fileformats.generic import Directory
 from typing_extensions import Self
 
 from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
@@ -243,7 +244,21 @@ class ImagingResource:
         else:
             checksums = None
             datatype = FileSet
-        fileset = datatype(fspaths)
+        if issubclass(datatype, Directory):
+            # Directory formats are saved inside the resource directory. The
+            # individual files are used for checksum verification, but the
+            # format must be reconstructed from its directory path.
+            roots = {path.relative_to(resource_dir).parts[0] for path in fspaths}
+            if len(roots) != 1:
+                raise ValueError(
+                    f"Expected one data directory in '{resource_dir}', found {sorted(roots)}"
+                )
+            data_dir = resource_dir / next(iter(roots))
+            if not data_dir.is_dir():
+                raise ValueError(f"Expected a data directory at '{data_dir}'")
+            fileset = datatype(data_dir)
+        else:
+            fileset = datatype(fspaths)
         resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
         if checksums is not None and check_checksums:
             resource.check_checksums()
