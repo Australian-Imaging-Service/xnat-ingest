@@ -23,8 +23,12 @@ import typing as ty
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from zipfile import ZIP_STORED, ZipFile
 
 import pytest
+from fileformats.application import Zip
+from fileformats.core import FileSet
+from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
     get_image as get_topogram_image,  # type: ignore[import-untyped]
 )
@@ -372,3 +376,75 @@ def test_from_orthanc_retry_keeps_existing_files_in_manifest(tmp_path: Path) -> 
     with open(manifests[0]) as f:
         manifest = json.load(f)
     assert len(manifest["checksums"]) == 1
+
+
+def _fake_zip_converter(tmp_path: Path) -> ty.Callable[..., Zip]:
+    """There is no DICOM-series converter that works without external tools
+    (e.g. dcm2niix), so stand one in to check the conversion plumbing."""
+
+    def convert(fileset: FileSet, **options: ty.Any) -> Zip:
+        zip_path = tmp_path / "converted" / "series.zip"
+        zip_path.parent.mkdir(exist_ok=True)
+        with ZipFile(zip_path, "w", compression=options["compression"]) as zf:
+            for fspath in fileset.fspaths:
+                zf.write(fspath, fspath.name)
+        return Zip(zip_path)
+
+    return convert
+
+
+def test_from_orthanc_converts_series_before_labelling(tmp_path: Path) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+
+    with (
+        _patch_requests(fake),
+        patch.object(Zip, "convert", side_effect=_fake_zip_converter(tmp_path)),
+    ):
+        staged = ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=output_dir,
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            **{"password": ORTHANC_PASSWORD},
+            to_process_label="ready",
+            processed_label="done",
+            conversion_map={DicomSeries: (Zip, {"compression": ZIP_STORED})},
+        )
+
+    assert len(staged) == 1
+    (resource,) = [r for s in staged[0].scans.values() for r in s.resources.values()]
+    assert resource.name == "DICOM"
+    assert isinstance(resource.fileset, Zip)
+    with ZipFile(resource.fileset.fspath) as zf:
+        assert zf.namelist() == ["study-ready-sop-uid.dcm"]
+    assert not list(output_dir.glob("__convert_*"))
+    assert ("study-ready", "done") in fake.labelled
+
+
+def test_from_orthanc_does_not_label_study_when_conversion_fails(
+    tmp_path: Path,
+) -> None:
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+
+    with (
+        _patch_requests(fake),
+        patch.object(Zip, "convert", side_effect=RuntimeError("conversion failed")),
+        pytest.raises(RuntimeError, match="conversion failed"),
+    ):
+        ImagingSession.from_orthanc(
+            url=ORTHANC_URL,
+            output_dir=output_dir,
+            store_dir=store_dir,
+            user=ORTHANC_USER,
+            **{"password": ORTHANC_PASSWORD},
+            to_process_label="ready",
+            processed_label="done",
+            conversion_map={DicomSeries: (Zip, {})},
+        )
+
+    assert ("study-ready", "done") not in fake.labelled
+    assert not list(output_dir.glob("__convert_*"))

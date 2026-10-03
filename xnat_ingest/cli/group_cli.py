@@ -513,6 +513,22 @@ PASSWORD for the Orthanc user
     ),
 )
 @click.option(
+    "--convert",
+    "conversions",
+    type=Convert.cli_type,
+    metavar="<src-mime-like> <tgt-spec>",
+    nargs=2,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_CONVERT",
+    help=(
+        "Convert resources of <src-mime-like> to <tgt-spec> during staging. "
+        "<tgt-spec> may be either '<tgt-mime-like>' or "
+        "'<tgt-mime-like>:key=value[,key=value...]', e.g. "
+        "'application/zip:compression=ZIP_STORED' (XINGEST_CONVERT env. var)."
+    ),
+)
+@click.option(
     "--raise-errors/--dont-raise-errors",
     default=False,
     type=bool,
@@ -531,6 +547,7 @@ def group_orthanc_cmd(
     loop: int,
     wait_period: int,
     copy_mode: FileSet.CopyMode,
+    conversions: tuple[Convert, ...],
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
 ) -> None:
@@ -561,6 +578,7 @@ def group_orthanc_cmd(
             raise_errors=raise_errors,
             copy_mode=copy_mode,
             wait_period=wait_period,
+            conversion_map={c.source: (c.target, c.options) for c in conversions},
         )
         if loop < 0:
             break

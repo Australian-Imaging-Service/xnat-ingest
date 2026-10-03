@@ -216,6 +216,9 @@ def group_orthanc(
     raise_errors: bool = False,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     wait_period: int = 0,
+    conversion_map: (
+        dict[type[FileSet], tuple[type[FileSet], dict[str, str]]] | None
+    ) = None,
 ) -> list[str]:
     """Groups the input files into sessions and stages them into the staging directory.
 
@@ -251,6 +254,10 @@ def group_orthanc(
     wait_period: int
         If provided, this is the number of seconds that must have passed since the last modification time of the session before
         it will be staged. This can be used to avoid staging sessions that are still being modified or created.
+    conversion_map: dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        A mapping of source FileSet types to (target FileSet types, conversion options).
+        When a staged series matches a source type, it will be converted to the target type
+        before the study is labelled as processed, with the options passed through to ``convert()``.
     """
 
     if (
@@ -279,6 +286,7 @@ def group_orthanc(
         to_process_label=to_process_label,
         processed_label=processed_label,
         wait_period=wait_period,
+        conversion_map=conversion_map,
     )
 
     # Should from_orthanc() not actually move the data, just reference it in place like from_paths()

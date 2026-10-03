@@ -5,6 +5,8 @@ import logging
 import os
 import platform
 import re
+import shutil
+import tempfile
 import typing as ty
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -35,7 +37,7 @@ from fileformats.core.exceptions import (
 from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
 from fileformats.generic import Directory, SetOf
-from fileformats.medimage import DicomCollection, MedicalImagingData
+from fileformats.medimage import DicomCollection, DicomSeries, MedicalImagingData
 from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
@@ -1082,6 +1084,9 @@ class ImagingSession:
         processed_label: str = "xnat-sorted",
         max_workers: int | None = None,
         wait_period: int = 0,
+        conversion_map: (
+            dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        ) = None,
     ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
@@ -1109,6 +1114,11 @@ class ImagingSession:
         wait_period : int, optional
             Minimum number of seconds since Orthanc last updated a study before it is
             staged, by default 0.
+        conversion_map : dict[type[FileSet], tuple[type[FileSet], dict[str, str]]], optional
+            A mapping of source FileSet types to (target FileSet types, conversion
+            options). Series matching a source type are converted to the target type
+            before the study is labelled as processed, with the options passed through
+            to ``convert()``.
 
         Returns
         -------
@@ -1162,6 +1172,10 @@ class ImagingSession:
             processed_label,
         )
 
+        convert_series = any(
+            issubclass(DicomSeries, src_type) for src_type in conversion_map or {}
+        )
+
         staged: list[ImagingSession] = []
         for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
             study = get_json(f"/studies/{study_id}")
@@ -1206,7 +1220,14 @@ class ImagingSession:
                     )
                 else:
                     resource_label = "DICOM"
-                resource_dir = session_dir / f"{scan_id}.{scan_type}" / resource_label
+                scan_dir = session_dir / f"{scan_id}.{scan_type}"
+                if convert_series:
+                    convert_tmp_dir = Path(
+                        tempfile.mkdtemp(prefix="__convert_", dir=output_dir)
+                    )
+                    resource_dir = convert_tmp_dir / resource_label
+                else:
+                    resource_dir = scan_dir / resource_label
                 resource_dir.mkdir(parents=True, exist_ok=True)
 
                 instances = get_json(f"/series/{series_id}/instances")
@@ -1247,6 +1268,17 @@ class ImagingSession:
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
                 with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
                     json.dump(manifest, f, indent=4)
+
+                if convert_series:
+                    try:
+                        ImagingResource.load(resource_dir, check_checksums=False).save(
+                            scan_dir,
+                            conversion_map=conversion_map,
+                            calculate_checksums=False,
+                            overwrite=True,
+                        )
+                    finally:
+                        shutil.rmtree(convert_tmp_dir)
 
             metadata_path = session_dir / Metadata.FNAME
             if metadata_path.exists():
