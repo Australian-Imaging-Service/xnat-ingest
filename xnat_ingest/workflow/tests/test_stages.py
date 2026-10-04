@@ -26,13 +26,40 @@ def test_group_kwargs_input_from_args_overrides_context() -> None:
     assert kwargs["input_paths"] == ["/a", "/b"]
 
 
+def test_group_orthanc_kwargs_plain_passthrough() -> None:
+    kwargs = STAGES["group-orthanc"].build_kwargs(
+        {
+            "url": "https://orthanc.example.org",
+            "store_dir": "/mnt/orthanc",
+            "user": "u",
+            "password": "p",
+        },
+        _ctx(output_path=Path("/out")),
+    )
+    assert kwargs == {
+        "output_dir": Path("/out"),
+        "url": "https://orthanc.example.org",
+        "store_dir": "/mnt/orthanc",
+        "user": "u",
+        "password": "p",
+    }
+
+
+def test_group_orthanc_has_no_generic_input_arg() -> None:
+    # group-orthanc is always a pipeline root - it pulls from Orthanc directly,
+    # never from a prior stage's output directory.
+    assert STAGES["group-orthanc"].input_arg == "url"
+
+
 def test_group_kwargs_composite_fields() -> None:
     kwargs = STAGES["group"].build_kwargs(
         {
             "datatypes": ["image/png", "image/jpeg"],
             "session": "{subject_uid}",
-            "scan": [{"specifier": "dermoscopy-{LesionID}", "datatype": "image/png"}],
-            "on_resource_clash": [{"policy": "merge", "scope": "image/png|image/jpeg"}],
+            "scan": [{"expr": "dermoscopy-{LesionID}", "datatype": "image/png"}],
+            "on_resource_clash": [
+                {"policy": "merge", "datatype": "image/png|image/jpeg"}
+            ],
             "collate_resources": [["image/png", "adjacent"]],
             "convert": [["image/png", "image/jpeg"]],
         },
@@ -42,7 +69,7 @@ def test_group_kwargs_composite_fields() -> None:
     assert isinstance(kwargs["session"], list) and isinstance(
         kwargs["session"][0], IDSpec
     )
-    assert kwargs["scan"][0].specifier == "dermoscopy-{LesionID}"
+    assert kwargs["scan"][0].expr == "dermoscopy-{LesionID}"
     assert isinstance(kwargs["on_resource_clash"][0], ClashSpec)
     assert kwargs["collation_map"][Png].name == "adjacent"
     assert kwargs["conversion_map"] == {Png: Jpeg}

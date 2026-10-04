@@ -1,13 +1,17 @@
-# The smallest useful xnat-ingest workflow: group -> assign -> upload, every
-# default left in place. Suits a plain DICOM export where StudyInstanceUID/
-# SeriesNumber/PatientID/AccessionNumber already say everything needed.
+# The smallest useful xnat-ingest workflow: group-orthanc -> assign -> upload,
+# every default left in place. Suits a plain DICOM workflow pulling sessions
+# straight from an Orthanc PACS instance (most DICOM workflows do) where
+# StudyInstanceUID/SeriesNumber/PatientID/AccessionNumber already say everything
+# needed. For a plain filesystem export instead of Orthanc, swap the first
+# stage's 'command: group-orthanc' for 'command: group' with an 'input_paths:'
+# arg - see associate-sidecars.yaml/scheduled-scanner-drop.yaml for that form.
 #
 # 'params:' declares exactly what this workflow needs supplied per-deployment -
 # 'xnat-ingest workflow check minimal-dicom.yaml' prints them. A param with no
 # 'default:' is required: set via a same-named environment variable (e.g. a k8s
-# Secret mounted with env:/envFrom:, which is how 'xnat_password' is meant to
-# reach this) or '--param name=value' on the CLI, which always wins if both are
-# given.
+# Secret mounted with env:/envFrom:, which is how the *_password params are
+# meant to reach this) or '--param name=value' on the CLI, which always wins if
+# both are given.
 #
 # Where each stage's output is staged is a separate concern from any of this -
 # see '--work-dir' on 'workflow run'/'serve'/'deploy' (not a spec/params field).
@@ -15,8 +19,15 @@
 name: minimal-dicom
 
 params:
-  input_dir:
-    description: "Root directory of the scanner export to ingest"
+  orthanc_url:
+    description: "URL of the Orthanc instance to pull DICOM sessions from"
+  orthanc_store_dir:
+    description: "Orthanc's StorageDirectory, as mounted in this container"
+  orthanc_user:
+    description: "Orthanc username"
+  orthanc_password:
+    description: "Orthanc password"
+    secret: true
   xnat_server:
     description: "URL of the XNAT server to upload to"
   xnat_user:
@@ -27,9 +38,12 @@ params:
 
 stages:
   - name: group
-    command: group
+    command: group-orthanc
     args:
-      input_paths: ["${input_dir}"]
+      url: "${orthanc_url}"
+      store_dir: "${orthanc_store_dir}"
+      user: "${orthanc_user}"
+      password: "${orthanc_password}"
       # datatypes/session/scan all default to DICOM (medimage/dicom-series,
       # StudyInstanceUID, SeriesNumber) - nothing else needed here.
 

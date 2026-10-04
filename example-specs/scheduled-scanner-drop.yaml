@@ -8,9 +8,15 @@
 name: scheduled-scanner-drop
 
 params:
-  input_dir:
-    description: "Scanner drop folder to watch"
-    default: /mnt/scanner-drop
+  orthanc_url:
+    description: "URL of the Orthanc instance to pull DICOM sessions from"
+  orthanc_store_dir:
+    description: "Orthanc's StorageDirectory, as mounted in this container"
+  orthanc_user:
+    description: "Orthanc username"
+  orthanc_password:
+    description: "Orthanc password"
+    secret: true
   xnat_server:
     description: "URL of the XNAT server to upload to"
   xnat_user:
@@ -24,11 +30,14 @@ schedule: "*/10 * * * *"
 
 stages:
   - name: group
-    command: group
+    command: group-orthanc
     retries: 2
     retry_delay_seconds: 30
     args:
-      input_paths: ["${input_dir}"]
+      url: "${orthanc_url}"
+      store_dir: "${orthanc_store_dir}"
+      user: "${orthanc_user}"
+      password: "${orthanc_password}"
       # Only touch sessions whose files haven't been modified in the last 5
       # minutes, so a session still being written by the scanner is left for
       # the next scheduled run rather than staged half-finished.
