@@ -1,20 +1,35 @@
 # The second, independent ACEMID pipeline: archives the whole Vectra export
 # directory plus its sidecar SQLite .db as single resources (no --recursive -
 # nothing here is pulled apart), converting the export to a .zip on the way in.
-# Shares common.yaml's xnat: block with acemid-lesion.yaml via 'extends', but is
-# otherwise a fully separate spec/deployment - each redeployable independently.
+# Deployed alongside acemid-lesion.yaml (e.g. both via
+# 'xnat-ingest workflow deploy example-specs/') but a fully separate
+# spec/deployment - each redeployable independently, each declaring its own
+# xnat_server/xnat_user/xnat_password (the small duplication between the two
+# files is deliberate: it keeps each spec self-contained and independently
+# readable rather than relying on an 'extends'-merged shared file).
 
 name: acemid-wholebody-internal
 
-work_dir: /var/lib/xnat-ingest/work/acemid-wholebody-internal
-
-extends: common.yaml
+params:
+  input_dir:
+    description: "Root of this site's Canfield Vectra export"
+    default: /data/canfield-export
+  spec_dir:
+    description: "Directory of project-specific deidentification specs"
+    default: /etc/xnat-ingest/deid-specs
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 stages:
   - name: group
     command: group
     args:
-      input_paths: [/data/canfield-export]
+      input_paths: ["${input_dir}"]
       datatypes:
         - medimage/vnd.canfield.vectra-export
         - application/vnd.sqlite3
@@ -44,8 +59,12 @@ stages:
     command: deidentify
     input: assign
     args:
-      spec_dir: /etc/xnat-ingest/deid-specs
+      spec_dir: "${spec_dir}"
 
   - name: upload
     command: upload
     input: deidentify
+    args:
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"

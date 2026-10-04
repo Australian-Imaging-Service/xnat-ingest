@@ -10,12 +10,12 @@ installed.
 """
 
 from .errors import WorkflowSpecError
-from .spec import StageSpec, WorkflowSpec, XnatConnectionSpec, load_spec
+from .spec import ParamSpec, StageSpec, WorkflowSpec, load_spec
 
 __all__ = [
     "WorkflowSpecError",
     "WorkflowSpec",
     "StageSpec",
-    "XnatConnectionSpec",
+    "ParamSpec",
     "load_spec",
 ]

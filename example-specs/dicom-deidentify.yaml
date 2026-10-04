@@ -6,18 +6,25 @@
 
 name: dicom-deidentify
 
-work_dir: /var/lib/xnat-ingest/work/dicom-deidentify
-
-xnat:
-  server: https://xnat.example.org
-  user: ${XNAT_USER}
-  password: ${XNAT_PASSWORD}
+params:
+  input_dir:
+    description: "Root directory of the scanner export to ingest"
+  spec_dir:
+    description: "Directory of project-specific deidentification specs"
+    default: /etc/xnat-ingest/deid-specs
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 stages:
   - name: group
     command: group
     args:
-      input_paths: [/data/scanner-export]
+      input_paths: ["${input_dir}"]
 
   - name: assign
     command: assign
@@ -31,10 +38,14 @@ stages:
     command: deidentify
     input: assign
     args:
-      spec_dir: /etc/xnat-ingest/deid-specs
+      spec_dir: "${spec_dir}"
       # reid_dir: /var/lib/xnat-ingest/reid   # uncomment to keep the mapping
       # reid_encrypt_key: ${REID_ENCRYPT_KEY} # only meaningful alongside reid_dir
 
   - name: upload
     command: upload
     input: deidentify
+    args:
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"

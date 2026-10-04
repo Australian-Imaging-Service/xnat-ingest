@@ -21,7 +21,12 @@ def _minimal_stages() -> list:
             "args": {"input_paths": ["/data/in"]},
         },
         {"name": "asn", "command": "assign", "input": "grp"},
-        {"name": "up", "command": "upload", "input": "asn"},
+        {
+            "name": "up",
+            "command": "upload",
+            "input": "asn",
+            "args": {"server": "https://xnat.example.org"},
+        },
     ]
 
 
@@ -31,20 +36,26 @@ def test_load_minimal_valid_spec(tmp_path: Path) -> None:
         "spec.yaml",
         {
             "name": "acemid",
-            "work_dir": str(tmp_path / "work"),
-            "xnat": {
-                "server": "https://xnat.example.org",
-                "user": "u",
-                "password": "p",
-            },
             "stages": _minimal_stages(),
         },
     )
     spec = load_spec(path)
     assert spec.name == "acemid"
     assert len(spec.stages) == 3
-    assert spec.xnat is not None and spec.xnat.server == "https://xnat.example.org"
-    assert spec.work_dir == tmp_path / "work"
+    assert spec.stages[2].args["server"] == "https://xnat.example.org"
+
+
+def test_work_dir_top_level_field_rejected(tmp_path: Path) -> None:
+    # work_dir is a --work-dir CLI/API runtime argument (see workflow.runner),
+    # not part of the spec's own YAML/params - a literal 'work_dir:' at the top
+    # level should be rejected the same as any other unknown field.
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {"work_dir": "/some/path", "stages": _minimal_stages()},
+    )
+    with pytest.raises(WorkflowSpecError, match="unknown top-level"):
+        load_spec(path)
 
 
 def test_load_defaults_name_to_filename(tmp_path: Path) -> None:
@@ -136,7 +147,7 @@ def test_missing_stage_input_raises(tmp_path: Path) -> None:
         load_spec(path)
 
 
-def test_upload_without_xnat_block_raises(tmp_path: Path) -> None:
+def test_upload_missing_server_raises(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
         "spec.yaml",
@@ -146,7 +157,7 @@ def test_upload_without_xnat_block_raises(tmp_path: Path) -> None:
             ]
         },
     )
-    with pytest.raises(WorkflowSpecError, match="'xnat:' block"):
+    with pytest.raises(WorkflowSpecError, match="needs 'server'"):
         load_spec(path)
 
 
@@ -201,28 +212,35 @@ def test_unknown_top_level_field_raises(tmp_path: Path) -> None:
         load_spec(path)
 
 
-def test_env_var_interpolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+# ── ${NAME} placeholder resolution: params: / --param / environment ──────────
+
+
+def test_placeholder_resolves_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("TEST_XNAT_PASSWORD", "sekret")
     path = _write(
         tmp_path,
         "spec.yaml",
         {
-            "xnat": {
-                "server": "https://x",
-                "user": "u",
-                "password": "${TEST_XNAT_PASSWORD}",
-            },
             "stages": [
-                {"name": "u", "command": "upload", "args": {"input_dir": "/staged"}}
-            ],
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {
+                        "input_dir": "/staged",
+                        "server": "https://x",
+                        "password": "${TEST_XNAT_PASSWORD}",
+                    },
+                }
+            ]
         },
     )
     spec = load_spec(path)
-    assert spec.xnat is not None
-    assert spec.xnat.password == "sekret"
+    assert spec.stages[0].args["password"] == "sekret"
 
 
-def test_env_var_undefined_raises(
+def test_undeclared_placeholder_undefined_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("TEST_UNDEFINED_VAR", raising=False)
@@ -230,21 +248,163 @@ def test_env_var_undefined_raises(
         tmp_path,
         "spec.yaml",
         {
-            "xnat": {"server": "https://x", "password": "${TEST_UNDEFINED_VAR}"},
             "stages": [
-                {"name": "u", "command": "upload", "args": {"input_dir": "/staged"}}
-            ],
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"server": "${TEST_UNDEFINED_VAR}"},
+                }
+            ]
         },
     )
     with pytest.raises(WorkflowSpecError, match="TEST_UNDEFINED_VAR"):
         load_spec(path)
 
 
-def test_extends_merges_common_config(tmp_path: Path) -> None:
+def test_declared_param_default_used_when_unset(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "params": {"xnat_server": {"default": "https://default-server"}},
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${xnat_server}"},
+                }
+            ],
+        },
+    )
+    spec = load_spec(path)
+    assert spec.stages[0].args["server"] == "https://default-server"
+    assert spec.params["xnat_server"].required is False
+
+
+def test_declared_param_required_without_default_raises_clear_error(
+    tmp_path: Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "params": {"xnat_server": {"description": "The XNAT server to upload to"}},
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${xnat_server}"},
+                }
+            ],
+        },
+    )
+    with pytest.raises(WorkflowSpecError, match="xnat_server") as exc_info:
+        load_spec(path)
+    assert "The XNAT server to upload to" in str(exc_info.value)
+
+
+def test_param_override_wins_over_default(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "params": {"xnat_server": {"default": "https://default-server"}},
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${xnat_server}"},
+                }
+            ],
+        },
+    )
+    spec = load_spec(path, param_overrides={"xnat_server": "https://overridden"})
+    assert spec.stages[0].args["server"] == "https://overridden"
+
+
+def test_param_override_wins_over_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XNAT_SERVER", "https://from-env")
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "params": {"XNAT_SERVER": {}},
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${XNAT_SERVER}"},
+                }
+            ],
+        },
+    )
+    spec = load_spec(path, param_overrides={"XNAT_SERVER": "https://from-param"})
+    assert spec.stages[0].args["server"] == "https://from-param"
+
+
+def test_environment_wins_over_declared_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XNAT_SERVER", "https://from-env")
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "params": {"XNAT_SERVER": {"default": "https://from-default"}},
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${XNAT_SERVER}"},
+                }
+            ],
+        },
+    )
+    spec = load_spec(path)
+    assert spec.stages[0].args["server"] == "https://from-env"
+
+
+def test_undeclared_placeholder_resolves_via_param_override(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "spec.yaml",
+        {
+            "stages": [
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {
+                        "input_dir": "/staged",
+                        "server": "${SOME_UNDECLARED_NAME}",
+                    },
+                }
+            ]
+        },
+    )
+    spec = load_spec(
+        path, param_overrides={"SOME_UNDECLARED_NAME": "https://works-anyway"}
+    )
+    assert spec.stages[0].args["server"] == "https://works-anyway"
+
+
+def test_secret_param_parsed() -> None:
+    from xnat_ingest.workflow.spec import ParamSpec
+
+    p = ParamSpec(name="xnat_password", secret=True)
+    assert p.required is True
+    assert p.secret is True
+
+
+# ── extends: merging params: across files ─────────────────────────────────
+
+
+def test_extends_merges_shared_param_declarations(tmp_path: Path) -> None:
     common = _write(
         tmp_path,
         "common.yaml",
-        {"xnat": {"server": "https://x", "user": "shared-user", "password": "p"}},
+        {"params": {"xnat_user": {"default": "shared-user"}}},
     )
     path = _write(
         tmp_path,
@@ -252,36 +412,45 @@ def test_extends_merges_common_config(tmp_path: Path) -> None:
         {
             "extends": common.name,
             "stages": [
-                {"name": "u", "command": "upload", "args": {"input_dir": "/staged"}}
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {
+                        "input_dir": "/staged",
+                        "server": "https://x",
+                        "user": "${xnat_user}",
+                    },
+                }
             ],
         },
     )
     spec = load_spec(path)
-    assert spec.xnat is not None
-    assert spec.xnat.user == "shared-user"
+    assert spec.stages[0].args["user"] == "shared-user"
 
 
-def test_extends_child_overrides_parent(tmp_path: Path) -> None:
+def test_extends_child_overrides_shared_param_default(tmp_path: Path) -> None:
     common = _write(
         tmp_path,
         "common.yaml",
-        {"xnat": {"server": "https://parent", "user": "u", "password": "p"}},
+        {"params": {"xnat_server": {"default": "https://parent"}}},
     )
     path = _write(
         tmp_path,
         "spec.yaml",
         {
             "extends": common.name,
-            "xnat": {"server": "https://child"},
+            "params": {"xnat_server": {"default": "https://child"}},
             "stages": [
-                {"name": "u", "command": "upload", "args": {"input_dir": "/staged"}}
+                {
+                    "name": "u",
+                    "command": "upload",
+                    "args": {"input_dir": "/staged", "server": "${xnat_server}"},
+                }
             ],
         },
     )
     spec = load_spec(path)
-    assert spec.xnat is not None
-    assert spec.xnat.server == "https://child"
-    assert spec.xnat.user == "u"  # inherited from parent, not overridden
+    assert spec.stages[0].args["server"] == "https://child"
 
 
 def test_extends_circular_raises(tmp_path: Path) -> None:
