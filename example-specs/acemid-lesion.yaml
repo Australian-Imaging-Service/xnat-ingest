@@ -1,0 +1,87 @@
+# The full ACEMID "lesion ingest" pipeline (dermoscopy PNG/JPEG + whole-body
+# analysis + dexi data, all pulled out of one recursive Canfield Vectra export)
+# as a single workflow. Mirrors the equivalent chained CLI/k8s commands - every
+# composite --flag becomes real YAML structure here instead of ';'-packed env
+# vars or repeated CLI tokens; see workflow.coerce for exactly how each shape
+# below is parsed.
+
+name: acemid-lesion
+
+work_dir: /var/lib/xnat-ingest/work/acemid-lesion
+
+# Shared XNAT server/credentials - see common.yaml. 'extends' is resolved (and
+# deep-merged, this file's own top-level keys winning) before anything else.
+extends: common.yaml
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: [/data/canfield-export]
+      recursive: true
+      datatypes:
+        - image/png
+        - image/jpeg
+        - medimage/vnd.canfield.whole-body-analysis-dir
+        - medimage/vnd.canfield.dexi-data-dir
+      # Canfield ships a thumbnail PNG/JPEG alongside the ones we want, one and
+      # two levels deeper respectively - drop them before classification rather
+      # than trying to --ignore-datatype a valid image/png.
+      exclude_paths:
+        - "*/*/*.png"
+        - "*/*/*.jpg"
+      allow_unrecognised:
+        - ".*"   # tolerate every other vendor file in the export
+      session:
+        - specifier: "{subject_uid}_{CaptureDate:%Y%m%d}"
+          # datatype omitted -> 'all', applies regardless of fileset type
+      scan:
+        - specifier: "dermoscopy-{LesionID}"
+          datatype: "image/png|image/jpeg"
+        - specifier: "dexi-{CaptureTime}"
+          datatype: medimage/vnd.canfield.dexi-data-dir
+        - specifier: "analysis-{CaptureTime}"
+          datatype: medimage/vnd.canfield.whole-body-analysis-dir
+      resource:
+        - specifier: CaptureDevice
+          datatype: "image/png|image/jpeg"
+      # Multiple PNGs/JPEGs from the same lesion fold into one SetOf resource;
+      # a clash between any other pair of datatypes here still raises.
+      on_resource_clash:
+        - policy: merge
+          scope: "image/png|image/jpeg"
+      path_metadata_regex:
+        - regex: '.*/(?P<subject_uid>[\w-]+)/(?P<filename>[\w-]+\.(?:png|jpe?g))'
+          datatype: "image/png|image/jpeg"
+        - regex: '.*/(?P<subject_uid>[\w-]+)/(?P<CaptureDate>\d{8})(?P<CaptureTime>\d+)/analysis'
+          datatype: medimage/vnd.canfield.whole-body-analysis-dir
+        - regex: '.*/(?P<subject_uid>[\w-]+)/(?P<CaptureDate>\d{8})(?P<CaptureTime>\d+)/DexiData.*'
+          datatype: medimage/vnd.canfield.dexi-data-dir
+      metadata_tables:
+        - path: /data/canfield-export/lesion-table.csv
+          row_frequency: "fileset[image/png|image/jpeg]"
+          joins:
+            ImagePath: '=HYPERLINK("{subject_uid}/{filename}")'
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      subject: SubjectID
+      session: "{SubjectID}_{CaptureDate:%Y%m%d}"
+      constant_project_id: ACEMID
+
+  - name: deidentify
+    command: deidentify
+    input: assign
+    # The PNG/JPEG/whole-body-analysis/dexi data uploaded here carry no PHI, so
+    # this stage is disabled - it forwards 'assign's output straight through to
+    # 'upload' unchanged. Flip to true (and point spec_dir somewhere real) if
+    # that ever stops being true, with no change needed to either neighbour.
+    enabled: false
+    args:
+      spec_dir: /etc/xnat-ingest/deid-specs
+
+  - name: upload
+    command: upload
+    input: deidentify
