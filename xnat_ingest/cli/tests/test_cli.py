@@ -1876,8 +1876,10 @@ def test_deidentify_cli_dicom(
     medimage_dir = project_spec_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
-    (medimage_dir / "dicom-series.transforms.py").write_text(
-        'TRANSFORMS = {"anon_patient_name": lambda ds: str(ds.get("PatientID", ""))}\n'
+    (medimage_dir / "dicom-series.transforms.yaml").write_text(
+        'version: "0.1"\n'
+        "variables:\n"
+        "  anon_patient_name: {tag: PatientID, default: ''}\n"
     )
 
     # 4. Run deidentify_cli with the mock deidentify implementation

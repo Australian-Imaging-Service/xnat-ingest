@@ -660,8 +660,8 @@ def test_load_recipe_files_skips_side_cars(tmp_path: Path) -> None:
     spec_file = _write_spec(
         spec_dir, "medimage/dicom-series.deid", "FORMAT dicom\n\n%header\n"
     )
-    (spec_dir / "medimage" / "dicom-series.transforms.py").write_text(
-        "TRANSFORMS = {}\n"
+    (spec_dir / "medimage" / "dicom-series.transforms.yaml").write_text(
+        'version: "0.1"\n'
     )
     (spec_dir / "medimage" / "dicom-series.salt").write_bytes(b"key")
     assert load_recipe_files(spec_dir) == {DicomSeries: spec_file}
