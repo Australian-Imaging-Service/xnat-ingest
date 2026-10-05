@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fileformats.generic import File
-from fileformats.medimage import DicomSeries
+from fileformats.medimage import DicomImage, DicomSeries
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -355,3 +355,54 @@ def test_get_xnat_resource_ignores_sop_class_on_non_dicom_resources() -> None:
     # each is created under its own name -- neither collided into "secondary"
     created_as = [call.args[0] for call in xscan.create_resource.call_args_list]
     assert created_as == ["COUNTRATE", "LISTMODE"]
+
+
+@pytest.mark.parametrize(
+    ("sop_class_uid", "expected_label", "inherited_sop_class_uid"),
+    [
+        (_PET_IMAGE_SOP_CLASS, "DICOM", "1.2.840.10008.5.1.4.1.1.7"),
+        ("1.2.840.10008.5.1.4.1.1.7", "secondary", _PET_IMAGE_SOP_CLASS),
+    ],
+)
+def test_get_xnat_resource_uses_dicom_image_sop_class(
+    tmp_path: Path,
+    sop_class_uid: str,
+    expected_label: str,
+    inherited_sop_class_uid: str,
+) -> None:
+    dicom_path = tmp_path / "image.dcm"
+    _write_dicom(dicom_path, sop_class_uid, "PT")
+    scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
+    resource = ImagingResource(
+        name=expected_label,
+        fileset=DicomImage(dicom_path),
+        checksums={"image.dcm": "digest"},
+        scan=scan,
+    )
+    # A packaged image can inherit metadata from its source series. Its own header
+    # determines the XNAT label, even when the resource metadata says otherwise.
+    resource.metadata["SOPClassUID"] = inherited_sop_class_uid
+    xscan = MagicMock()
+    xscan.resources = {}
+    xsession = MagicMock()
+    xsession.scans = {"602": xscan}
+
+    result = get_xnat_resource(resource, xsession)
+
+    assert result == (xscan.create_resource.return_value, None)
+    xscan.create_resource.assert_called_once_with(expected_label)
+
+
+def test_get_xnat_resource_rejects_wrong_dicom_image_label(tmp_path: Path) -> None:
+    dicom_path = tmp_path / "image.dcm"
+    _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
+    scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
+    resource = ImagingResource(
+        name="secondary",
+        fileset=DicomImage(dicom_path),
+        checksums={"image.dcm": "digest"},
+        scan=scan,
+    )
+
+    with pytest.raises(ValueError, match="must be staged under XNAT resource 'DICOM'"):
+        get_xnat_resource(resource, MagicMock())
