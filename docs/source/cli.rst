@@ -21,6 +21,10 @@ pipeline.
    :prog: xnat-ingest deidentify
 
 
+.. click:: xnat_ingest.cli.package_cli:package_cmd
+   :prog: xnat-ingest package
+
+
 .. click:: xnat_ingest.cli.upload_cli:upload_cmd
    :prog: xnat-ingest upload
 
