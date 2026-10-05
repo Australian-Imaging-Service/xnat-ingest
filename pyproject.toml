@@ -62,7 +62,7 @@ test = [
     "pytest >=7.0",
     "pytest-env>=0.6.2",
     "pytest-cov>=2.12.1",
-    "xnat4tests >=0.3.10",
+    "xnat4tests >=0.4.1",
     "medimages4tests >=0.5.7",
     "moto >=5.0",
     "PyYAML",
