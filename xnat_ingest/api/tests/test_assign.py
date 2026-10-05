@@ -1,10 +1,11 @@
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fileformats.core import FileSet
 from fileformats.generic import File
-from fileformats.medimage import DicomSeries
+from fileformats.medimage import DicomDir, DicomSeries
 from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
     get_image as get_pet_image,  # type: ignore[import-untyped]
 )
@@ -388,6 +389,45 @@ def test_assign_end_to_end_resolves_ids_from_grouped_metadata(
     scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
     assert not scan_dir.name.endswith(".")
     assert scan_dir.name == "4.PET SWB 8MIN"
+
+
+def test_assign_loads_dicomdir_resource(dicom_dir: Path, tmp_path: Path) -> None:
+    input_dir = tmp_path / "incoming"
+    source_dir = input_dir / "dicom0"
+    shutil.copytree(dicom_dir, source_dir)
+
+    grouped_dir = tmp_path / "grouped"
+    assert (
+        group(
+            input_paths=[str(input_dir)],
+            output_dir=grouped_dir,
+            datatypes=[DicomDir],
+            recursive=True,
+            session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+            scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+            resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+        )
+        == []
+    )
+
+    output_dir = tmp_path / "assigned"
+    assert (
+        assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+        == []
+    )
+
+    assigned_session = ImagingSession.load(next(iter(list_session_dirs(output_dir))))
+    resource = next(iter(assigned_session.resources))
+    assert isinstance(resource.fileset, DicomDir)
+    assert resource.fileset.fspath.name == source_dir.name
+    assert resource.fileset.fspath.is_dir()
+    assert len(resource.checksums) == len(list(source_dir.iterdir()))
 
 
 def test_assign_end_to_end_routes_datatypes_to_separate_projects(
