@@ -264,19 +264,16 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         assert out_file.read_text().split("\n")[:-1] == expected
 
 
-@mock_aws
 def test_stage_and_upload(
     xnat_config: ty.Any,
     xnat_server: str,
     cli_runner: ty.Any,
     tmp_path: Path,
-    upload_source: str,
-    s3_bucket: str,
     run_prefix: str,
 ) -> None:
-    # Get test image data
-
-    project_id = f"STAGEANDUPLOAD{upload_source}{run_prefix}"
+    # Only uploads from a local directory, as uploads from S3 are covered by the
+    # (much quicker) test_check_upload_* tests
+    project_id = f"STAGEANDUPLOAD{run_prefix}"
     with xnat4tests.connect() as xnat_login:
         xnat_login.put(f"/data/archive/projects/{project_id}")
 
@@ -317,7 +314,7 @@ def test_stage_and_upload(
     session_ids = []
     session_names = []
     with xnat4tests.connect() as xnat_login:
-        for i, c in enumerate("abc"):
+        for i, c in enumerate("ab"):
             first_name = f"First{c.upper()}"
             last_name = f"Last{c.upper()}"
             PatientID = f"subject{i}"
@@ -511,12 +508,7 @@ def test_stage_and_upload(
     logs = associate_log_file.read_text()
     assert "Association completed successfully" in logs, show_cli_trace(result)
 
-    source_dir = transfer_to_source(
-        associated_dir,
-        upload_source=upload_source,
-        s3_bucket=s3_bucket,
-        s3_prefix=project_id,
-    )
+    source_dir = str(associated_dir)
 
     result = cli_runner(
         upload_cmd,
@@ -739,7 +731,11 @@ def test_stage_wait_period(
         show_cli_trace(result)
     )
 
-    time.sleep(10)
+    # Backdate the modification times of the files past the wait period, rather than
+    # sleeping until it has elapsed
+    backdated = time.time() - 60
+    for fspath in dicoms_path.rglob("*"):
+        os.utime(fspath, (backdated, backdated))
 
     result = cli_runner(
         group_cmd,
