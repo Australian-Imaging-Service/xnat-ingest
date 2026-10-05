@@ -19,9 +19,9 @@ import paramiko
 import xnat
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from fileformats.application import Json
+from fileformats.application import Json, Zip
 from fileformats.core import FileSet
-from fileformats.medimage import DicomCollection
+from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
 from ..exceptions import IncompleteCheckumsException
@@ -826,21 +826,35 @@ def get_xnat_resource(
     # pointing at a directory the files aren't in, which breaks downloads, so whatever
     # XNAT would choose is used instead.
     #
-    # This can only be decided from files XNAT's own catalog builder actually parses as
-    # DICOM, i.e. `resource.fileset` has to be a `DicomCollection` -- not merely have a
-    # readable "SOPClassUID": a vendor raw-data resource (e.g. Siemens listmode/
-    # countrate .ptd files) embeds a copy of a DICOM header for provenance, which gives
-    # it a perfectly readable SOPClassUID too, but XNAT itself never parses that file as
-    # DICOM, so it never applies this categorisation to it. Deciding from the metadata
-    # key alone previously renamed both such resources under one scan to "secondary",
-    # colliding them into the same catalog and uploading it from two threads at once.
-    sop_class_uids = (
-        resource.metadata.get("SOPClassUID")
-        if isinstance(resource.fileset, DicomCollection)
-        else None
-    )
+    # Only resources XNAT parses as DICOM can determine this. Other formats may
+    # expose a SOPClassUID in their metadata without being DICOM upload resources;
+    # using that key alone would incorrectly rename their XNAT catalogs.
+    if isinstance(resource.fileset, DicomCollection):
+        sop_class_uids = resource.metadata.get("SOPClassUID")
+    elif isinstance(resource.fileset, DicomImage):
+        # Use the image being uploaded, not resource metadata that may have been
+        # inherited from a larger source collection.
+        sop_class_uids = resource.fileset.metadata.get("SOPClassUID")
+        if not sop_class_uids:
+            raise ValueError(f"DICOM image in {resource.path} has no SOPClassUID")
+        expected_label = xnat_resource_label_from_sop_class(sop_class_uids)
+        if resource_name != expected_label:
+            raise ValueError(
+                f"DICOM image in {resource.path} must be staged under XNAT "
+                f"resource {expected_label!r} for its SOP class, not "
+                f"{resource_name!r}."
+            )
+    else:
+        sop_class_uids = None
     if sop_class_uids:
         resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+
+    if isinstance(resource.fileset, Zip):
+        expected_format = "ZIP"
+    elif isinstance(resource.fileset, (DicomCollection, DicomImage)):
+        expected_format = "DICOM"
+    else:
+        expected_format = None
 
     try:
         xscan = xsession.scans[resource.scan.id]
@@ -864,11 +878,36 @@ def get_xnat_resource(
             series_description=resource.scan.type,
             parent=xsession,
         )
+    if sop_class_uids:
+        expected_scan_type = f"xnat:{xnat_scan_type_from_sop_class(sop_class_uids)}"
+        existing_scan_type = getattr(xscan, "__xsi_type__", None)
+        if (
+            isinstance(existing_scan_type, str)
+            and existing_scan_type != expected_scan_type
+        ):
+            raise ValueError(
+                f"XNAT scan {resource.scan.id!r} in {resource.scan.session.path} "
+                f"has datatype {existing_scan_type!r}, but its DICOM header "
+                f"requires {expected_scan_type!r}. Recreate the scan on XNAT "
+                "before retrying; XNAT cannot change a scan's datatype."
+            )
     try:
         xresource = xscan.resources[resource_name]
     except KeyError:
         pass
     else:
+        existing_format = getattr(xresource, "format", None)
+        if (
+            expected_format is not None
+            and isinstance(existing_format, str)
+            and existing_format
+            and existing_format.upper() != expected_format
+        ):
+            raise ValueError(
+                f"XNAT resource {resource_name!r} in {resource.scan.path} has "
+                f"format {existing_format!r}, expected {expected_format!r}. "
+                "Recreate the incorrectly formatted resource before retrying."
+            )
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
         if comparison.repairable:
@@ -889,10 +928,7 @@ def get_xnat_resource(
             return xresource, comparison.missing
         if not comparison.complete:
             logger.error(
-                # THE WORDING IS LOAD-BEARING: the Loki rules shipped with the
-                # AIS-Edge charts match this message on the literal phrase
-                # "already exists on XNAT with different checksums". Rewording
-                # it switches the operator alert off silently.
+                # Keep this phrase stable: external log alerts may match it.
                 "'%s' resource in '%s' already exists on XNAT with different "
                 "checksums.\nMissing paths: %s\nAdditional paths: %s\n"
                 "Differing paths: %s",
@@ -953,7 +989,10 @@ def get_xnat_resource(
         resource_name,
         resource.scan.path,
     )
-    xresource = xscan.create_resource(resource_name)
+    if expected_format is None:
+        xresource = xscan.create_resource(resource_name)
+    else:
+        xresource = xscan.create_resource(resource_name, format=expected_format)
     return xresource, None
 
 
