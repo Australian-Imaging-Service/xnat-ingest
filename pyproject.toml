@@ -16,8 +16,8 @@ dependencies = [
     # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
     # the new API does not exist.
     "fileformats >=0.19.3",
-    "fileformats-medimage >=0.14.1",
-    "fileformats-medimage-extras >=0.14.1",
+    "fileformats-medimage >=0.15.0",
+    "fileformats-medimage-extras >=0.15.0",
     "fileformats-vendor-siemens >=0.2.5",
     "fileformats-vendor-siemens-extras >=0.2.5",
     "fileformats-vendor-mrtrix3 >=3.1.0a8",
@@ -62,7 +62,7 @@ test = [
     "pytest >=7.0",
     "pytest-env>=0.6.2",
     "pytest-cov>=2.12.1",
-    "xnat4tests >=0.3.10",
+    "xnat4tests >=0.4.1",
     "medimages4tests >=0.5.7",
     "moto >=5.0",
     "PyYAML",

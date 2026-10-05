@@ -40,10 +40,11 @@ Within each of these subdirectories, the directory structure mirrors the MIME-li
 hierarchy: a subdirectory per category containing one recipe file per format
 (e.g. 'medimage/dicom-series'). Any file extension (or none) is accepted.
 Side-cars of the recipe format can sit alongside the recipe file, e.g. for DICOM
-a '<format>.transforms.py' file (e.g. 'medimage/dicom-series.transforms.py') defining
-the values of the 'var:' references in the recipe, and a '<format>.salt' file with a
-key the transforms can salt hashed values with (only readable by the user running
-the deidentification).
+a '<format>.transforms.yaml' file (e.g. 'medimage/dicom-series.transforms.yaml')
+declaring the values of the 'var:' and 'func:' references in the recipe (see the deid
+transforms spec in fileformats-medimage), and a '<format>.salt' file with a key the
+transforms can salt hashed values with (only readable by the user running the
+deidentification).
 Formats without a matching recipe file are only deidentified if one is found for a
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').

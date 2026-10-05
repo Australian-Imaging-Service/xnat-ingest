@@ -567,7 +567,7 @@ def load_recipe_files(
             ├── <format>         # recipe file, e.g. "dicom-series" (any extension or none)
             └── <format>.<side-car-ext>  # optional side-cars of the recipe format
 
-    Side-cars of the recipe file (e.g. the ``.transforms.py`` and ``.salt`` side-cars of
+    Side-cars of the recipe file (e.g. the ``.transforms.yaml`` and ``.salt`` side-cars of
     a `DeidRecipeX`) are picked up by the recipe format when the recipe is loaded,
     and are skipped here.
 

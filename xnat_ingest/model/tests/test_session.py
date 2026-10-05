@@ -1,10 +1,12 @@
 import functools
+import hashlib
 import json
 import logging
 import os
 import typing as ty
 from pathlib import Path
 
+import pydicom
 import pytest
 import yaml
 from fileformats.application import Json
@@ -1702,8 +1704,10 @@ def test_load_recipe_dicom_with_side_cars(tmp_path: Path) -> None:
     recipe_file.write_text(
         "FORMAT dicom\n\n%header\n\nREPLACE PatientName var:anon_patient_name\n"
     )
-    (tmp_path / "dicom-series.transforms.py").write_text(
-        'TRANSFORMS = {"anon_patient_name": lambda ds: SALT.decode()}\n'
+    (tmp_path / "dicom-series.transforms.yaml").write_text(
+        'version: "0.1"\n'
+        "variables:\n"
+        "  anon_patient_name: {tag: PatientID, apply: [{hash: {length: 16}}]}\n"
     )
     salt_file = tmp_path / "dicom-series.salt"
     salt_file.write_bytes(b"secret\n")
@@ -1713,7 +1717,11 @@ def test_load_recipe_dicom_with_side_cars(tmp_path: Path) -> None:
     recipe = _load_recipe(series, recipe_file)
 
     assert set(recipe.transforms) == {"anon_patient_name"}
-    assert recipe.transforms["anon_patient_name"](None) == "secret"
+    # salted with the key in the salt side-car (stripped of surrounding whitespace)
+    dataset = pydicom.Dataset()
+    dataset.PatientID = "P001"
+    expected = hashlib.sha256(b"secret" + b"P001").hexdigest()[:16]
+    assert recipe.transforms["anon_patient_name"](dataset) == expected
 
 
 def test_load_recipe_test_format(recipe_file: Path) -> None:
