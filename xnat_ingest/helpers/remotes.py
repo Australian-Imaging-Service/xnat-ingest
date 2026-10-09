@@ -476,30 +476,34 @@ def iterate_s3_sessions(
         # we recreate the project/subject/session directory structure
         session_tmp_dir = tmp_download_dir / session_name
         session_tmp_dir.mkdir(parents=True, exist_ok=True)
-        # Check to see if the session is still being updated
-        last_modified = None
-        for _, obj in objs:
-            if last_modified is None or obj.last_modified > last_modified:
-                last_modified = obj.last_modified
-        assert last_modified is not None
-        if (
-            datetime.datetime.now(datetime.timezone.utc) - last_modified
-        ) >= datetime.timedelta(seconds=wait_period):
-            yield S3SessionListing(
-                name=session_name,
-                objects=session_objs[session_name],
-                bucket=bucket,
-                cache_path=session_tmp_dir,
-                max_workers=max_workers,
-            )
-        else:
-            logger.info(
-                "Skipping session '%s' as it was last modified less than %d seconds ago "
-                "and waiting until it is complete",
-                session_name,
-                wait_period,
-            )
-        shutil.rmtree(session_tmp_dir)  # Delete the tmp session after the upload
+        try:
+            # Check to see if the session is still being updated
+            last_modified = None
+            for _, obj in objs:
+                if last_modified is None or obj.last_modified > last_modified:
+                    last_modified = obj.last_modified
+            assert last_modified is not None
+            if (
+                datetime.datetime.now(datetime.timezone.utc) - last_modified
+            ) >= datetime.timedelta(seconds=wait_period):
+                yield S3SessionListing(
+                    name=session_name,
+                    objects=session_objs[session_name],
+                    bucket=bucket,
+                    cache_path=session_tmp_dir,
+                    max_workers=max_workers,
+                )
+            else:
+                logger.info(
+                    "Skipping session '%s' as it was last modified less than %d "
+                    "seconds ago and waiting until it is complete",
+                    session_name,
+                    wait_period,
+                )
+        finally:
+            # Delete the tmp session after the upload, also when the caller
+            # stops early (e.g. on an error).
+            shutil.rmtree(session_tmp_dir, ignore_errors=True)
 
     logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, bucket_path)
     logger.debug("Created sessions iterator")
