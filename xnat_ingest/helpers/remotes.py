@@ -1008,14 +1008,18 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
             else None
         )
         if match is None:
-            raise ValueError(f"XNAT file listing has no resource-relative path: {uri!r}")
+            raise ValueError(
+                f"XNAT file listing has no resource-relative path: {uri!r}"
+            )
         path = match.group(1)
         if row["Name"] not in (path, path.rsplit("/", 1)[-1]):
             raise ValueError(
                 f"XNAT file URI {uri!r} does not match its Name {row['Name']!r}"
             )
         if path in checksums:
-            raise ValueError(f"XNAT file listing repeats resource-relative path {path!r}")
+            raise ValueError(
+                f"XNAT file listing repeats resource-relative path {path!r}"
+            )
         checksums[path] = row["digest"]
     return checksums
 

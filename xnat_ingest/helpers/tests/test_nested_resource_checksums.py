@@ -74,7 +74,9 @@ def test_repeated_basenames_do_not_hide_files(digest):
 @pytest.mark.parametrize("digest", ["same", ""])
 def test_nested_file_cannot_stand_in_for_missing_root_file(digest):
     remote = _resource([_row("nested/a.bin", digest)])
-    comparison = compare_resource_with_xnat({"a.bin": "same"}, get_xnat_checksums(remote))
+    comparison = compare_resource_with_xnat(
+        {"a.bin": "same"}, get_xnat_checksums(remote)
+    )
 
     assert not comparison.complete
     assert comparison.missing == {"a.bin"}
@@ -143,7 +145,9 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
         def resource_manifests(self):
             return {"DATA": {"checksums": local.checksums}}
 
-    listing = Listing(name="proj.subj.sess", objects=[], bucket=None, cache_path=tmp_path)
+    listing = Listing(
+        name="proj.subj.sess", objects=[], bucket=None, cache_path=tmp_path
+    )
     assert listing.all_uploaded(connection) is not missing
     expected = (remote, {"nested/b.bin"}) if missing else (None, None)
     assert get_xnat_resource(local, xsession) == expected
