@@ -12,28 +12,65 @@ staging directory name contains a dot.
 
 import json
 import typing as ty
-from unittest import mock
 
 from xnat_ingest.helpers.remotes import SessionListing, SessionOnlyListing
 
 LOCAL = {f"slice{i}.dcm": f"digest{i}" for i in range(8)}
 
 
-class FakeXnatResource:
-    label = "DICOM"
+class FakeResponse:
+    def __init__(self, body: ty.Any) -> None:
+        self.status_code = 200
+        self._body = body
 
-
-class FakeExperiment:
-    label = "SESSLABEL"
-
-    def __init__(self) -> None:
-        self.scans: dict[str, ty.Any] = {}
-        self.resources = {"DICOM": FakeXnatResource()}
+    def json(self) -> ty.Any:
+        return self._body
 
 
 class FakeConnection:
-    def __init__(self) -> None:
-        self.experiments = {"XNAT_E1": FakeExperiment()}
+    """Answers the REST reads of all_uploaded(): session 'SESSLABEL' (ID
+    'XNAT_E1') holds one session-level resource, 'DICOM'."""
+
+    def __init__(self, on_xnat: ty.Dict[str, str], found: bool = True) -> None:
+        self.on_xnat = on_xnat
+        self.found = found
+
+    def get_json(
+        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None
+    ) -> ty.Any:
+        rows: ty.List[ty.Dict[str, str]] = []
+        if uri == "/data/experiments":
+            if self.found:
+                rows = [
+                    {
+                        "ID": "XNAT_E1",
+                        "label": "SESSLABEL",
+                        "xsiType": "xnat:petSessionData",
+                    }
+                ]
+        elif uri == "/data/experiments/XNAT_E1/resources":
+            rows = [
+                {
+                    "xnat_abstractresource_id": "7",
+                    "label": "DICOM",
+                    "element_name": "xnat:resourceCatalog",
+                }
+            ]
+        elif uri != "/data/experiments/XNAT_E1/scans":
+            raise AssertionError(f"unexpected GET {uri}")
+        return {"ResultSet": {"Result": rows}}
+
+    def get(self, uri: str) -> FakeResponse:
+        assert uri == "/data/experiments/XNAT_E1/resources/7/files", uri
+        return FakeResponse(
+            {
+                "ResultSet": {
+                    "Result": [
+                        {"Name": n, "digest": d} for n, d in self.on_xnat.items()
+                    ]
+                }
+            }
+        )
 
 
 def _staging(tmp_path: ty.Any, checksums: dict[str, str]) -> SessionOnlyListing:
@@ -58,6 +95,9 @@ def test_it_is_part_of_the_hierarchy() -> None:
     assert "find_xnat_session" in SessionOnlyListing.__dict__, (
         "the mode still resolves its session by a global label search"
     )
+    assert "find_xnat_session_uri" in SessionOnlyListing.__dict__, (
+        "all_uploaded() finds the session through find_xnat_session_uri()"
+    )
 
 
 def test_short_resource_is_not_uploaded(tmp_path: ty.Any) -> None:
@@ -65,33 +105,23 @@ def test_short_resource_is_not_uploaded(tmp_path: ty.Any) -> None:
     listing = _staging(tmp_path, LOCAL)
     on_xnat = {k: LOCAL[k] for k in list(LOCAL)[:3]}
 
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=on_xnat
-    ):
-        assert listing.all_uploaded(FakeConnection()) is False, (
-            "the label matches but 5 files are missing; reporting this as "
-            "uploaded lets the staged copy be reclaimed while XNAT holds a "
-            "fraction of the session"
-        )
+    assert listing.all_uploaded(FakeConnection(on_xnat)) is False, (  # type: ignore[arg-type]
+        "the label matches but 5 files are missing; reporting this as "
+        "uploaded lets the staged copy be reclaimed while XNAT holds a "
+        "fraction of the session"
+    )
 
 
 def test_complete_resource_is_uploaded(tmp_path: ty.Any) -> None:
     """A genuinely complete session must still be skipped."""
     listing = _staging(tmp_path, LOCAL)
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums", return_value=dict(LOCAL)
-    ):
-        assert listing.all_uploaded(FakeConnection()) is True
+    assert listing.all_uploaded(FakeConnection(dict(LOCAL))) is True  # type: ignore[arg-type]
 
 
 def test_missing_session_on_xnat_is_not_uploaded(tmp_path: ty.Any) -> None:
     """The label search finding nothing still means not uploaded."""
     listing = _staging(tmp_path, LOCAL)
-
-    class Empty:
-        experiments: dict[str, ty.Any] = {}
-
-    assert listing.all_uploaded(Empty()) is False
+    assert listing.all_uploaded(FakeConnection({}, found=False)) is False  # type: ignore[arg-type]
 
 
 def test_empty_digests_do_not_make_a_complete_session_look_short(
@@ -99,8 +129,5 @@ def test_empty_digests_do_not_make_a_complete_session_look_short(
 ) -> None:
     """XNAT reports digest '' until a catalog refresh; names still count."""
     listing = _staging(tmp_path, LOCAL)
-    with mock.patch(
-        "xnat_ingest.helpers.remotes.get_xnat_checksums",
-        return_value={k: "" for k in LOCAL},
-    ):
-        assert listing.all_uploaded(FakeConnection()) is True
+    xnat = FakeConnection({k: "" for k in LOCAL})
+    assert listing.all_uploaded(xnat) is True  # type: ignore[arg-type]
