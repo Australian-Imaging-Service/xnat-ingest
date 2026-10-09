@@ -17,6 +17,7 @@ production.
 
 import json
 import logging
+import tarfile
 import typing as ty
 from pathlib import Path
 from unittest import mock
@@ -43,11 +44,14 @@ class FakeXResource:
         self.held = set(held)
         self.outcome = outcome  # "lands" | "raises" | "lost"
 
-    def upload_dir(self, upload_dir: Path, method: str) -> None:
+    def upload_data(
+        self, data: ty.BinaryIO, remote_name: str, **kwargs: ty.Any
+    ) -> None:
         if self.outcome == "raises":
             raise ConnectionError("simulated XNAT upload failure")
         if self.outcome == "lands":
-            self.held |= {p.name for p in Path(upload_dir).rglob("*") if p.is_file()}
+            with tarfile.open(fileobj=data, mode="r:*") as archive:
+                self.held |= {m.name for m in archive if m.isfile()}
         # "lost": the call returns but XNAT never lists the files
 
     def listing(self) -> dict[str, str]:
