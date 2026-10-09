@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import os
 import pprint
+import re
 import shutil
 import tempfile
 import threading
@@ -994,7 +995,29 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
             "Could not download metadata for resource {}. Files "
             "may have been uploaded but cannot check checksums".format(xresource.id)
         )
-    return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
+    checksums: dict[str, str] = {}
+    for row in result.json()["ResultSet"]["Result"]:
+        # Name is only the basename. URI retains the path inside the resource,
+        # and its resource identifier may be numeric even when we queried by label.
+        # The observed XNAT listing and xnatpy treat this suffix as raw text.
+        # URL parsing or decoding would change filenames with literal ?, # or %.
+        uri = row.get("URI")
+        match = (
+            re.fullmatch(r".*?/resources/[^/]+/files/(.+)", uri, flags=re.DOTALL)
+            if isinstance(uri, str)
+            else None
+        )
+        if match is None:
+            raise ValueError(f"XNAT file listing has no resource-relative path: {uri!r}")
+        path = match.group(1)
+        if row["Name"] not in (path, path.rsplit("/", 1)[-1]):
+            raise ValueError(
+                f"XNAT file URI {uri!r} does not match its Name {row['Name']!r}"
+            )
+        if path in checksums:
+            raise ValueError(f"XNAT file listing repeats resource-relative path {path!r}")
+        checksums[path] = row["digest"]
+    return checksums
 
 
 def calculate_checksums(
