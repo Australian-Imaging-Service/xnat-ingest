@@ -182,6 +182,53 @@ def test_loop_retries_gracefully_when_reconnect_itself_fails(
     assert mock_upload.call_count == 2
 
 
+def test_loop_survives_failed_reopen_after_transient_error(
+    cli_runner: ty.Any,
+) -> None:
+    """A transient error makes the loop re-open the connection. If that
+    re-open also fails (e.g. DNS is down), the loop must not crash. It must
+    retry on the next tick, as it does after an auth failure."""
+    result, mock_xnat_cls, mock_upload = _run_loop(
+        cli_runner,
+        upload_side_effect=[
+            requests.exceptions.ConnectionError("connection reset by peer"),
+            [],
+        ],
+        sleep_side_effect=[None, _StopLoop()],
+        xnat_side_effect=[
+            MagicMock(),  # initial open, succeeds
+            requests.exceptions.ConnectionError("Name or service not known"),
+            MagicMock(),  # reconnect at the top of the next iteration, succeeds
+        ],
+    )
+
+    assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
+    assert mock_xnat_cls.call_count == 3
+    assert mock_upload.call_count == 2
+
+
+def test_loop_survives_two_failed_connects_in_a_row(cli_runner: ty.Any) -> None:
+    """The connection is opened in __enter__. When XNAT stays unreachable for
+    more than one loop interval, each attempt fails until it comes back."""
+    dns_down = requests.exceptions.ConnectionError("Name or service not known")
+    unreachable = [MagicMock(), MagicMock()]
+    for repo in unreachable:
+        repo.connection.__enter__.side_effect = dns_down
+    result, mock_xnat_cls, mock_upload = _run_loop(
+        cli_runner,
+        upload_side_effect=[
+            requests.exceptions.ConnectionError("connection reset by peer"),
+            [],
+        ],
+        sleep_side_effect=[None, None, _StopLoop()],
+        xnat_side_effect=[MagicMock()] + unreachable + [MagicMock()],
+    )
+
+    assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
+    assert mock_xnat_cls.call_count == 4
+    assert mock_upload.call_count == 2
+
+
 def test_one_shot_mode_reraises_transient_error_instead_of_looping(
     cli_runner: ty.Any,
 ) -> None:
