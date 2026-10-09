@@ -40,6 +40,62 @@ from .xnat_scan_types import (
 DEFAULT_MAX_WORKERS = 10
 
 
+@attrs.define
+class XnatRows:
+    """One XNAT REST listing as plain rows, without xnatpy objects.
+
+    xnatpy keeps every listing object it builds in a class-level registry.
+    Code that runs on every pass of `upload --loop` must not build them, so it
+    reads XNAT through this class. It sends the request that xnatpy's
+    XNATListing sends and applies the same rules to the result.
+    """
+
+    rows: list[dict[str, ty.Any]]
+
+    @classmethod
+    def read(
+        cls,
+        connection: xnat.XNATSession,
+        uri: str,
+        lookup_field: str,
+        xsi_type: str | None = None,
+    ) -> "XnatRows":
+        columns = f"ID,URI,{lookup_field}"
+        if xsi_type is None:
+            columns += ",xsiType"
+        result = connection.get_json(uri, query={"columns": columns})
+        rows = []
+        for row in result["ResultSet"]["Result"]:
+            if "URI" not in row and "ID" not in row:
+                # A resource row has no ID column (as in xnatpy)
+                row["ID"] = row.get("xnat_abstractresource_id", row.get("label"))
+            row_type = row.get("xsiType", row.get("element_name", xsi_type)) or ""
+            if not str(row.get("ID") or "").strip() or not row_type.strip():
+                continue  # xnatpy skips these as empty objects
+            rows.append(row)
+        return cls(rows)
+
+    def by_id(self) -> dict[str, dict[str, ty.Any]]:
+        """The rows by ID, as XNATListing.values() sees them."""
+        return {row["ID"]: row for row in self.rows}
+
+    def lookup(self, key: str, lookup_field: str) -> dict[str, ty.Any]:
+        """Find a row by ID, then by `lookup_field`, as XNATListing does.
+
+        Raises
+        ------
+        KeyError
+            if no row matches, or more than one row has `key` in `lookup_field`
+        """
+        by_id = self.by_id()
+        if key in by_id:
+            return by_id[key]
+        matches = [row for row in self.rows if row.get(lookup_field) == key]
+        if len(matches) != 1:
+            raise KeyError(key)
+        return matches[0]
+
+
 class SessionListing(metaclass=abc.ABCMeta):
     # Every subclass supplies this, as a field or a property, and `ids` below
     # has always relied on it. Declared so that reliance is part of the
@@ -120,33 +176,73 @@ class SessionListing(metaclass=abc.ABCMeta):
         except KeyError:
             return None
 
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        """Like find_xnat_session(), but returns the session's REST URI, or None.
+
+        It reads XNAT directly and builds no xnatpy objects (see XnatRows).
+        """
+        projects = XnatRows.read(
+            connection, "/data/archive/projects", "name", xsi_type="xnat:projectData"
+        )
+        try:
+            project = projects.lookup(self.project_id, "name")
+        except KeyError:
+            raise KeyError(
+                "Project '{}' does not exist on XNAT".format(self.project_id)
+            ) from None
+        experiments = XnatRows.read(
+            connection, f"/data/projects/{project['ID']}/experiments", "label"
+        )
+        try:
+            experiment = experiments.lookup(self.session_id, "label")
+        except KeyError:
+            return None
+        # The session's own URI, not one under the project. XNAT does not list
+        # scans under /data/projects/<P>/experiments/<E>/scans (it returns the
+        # session document), and /data/experiments/<E> works for a session
+        # that is shared into this project.
+        return f"/data/experiments/{experiment['ID']}"
+
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
 
+        It reads XNAT directly on every call and builds no xnatpy objects. So
+        the answer never comes from a cache, and `upload --loop` does not leave
+        objects behind on each pass.
+
         Parameters
         ----------
-        session : ImagingSession
-            the session to upload
-        xnat_repo : Xnat
-            the XNAT repository to upload to
+        connection : xnat.XNATSession
+            the XNAT connection to read from
 
         Returns
         -------
-        xsession : xnat.classes.ExperimentData | None
-            the XNAT session object
+        bool
+            whether every staged resource is complete on XNAT
         """
-        xsession = self.find_xnat_session(connection)
-        if xsession is None:
+        session_uri = self.find_xnat_session_uri(connection)
+        if session_uri is None:
             return False
 
-        xresources = {}
-        xresources_by_scan_id: dict[str, list[ty.Any]] = defaultdict(list)
-        for xscan in xsession.scans.values():
-            for xresource in xscan.resources.values():
-                xresources[f"{xscan.id}.{xscan.type}/{xresource.label}"] = xresource
-                xresources_by_scan_id[str(xscan.id)].append(xresource)
-        for xresource in xsession.resources.values():
-            xresources[xresource.label] = xresource
+        # Resource path -> URI of the resource's file listing
+        xresources: dict[str, str] = {}
+        xresources_by_scan_id: dict[str, list[str]] = defaultdict(list)
+        scans = XnatRows.read(connection, f"{session_uri}/scans", "type")
+        for scan in scans.by_id().values():
+            scan_uri = f"{session_uri}/scans/{scan['ID']}"
+            resources = XnatRows.read(connection, f"{scan_uri}/resources", "label")
+            for resource in resources.by_id().values():
+                files_uri = f"{scan_uri}/resources/{resource['ID']}/files"
+                path = f"{scan['ID']}.{scan.get('type')}/{resource.get('label')}"
+                xresources[path] = files_uri
+                xresources_by_scan_id[str(scan["ID"])].append(files_uri)
+        session_resources = XnatRows.read(
+            connection, f"{session_uri}/resources", "label"
+        )
+        for resource in session_resources.by_id().values():
+            xresources[resource.get("label")] = (
+                f"{session_uri}/resources/{resource['ID']}/files"
+            )
 
         # A resource that EXISTS is not necessarily a resource that is
         # COMPLETE: one holding 5 of 8 files carries the same label as one
@@ -172,13 +268,14 @@ class SessionListing(metaclass=abc.ABCMeta):
             )
             return False
 
-        xnat_checksums_cache: dict[int, dict[str, str]] = {}
+        xnat_checksums_cache: dict[str, dict[str, str]] = {}
 
-        def xnat_checksums(xresource: ty.Any) -> dict[str, str]:
-            key = id(xresource)
-            if key not in xnat_checksums_cache:
-                xnat_checksums_cache[key] = get_xnat_checksums(xresource)
-            return xnat_checksums_cache[key]
+        def xnat_checksums(files_uri: str) -> dict[str, str]:
+            if files_uri not in xnat_checksums_cache:
+                xnat_checksums_cache[files_uri] = get_xnat_checksums_at(
+                    connection, files_uri
+                )
+            return xnat_checksums_cache[files_uri]
 
         for resource_path in sorted(self.resource_paths):
             manifest = manifests.get(resource_path)
@@ -302,8 +399,27 @@ class SessionOnlyListing(SessionListing):
             )
         return matches[0] if matches else None
 
-    # all_uploaded is deliberately NOT defined here. Only find_xnat_session
-    # differs between the modes; a second copy of the completeness rule is how
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        """Like find_xnat_session(), but returns the session's REST URI, or None.
+
+        It reads XNAT directly and builds no xnatpy objects (see XnatRows).
+        """
+        experiments = XnatRows.read(connection, "/data/experiments", "label")
+        matches = [
+            e
+            for e in experiments.by_id().values()
+            if e.get("label") == self.session_id
+        ]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Multiple XNAT sessions found with label '{self.session_id}'. "
+                "Session labels must be globally unique for session-only uploads."
+            )
+        return f"/data/experiments/{matches[0]['ID']}" if matches else None
+
+    # all_uploaded is deliberately NOT defined here. Only the session lookup
+    # (find_xnat_session and find_xnat_session_uri) differs between the modes;
+    # a second copy of the completeness rule is how
     # this class kept a label comparison after the base class stopped using one.
 
 
@@ -988,11 +1104,37 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
     dict[str, str]
         the checksums calculated by XNAT
     """
-    result = xresource.xnat_session.get(xresource.uri + "/files")
+    return get_xnat_checksums_at(
+        xresource.xnat_session, xresource.uri + "/files", xresource.id
+    )
+
+
+def get_xnat_checksums_at(
+    connection: xnat.XNATSession, files_uri: str, resource_id: ty.Any = None
+) -> dict[str, str]:
+    """get_xnat_checksums() for a resource given by the URI of its file listing.
+
+    Parameters
+    ----------
+    connection : xnat.XNATSession
+        the XNAT connection to read from
+    files_uri : str
+        the URI of the resource's file listing ("<resource URI>/files")
+    resource_id : Any, optional
+        the resource ID to name in an error, by default the URI
+
+    Returns
+    -------
+    dict[str, str]
+        the checksums calculated by XNAT
+    """
+    result = connection.get(files_uri)
     if result.status_code != 200:
         raise RuntimeError(
             "Could not download metadata for resource {}. Files "
-            "may have been uploaded but cannot check checksums".format(xresource.id)
+            "may have been uploaded but cannot check checksums".format(
+                files_uri if resource_id is None else resource_id
+            )
         )
     return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
 
