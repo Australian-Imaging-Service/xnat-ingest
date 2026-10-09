@@ -134,8 +134,8 @@ def upload(
         # directly and builds no xnatpy objects. The cache is cleared only
         # before a session is uploaded, which is the only step that uses
         # xnatpy objects. Clearing it on EVERY pass made xnatpy build new
-        # listings on every pass, and xnatpy keeps each listing it builds in a
-        # class-level registry, so memory grew for as long as the loop ran.
+        # listings on every pass. xnatpy 0.7.2 retains those listings; 0.8.1
+        # retains weak registry entries. Both accumulate during polling.
         #
         # None of this reconnects. A reconnect per pass would rebuild xnatpy's
         # schema classes each time, which is a leak of its own.

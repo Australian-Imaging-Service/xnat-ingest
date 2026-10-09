@@ -42,7 +42,11 @@ class FakeConnection:
         if uri == "/data/experiments":
             if self.found:
                 rows = [
-                    {"ID": "XNAT_E1", "label": "SESSLABEL", "xsiType": "xnat:petSessionData"}
+                    {
+                        "ID": "XNAT_E1",
+                        "label": "SESSLABEL",
+                        "xsiType": "xnat:petSessionData",
+                    }
                 ]
         elif uri == "/data/experiments/XNAT_E1/resources":
             rows = [
@@ -61,7 +65,9 @@ class FakeConnection:
         return FakeResponse(
             {
                 "ResultSet": {
-                    "Result": [{"Name": n, "digest": d} for n, d in self.on_xnat.items()]
+                    "Result": [
+                        {"Name": n, "digest": d} for n, d in self.on_xnat.items()
+                    ]
                 }
             }
         )

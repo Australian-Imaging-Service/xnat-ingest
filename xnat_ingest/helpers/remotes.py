@@ -44,10 +44,11 @@ DEFAULT_MAX_WORKERS = 10
 class XnatRows:
     """One XNAT REST listing as plain rows, without xnatpy objects.
 
-    xnatpy keeps every listing object it builds in a class-level registry.
-    Code that runs on every pass of `upload --loop` must not build them, so it
-    reads XNAT through this class. It sends the request that xnatpy's
-    XNATListing sends and applies the same rules to the result.
+    xnatpy 0.7.2 retains listing objects in a class-level registry. In 0.8.1,
+    the registry instead accumulates weak references during repeated reads.
+    Code that runs on every pass of `upload --loop` reads XNAT through this
+    class without adding registry entries. It sends the request that
+    xnatpy's XNATListing sends and applies the same rules to the result.
     """
 
     rows: list[dict[str, ty.Any]]
@@ -406,9 +407,7 @@ class SessionOnlyListing(SessionListing):
         """
         experiments = XnatRows.read(connection, "/data/experiments", "label")
         matches = [
-            e
-            for e in experiments.by_id().values()
-            if e.get("label") == self.session_id
+            e for e in experiments.by_id().values() if e.get("label") == self.session_id
         ]
         if len(matches) > 1:
             raise RuntimeError(

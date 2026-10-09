@@ -111,7 +111,11 @@ class FakeXnat:
         self.calls.append(uri)
         _, _, files = self._resources()[uri]
         return FakeResponse(
-            {"ResultSet": {"Result": [{"Name": n, "digest": d} for n, d in files.items()]}}
+            {
+                "ResultSet": {
+                    "Result": [{"Name": n, "digest": d} for n, d in files.items()]
+                }
+            }
         )
 
 
@@ -189,7 +193,9 @@ def test_unreadable_manifests_do_not_vote_the_session_complete(
         def resource_manifests(self) -> ty.Dict[str, ty.Dict[str, ty.Any]]:
             raise OSError("read timeout from S3")
 
-    listing = Listing(name="proj.subj.sess", objects=[], bucket=None, cache_path=tmp_path)
+    listing = Listing(
+        name="proj.subj.sess", objects=[], bucket=None, cache_path=tmp_path
+    )
     assert listing.all_uploaded(_one_scan(dict(LOCAL))) is False, (  # type: ignore[arg-type]
         "a session whose completeness cannot be determined must not be "
         "reported as uploaded"
