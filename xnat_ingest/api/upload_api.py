@@ -33,6 +33,7 @@ from ..exceptions import IncompleteCheckumsException
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
+from ..helpers.upload import upload_resource_directory
 from ..model.resource import ImagingResource
 from ..model.session import ImagingSession
 
@@ -232,7 +233,8 @@ def upload(
                         xnat_repo.connection.put(uri)
                         xnat_repo.connection.clearcache()
                         xresource = xnat_repo.connection.create_object(uri)
-                        xresource.upload_dir(
+                        upload_resource_directory(
+                            xresource,
                             session_listing.cache_path / resource.name,
                             method=UploadMethod.select_method(
                                 methods, type(resource.fileset)
@@ -432,7 +434,9 @@ def upload(
                                     xresource,
                                     upload_method,
                                 )
-                                xresource.upload_dir(upload_dir, method=upload_method)
+                                upload_resource_directory(
+                                    xresource, upload_dir, method=upload_method
+                                )
                     if check_checksums:
                         logger.debug("retrieving checksums for %s", xresource)
                         remote_checksums = get_xnat_checksums(xresource)
