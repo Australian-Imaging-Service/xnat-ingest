@@ -3,7 +3,7 @@ import tempfile
 import traceback
 import typing as ty
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from fileformats.generic import File, FileSet
@@ -124,7 +124,7 @@ def upload(
 
     # Note that this context manager doesn't do anything if the connection is
     # already open, so it's safe to use even if the connection is already open
-    with xnat_repo.connection:
+    with xnat_repo.connection, ExitStack() as cleanup:
         # DROP THE CLIENT-SIDE VIEW OF XNAT BEFORE DECIDING ANYTHING.
         #
         # `upload --loop` holds ONE connection for the life of the process, and
@@ -171,6 +171,9 @@ def upload(
                 wait_period=wait_period,
                 max_workers=s3_max_workers,
             )
+            # Close the iterator when this pass ends, also on an error, so
+            # that it removes the session it downloaded.
+            cleanup.callback(sessions.close)  # type: ignore[attr-defined]
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
         else:

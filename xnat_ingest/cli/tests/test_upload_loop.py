@@ -21,7 +21,9 @@ these don't need a running XNAT server (unlike test_cli.py's
 test_stage_and_upload).
 """
 
+import tempfile
 import typing as ty
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import requests.exceptions
@@ -57,6 +59,7 @@ def _run_loop(
     upload_side_effect: ty.Any,
     sleep_side_effect: ty.List[ty.Any],
     xnat_side_effect: ty.Optional[ty.List[ty.Any]] = None,
+    extra_args: ty.Sequence[str] = (),
 ) -> ty.Tuple[ty.Any, MagicMock, MagicMock]:
     with (
         patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
@@ -72,7 +75,7 @@ def _run_loop(
 
         result = cli_runner(
             upload_cmd,
-            COMMON_ARGS + ["--loop", "1"],
+            COMMON_ARGS + ["--loop", "1"] + list(extra_args),
             env=CLEAN_ENV,
         )
     return result, mock_xnat_cls, mock_upload
@@ -180,6 +183,82 @@ def test_loop_retries_gracefully_when_reconnect_itself_fails(
     assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
     assert mock_xnat_cls.call_count == 3
     assert mock_upload.call_count == 2
+
+
+def test_loop_uses_one_s3_cache_dir_and_removes_it_on_exit(
+    cli_runner: ty.Any,
+) -> None:
+    """Without --temp-dir, the loop must use one cache directory for the whole
+    run and remove it when the run ends. A new directory for each pass was
+    never removed, so the loop left one behind every pass."""
+    cache_dirs: ty.List[Path] = []
+
+    def record_cache_dir(**kwargs: ty.Any) -> ty.List[str]:
+        cache_dirs.append(Path(kwargs["s3_cache_dir"]))
+        assert cache_dirs[-1].is_dir()
+        return []
+
+    result, _, mock_upload = _run_loop(
+        cli_runner,
+        upload_side_effect=record_cache_dir,
+        sleep_side_effect=[None, None, _StopLoop()],
+    )
+
+    assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
+    assert mock_upload.call_count == 3
+    assert len(set(cache_dirs)) == 1
+    assert not cache_dirs[0].exists()
+
+
+def test_runs_that_share_a_temp_dir_use_their_own_cache_dir(
+    cli_runner: ty.Any, tmp_path: Path, monkeypatch: ty.Any
+) -> None:
+    """Each run removes its own cache directory on exit. Two runs given the
+    same --temp-dir must not share one, or the first to stop would remove the
+    other's downloads. Files the caller keeps in --temp-dir must stay."""
+    monkeypatch.setattr(tempfile, "tempdir", None)  # the CLI sets it
+    callers_file = tmp_path / "callers-file.txt"
+    callers_file.write_text("not ours")
+    cache_dirs: ty.List[Path] = []
+
+    def record_cache_dir(**kwargs: ty.Any) -> ty.List[str]:
+        cache_dirs.append(Path(kwargs["s3_cache_dir"]))
+        return []
+
+    for _ in range(2):
+        result, _, _ = _run_loop(
+            cli_runner,
+            upload_side_effect=record_cache_dir,
+            sleep_side_effect=[_StopLoop()],
+            extra_args=["--temp-dir", str(tmp_path)],
+        )
+        assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
+
+    assert len(set(cache_dirs)) == 2
+    assert all(d.parent.parent == tmp_path for d in cache_dirs)
+    assert not any(d.exists() for d in cache_dirs)
+    assert callers_file.exists()
+
+
+def test_reconnects_reuse_one_xnat_cache_dir_and_remove_it_on_exit(
+    cli_runner: ty.Any,
+) -> None:
+    """Each connection used to get a new cache directory that was never
+    removed. A reconnect must reuse the run's one directory."""
+    result, mock_xnat_cls, _ = _run_loop(
+        cli_runner,
+        upload_side_effect=[
+            requests.exceptions.ConnectionError("connection reset by peer"),
+            [],
+        ],
+        sleep_side_effect=[None, _StopLoop()],
+    )
+
+    assert isinstance(result.exception, _StopLoop), show_cli_trace(result)
+    cache_dirs = {c.kwargs["cache_dir"] for c in mock_xnat_cls.call_args_list}
+    assert mock_xnat_cls.call_count == 2
+    assert len(cache_dirs) == 1
+    assert not next(iter(cache_dirs)).exists()
 
 
 def test_one_shot_mode_reraises_transient_error_instead_of_looping(
