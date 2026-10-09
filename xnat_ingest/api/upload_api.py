@@ -1,4 +1,6 @@
+import errno
 import math
+import shutil
 import tempfile
 import traceback
 import typing as ty
@@ -24,6 +26,7 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_checksums,
     get_xnat_resource,
     get_xnat_session,
+    iter_resource_files,
     iterate_s3_sessions,
     list_session_dirs,
     split_resource_by_modality,
@@ -61,7 +64,16 @@ def _staged_upload_batch(
         for fspath in files:
             dest = upload_dir / fspath.relative_to(source_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.hardlink_to(fspath)
+            # Keep the manifest path, but stage file link targets as file bytes.
+            # A batch must not depend on a target in another batch.
+            source = fspath.resolve(strict=True)
+            try:
+                dest.hardlink_to(source)
+            except OSError as error:
+                if error.errno != errno.EXDEV or source == fspath:
+                    raise
+                # Only a link target can leave the source filesystem.
+                shutil.copy2(source, dest)
         yield upload_dir
 
 
@@ -371,9 +383,25 @@ def upload(
                     be pointless and, on a large resource, expensive.
                     """
 
+                    resource_dir = resource.fileset.parent
+                    fspaths = [
+                        resource_dir / path
+                        for path, _chunks in iter_resource_files(resource.fileset)
+                    ]
+                    if not fspaths:
+                        raise RuntimeError(
+                            f"Resource '{resource.path}' has no files to upload"
+                        )
+                    for fspath in fspaths:
+                        if not fspath.is_file():
+                            # The hash walk gives broken links a NUL digest.
+                            # That does not make them files that we can upload.
+                            raise RuntimeError(
+                                f"Cannot upload '{resource.path}': '{fspath}' is not a file"
+                            )
                     wanted_fspaths = select_files_to_upload(
-                        list(resource.fileset.fspaths),
-                        resource.fileset.parent,
+                        fspaths,
+                        resource_dir,
                         only_files,
                         resource.path,
                     )
@@ -399,7 +427,7 @@ def upload(
                         )
                         # Keep batch directories alongside their source files so
                         # that hard links stay on the same filesystem.
-                        dir_to_upload = resource.fileset.parent
+                        dir_to_upload = resource_dir
                         files_to_upload = wanted_fspaths
                         num_files = len(files_to_upload)
                         batch_size = (

@@ -997,6 +997,24 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
     return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
 
 
+def iter_resource_files(
+    fileset: FileSet,
+) -> ty.Iterator[tuple[str, ty.Iterator[bytes]]]:
+    """Yield each manifest path and its byte chunks once.
+
+    Use the same public walk and base as ImagingResource.calculate_checksums.
+    Keep separate paths for links to the same file. Remove duplicate paths
+    when a FileSet includes both a directory and one of its files.
+    """
+    seen: set[str] = set()
+    for path, chunks in fileset.byte_chunks(
+        relative_to=fileset.parent, chunk_len=HASH_CHUNK_SIZE
+    ):
+        if path not in seen:
+            seen.add(path)
+            yield path, chunks
+
+
 def calculate_checksums(
     scan: FileSet, max_workers: ty.Optional[int] = None
 ) -> ty.Dict[str, str]:
@@ -1017,19 +1035,19 @@ def calculate_checksums(
         the calculated checksums
     """
 
-    def _hash(fspath: Path) -> ty.Tuple[str, str]:
+    def _hash(item: tuple[str, ty.Iterator[bytes]]) -> ty.Tuple[str, str]:
+        path, chunks = item
         try:
             hsh = hashlib.md5()
-            with open(fspath, "rb") as f:
-                for chunk in iter(lambda: f.read(HASH_CHUNK_SIZE), b""):
-                    hsh.update(chunk)
+            for chunk in chunks:
+                hsh.update(chunk)
             checksum = hsh.hexdigest()
         except OSError:
-            raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        return str(fspath.relative_to(scan.parent)), checksum
+            raise RuntimeError(f"Could not create digest of '{scan.parent / path}' ")
+        return path, checksum
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return dict(executor.map(_hash, scan.fspaths))
+        return dict(executor.map(_hash, iter_resource_files(scan)))
 
 
 HASH_CHUNK_SIZE = 2**20
