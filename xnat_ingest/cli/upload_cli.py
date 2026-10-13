@@ -409,7 +409,15 @@ def upload_cmd(
                     e,
                 )
                 _close_repo(xnat_repo)
-                xnat_repo = _open_repo()
+                try:
+                    xnat_repo = _open_repo()
+                except Exception as reconnect_err:  # noqa: BLE001
+                    logger.error(
+                        "Failed to re-establish XNAT connection: %s. "
+                        "Will retry on the next loop iteration.",
+                        reconnect_err,
+                    )
+                    xnat_repo = None
             if loop < 0:
                 break
             end_time = datetime.datetime.now()
