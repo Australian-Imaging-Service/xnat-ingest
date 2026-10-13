@@ -354,6 +354,10 @@ after every conversion and manifest has been written successfully.
 Packaging rejects samples from different DICOM studies in one session. The upload
 creates the scan from the sample's SOP class, records the archive as ``ZIP``, and
 records the sample as ``DICOM``.
+Before writing output, packaging checks that every staged session has a scan
+resource of the declared source datatype and that every requested output datatype
+has a converter from it. The staged manifests describe resource types, not which
+command produced the input, so this does not certify that de-identification ran.
 
 3. Upload to XNAT
 --------------------

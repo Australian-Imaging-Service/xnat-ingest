@@ -5,6 +5,7 @@ import typing as ty
 from pathlib import Path
 
 from fileformats.core import FileSet
+from fileformats.core.exceptions import FormatConversionError
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
@@ -169,33 +170,68 @@ def package(
             raise ValueError("Output resource labels cannot be empty")
         if not issubclass(datatype, FileSet):
             raise TypeError(f"Output datatype for {label!r} must be a FileSet type")
+        if label == "auto" and not issubclass(datatype, DicomImage):
+            raise ValueError("The 'auto' output label requires a DICOM image target")
+        try:
+            datatype.get_converter(source_datatype)
+        except FormatConversionError as exc:
+            raise ValueError(
+                f"Output resource {label!r} cannot convert "
+                f"{source_datatype.mime_like} to {datatype.mime_like}: {exc}"
+            ) from exc
 
     listings = [LocalSessionListing(p) for p in list_session_dirs(input_dir)]
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not listings:
+        return []
     errors: list[str] = []
+    compatible_sessions: list[tuple[LocalSessionListing, ImagingSession]] = []
 
-    for listing in tqdm(
-        listings,
-        desc=f"Packaging staged sessions found in '{input_dir}'",
-    ):
+    # Validate the staged inputs before converting any session. Manifests record
+    # resource types, but do not record which pipeline stage produced the session.
+    for listing in listings:
         try:
             session = ImagingSession.load(
                 listing.cache_path,
                 require_manifest=require_manifest,
                 check_checksums=True,
             )
+        except Exception as exc:
+            if raise_errors:
+                raise
+            msg = f"Error loading session '{listing.name}': {exc}"
+            logger.error(msg)
+            logger.debug(traceback.format_exc())
+            errors.append(msg)
+        else:
             if not any(
                 isinstance(resource.fileset, source_datatype)
                 for scan in session.scans.values()
                 for resource in scan.resources.values()
             ):
-                logger.info(
-                    "Skipping '%s' because it has no %s scan resources",
-                    listing.name,
-                    source_datatype.mime_like,
+                available = sorted(
+                    {
+                        resource.fileset.mime_like
+                        for scan in session.scans.values()
+                        for resource in scan.resources.values()
+                    }
                 )
-                continue
+                raise ValueError(
+                    f"Staged session {listing.name!r} has no "
+                    f"{source_datatype.mime_like} scan resource "
+                    f"(available scan resource types: {available})"
+                )
+            compatible_sessions.append((listing, session))
 
+    if errors:
+        logger.error("Packaging preflight failed with %d load errors", len(errors))
+        return errors
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for listing, session in tqdm(
+        compatible_sessions,
+        desc=f"Packaging staged sessions found in '{input_dir}'",
+    ):
+        try:
             packaged = _package_session(
                 session,
                 source_datatype=source_datatype,

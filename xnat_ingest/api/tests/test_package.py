@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch
+from zipfile import ZipFile
 
 import pytest
 from click.testing import CliRunner
@@ -275,6 +276,140 @@ def test_package_rejects_old_layout_in_existing_output(tmp_path: Path) -> None:
     assert "fresh output directory" in errors[0]
     old_session = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(old_session.scans["1"].resources) == {"DICOM", "secondary"}
+
+
+def test_package_empty_input_is_quiet(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "empty").mkdir()
+    assert (
+        package(
+            tmp_path / "empty",
+            tmp_path / "output",
+            DicomSeries,
+            {"DICOM": (DicomSeries, {})},
+        )
+        == []
+    )
+    assert not caplog.records
+
+
+def test_package_fails_when_no_session_has_source_type(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+
+    with pytest.raises(ValueError, match="has no medimage/dicom-series scan resource"):
+        package(
+            input_dir,
+            tmp_path / "output",
+            DicomSeries,
+            {"DICOM": (DicomSeries, {})},
+        )
+
+
+def test_package_rejects_mixed_source_types_before_writing(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+    other = ImagingSession(
+        uid="other",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="OTHER",
+        scans=[
+            ImagingScan(
+                id="1",
+                type="CT",
+                resources={"SOURCE": File(input_dir.parent / "report.txt")},
+            )
+        ],
+    )
+    other.save(input_dir)
+
+    output_dir = tmp_path / "output"
+    with pytest.raises(ValueError, match="has no .* scan resource") as exc_info:
+        package(input_dir, output_dir, MyFormat, {"DICOM": (MyFormat, {})})
+
+    assert "PROJECT.SUBJECT.OTHER" in str(exc_info.value)
+    assert File.mime_like in str(exc_info.value)
+    assert not output_dir.exists()
+
+
+def test_package_rejects_missing_converter_before_writing(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+
+    output_dir = tmp_path / "output"
+    with pytest.raises(ValueError, match="Output resource 'DICOM' cannot convert"):
+        package(input_dir, output_dir, MyFormat, {"DICOM": (DicomSeries, {})})
+
+    assert not output_dir.exists()
+
+
+def test_package_cli_fails_for_incompatible_staged_sessions(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+
+    result = CliRunner().invoke(
+        package_cmd,
+        [
+            str(input_dir),
+            str(tmp_path / "output"),
+            DicomSeries.mime_like,
+            "--output-resource",
+            "DICOM",
+            DicomSeries.mime_like,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "has no medimage/dicom-series scan resource" in str(result.exception)
+
+
+def test_package_staged_dicom_series_as_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYDRA_HASH_CACHE", str(tmp_path / "pydra-hashes"))
+    source_path = tmp_path / "source.dcm"
+    _dicom(source_path, "1.2.840.10008.5.1.4.1.1.4", "1.2.3")
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    session = ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(
+                id="1", type="MR", resources={"DICOM": DicomSeries([source_path])}
+            )
+        ],
+    )
+    session.save(input_dir)
+
+    result = CliRunner().invoke(
+        package_cmd,
+        [
+            str(input_dir),
+            str(tmp_path / "output"),
+            DicomSeries.mime_like,
+            "--output-resource",
+            "DICOM-zip",
+            "medimage/dicom-series+zip:compression=ZIP_STORED",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    packaged = ImagingSession.load(tmp_path / "output" / "PROJECT.SUBJECT.SESSION")
+    assert set(packaged.scans["1"].resources) == {"DICOM-zip"}
+    archive = packaged.scans["1"].resources["DICOM-zip"].fileset
+    assert archive.mime_like == "medimage/dicom-series+zip"
+    with ZipFile(archive.fspath) as zip_file:
+        assert zip_file.namelist() == ["source.dcm"]
+        assert zip_file.read("source.dcm") == source_path.read_bytes()
 
 
 def test_package_cli_accepts_multiple_named_outputs(tmp_path: Path) -> None:
