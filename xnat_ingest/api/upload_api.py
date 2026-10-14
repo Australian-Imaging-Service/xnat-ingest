@@ -26,7 +26,6 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_checksums,
     get_xnat_resource,
     get_xnat_session,
-    iter_resource_files,
     iterate_s3_sessions,
     list_session_dirs,
     split_resource_by_modality,
@@ -388,21 +387,12 @@ def upload(
                     """
 
                     resource_dir = resource.fileset.parent
-                    fspaths = [
-                        resource_dir / path
-                        for path, _chunks in iter_resource_files(resource.fileset)
-                    ]
+                    # The same walk as the checksums, which raises on broken links
+                    fspaths = resource.fileset.all_file_paths()
                     if not fspaths:
                         raise RuntimeError(
                             f"Resource '{resource.path}' has no files to upload"
                         )
-                    for fspath in fspaths:
-                        if not fspath.is_file():
-                            # The hash walk gives broken links a NUL digest.
-                            # That does not make them files that we can upload.
-                            raise RuntimeError(
-                                f"Cannot upload '{resource.path}': '{fspath}' is not a file"
-                            )
                     wanted_fspaths = select_files_to_upload(
                         fspaths,
                         resource_dir,
