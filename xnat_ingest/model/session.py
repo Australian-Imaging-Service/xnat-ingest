@@ -552,14 +552,16 @@ class ImagingSession:
         return [self.name]
 
     @cached_property
-    def modalities(self) -> str | tuple[str, ...]:
-        try:
-            modalities_metadata = self.metadata["Modality"]
-        except KeyError as e:
-            e.add_note(f"Available metadata: {list(self.metadata)}")
-            raise e
+    def modalities(self) -> tuple[str, ...] | None:
+        """The distinct modalities in the "Modality" metadata field, which holds a
+        single string if all the session's files share one modality and a (possibly
+        nested) list of them otherwise, as a sorted tuple"""
+        modalities_metadata = self.metadata.get("Modality")
+        if modalities_metadata is None:
+            logger.debug("Modality metadata is not available in session metadata")
+            return None
         if isinstance(modalities_metadata, str):
-            return modalities_metadata
+            return (modalities_metadata,)
         modalities: set[str] = set()
         for modality in modalities_metadata:
             if isinstance(modality, str):
@@ -567,7 +569,7 @@ class ImagingSession:
             else:
                 assert isinstance(modality, ty.Iterable)
                 modalities.update(modality)
-        return tuple(modalities)
+        return tuple(sorted(modalities))
 
     @property
     def primary_parents(self) -> set[Path]:

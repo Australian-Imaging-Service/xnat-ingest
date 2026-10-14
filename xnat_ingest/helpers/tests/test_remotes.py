@@ -10,6 +10,7 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from xnat_ingest.helpers.remotes import (
     SessionOnlyListing,
+    _xnat_scan_class_from_session,
     get_xnat_resource,
     list_session_dirs,
     split_resource_by_modality,
@@ -450,3 +451,62 @@ def test_get_xnat_resource_rejects_conflicting_scan_datatype(tmp_path: Path) -> 
         get_xnat_resource(resource, xsession)
 
     xscan.create_resource.assert_not_called()
+
+
+def _xsession_of_type(xsi_type: ty.Optional[str]) -> MagicMock:
+    xsession = MagicMock()
+    if xsi_type is not None:
+        xsession.__xsi_type__ = xsi_type
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP = {
+        "xnat:petScanData": "PetScanData",
+        "xnat:mrScanData": "MrScanData",
+    }
+    xsession.xnat_session.classes.OtherDicomScanData = "OtherDicomScanData"
+    return xsession
+
+
+@pytest.mark.parametrize(
+    ("session_type", "expected"),
+    [
+        ("xnat:petSessionData", "PetScanData"),
+        ("xnat:mrSessionData", "MrScanData"),
+        # no matching scan type on the server
+        ("xnat:usSessionData", "OtherDicomScanData"),
+        ("xnat:otherDicomSessionData", "OtherDicomScanData"),
+        (None, "OtherDicomScanData"),
+    ],
+)
+def test_xnat_scan_class_from_session(
+    session_type: ty.Optional[str], expected: str
+) -> None:
+    assert _xnat_scan_class_from_session(_xsession_of_type(session_type)) == expected
+
+
+def test_get_xnat_resource_scan_without_sop_class_inherits_session_type() -> None:
+    """A non-DICOM resource (e.g. PET listmode raw data) has no SOP class to decide
+    its scan type from, so the scan takes the modality of its session"""
+
+    class _FakeScan:
+        id = "602"
+        type = "602"
+        path = "proj:subj:sess:602-602"
+        session = MagicMock(path="proj:subj:sess")
+
+    class _FakeVendorResource:
+        name = "LISTMODE"
+        fileset = object()
+        scan = _FakeScan()
+        checksums: dict[str, str] = {"a.ptd": "digest"}
+        metadata: dict[str, str] = {}
+
+    xsession = _xsession_of_type("xnat:petSessionData")
+    PetScanData = MagicMock()
+    PetScanData.return_value.resources = {}
+    PetScanData.return_value.files = ["something"]  # skip the catalog refresh
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP["xnat:petScanData"] = PetScanData
+    xsession.scans = {}
+
+    get_xnat_resource(_FakeVendorResource(), xsession)
+
+    PetScanData.assert_called_once()
+    assert PetScanData.call_args.kwargs["id"] == "602"

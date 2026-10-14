@@ -230,6 +230,15 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "List the sessions that will be uploaded instead of the actually uploading them"
     ),
 )
+@click.option(
+    "--modality",
+    type=str,
+    default=None,
+    envvar="XINGEST_MODALITY",
+    help=(
+        "Specify the modality of the sessions to upload (XINGEST_MODALITY env. var)."
+    ),
+)
 def upload_cmd(
     staged: str,
     server: str,
@@ -252,6 +261,7 @@ def upload_cmd(
     num_files_per_batch: int,
     check_checksums: bool,
     dry_run: bool,
+    modality: ty.Optional[str],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -377,6 +387,7 @@ def upload_cmd(
                     s3_cache_dir=s3_cache_dir,
                     s3_max_workers=s3_max_workers,
                     xnat_max_workers=xnat_max_workers,
+                    modality=modality,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has

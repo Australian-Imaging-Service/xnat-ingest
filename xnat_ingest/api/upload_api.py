@@ -95,6 +95,7 @@ def upload(
     dry_run: bool = False,
     s3_max_workers: int = DEFAULT_MAX_WORKERS,
     xnat_max_workers: int = DEFAULT_MAX_WORKERS,
+    modality: ty.Optional[str] = None,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -123,13 +124,16 @@ def upload(
         (if 0, all files will be uploaded in a single batch)
     check_checksums: bool
         Whether to check checksums of uploaded resources against the checksums specified in the manifest file and
-        the checksums of the files in the staged resources (if available) to verify that they were
+        the checksums of the files in the staged resources (if available) to verify that they were uploaded correctly
     dry_run: bool
          Whether to list the sessions that would be uploaded instead of actually uploading them
     s3_max_workers: int, optional
         The maximum number of concurrent S3 object downloads. Defaults to 10.
     xnat_max_workers: int, optional
         The maximum number of concurrent XNAT resource uploads. Defaults to 10.
+    modality: str, optional
+        The modality of the sessions to upload (e.g. 'MR', 'CT'). Defaults to the "Modality" metadata field if present
+        otherwise an error is raised.
     """
 
     errors = []
@@ -319,7 +323,7 @@ def upload(
                     framesets[session.project_id] = frameset
 
                 # Get the XNAT session object (creates it if it does not exist)
-                xsession = get_xnat_session(session, xproject)
+                xsession = get_xnat_session(session, xproject, modality=modality)
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:
