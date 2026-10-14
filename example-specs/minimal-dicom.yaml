@@ -1,24 +1,35 @@
 # The smallest useful xnat-ingest workflow: group -> assign -> upload, every
 # default left in place. Suits a plain DICOM export where StudyInstanceUID/
 # SeriesNumber/PatientID/AccessionNumber already say everything needed.
+#
+# 'params:' declares exactly what this workflow needs supplied per-deployment -
+# 'xnat-ingest workflow check minimal-dicom.yaml' prints them. A param with no
+# 'default:' is required: set via a same-named environment variable (e.g. a k8s
+# Secret mounted with env:/envFrom:, which is how 'xnat_password' is meant to
+# reach this) or '--param name=value' on the CLI, which always wins if both are
+# given.
+#
+# Where each stage's output is staged is a separate concern from any of this -
+# see '--work-dir' on 'workflow run'/'serve'/'deploy' (not a spec/params field).
 
 name: minimal-dicom
 
-# Every stage without its own args.output_dir gets a subdirectory under work_dir
-# (<work_dir>/<stage-name>) - only the first stage's real input and the final
-# 'upload' target need spelling out.
-work_dir: /var/lib/xnat-ingest/work/minimal-dicom
-
-xnat:
-  server: https://xnat.example.org
-  user: ${XNAT_USER}
-  password: ${XNAT_PASSWORD}
+params:
+  input_dir:
+    description: "Root directory of the scanner export to ingest"
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 stages:
   - name: group
     command: group
     args:
-      input_paths: [/data/scanner-export]
+      input_paths: ["${input_dir}"]
       # datatypes/session/scan all default to DICOM (medimage/dicom-series,
       # StudyInstanceUID, SeriesNumber) - nothing else needed here.
 
@@ -33,3 +44,10 @@ stages:
   - name: upload
     command: upload
     input: assign
+    args:
+      # Explicit on the stage that actually needs them, not a shared top-level
+      # block - keeps the spec format backend-agnostic for a future non-XNAT
+      # upload stage.
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"

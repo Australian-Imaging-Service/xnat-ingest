@@ -5,18 +5,22 @@
 
 name: associate-sidecars
 
-work_dir: /var/lib/xnat-ingest/work/associate-sidecars
-
-xnat:
-  server: https://xnat.example.org
-  user: ${XNAT_USER}
-  password: ${XNAT_PASSWORD}
+params:
+  input_dir:
+    description: "Root directory of the scanner export to ingest"
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
 
 stages:
   - name: group
     command: group
     args:
-      input_paths: [/data/scanner-export]
+      input_paths: ["${input_dir}"]
 
   - name: associate
     command: associate
@@ -41,3 +45,7 @@ stages:
   - name: upload
     command: upload
     input: assign
+    args:
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"

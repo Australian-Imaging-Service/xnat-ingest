@@ -6,8 +6,9 @@ Each ``_build_*`` function is deliberately explicit (mirroring the corresponding
 small quirks: ``group`` folds ``collate_resources``/``convert`` lists into the
 ``collation_map``/``conversion_map`` dicts its API wants, ``assign`` renames
 ``project``/``subject``/``session``/``scan`` to the API's ``*_field`` parameters,
-and ``upload`` needs a live ``Xnat`` connection built (and closed) around the call
-rather than passed in as a plain argument.
+and ``upload`` needs a live ``Xnat`` connection built (from its own ``server``/
+``user``/``password`` args, not a shared workflow-level block) and closed around
+the call rather than passed in as a plain argument.
 """
 
 from __future__ import annotations
@@ -28,19 +29,20 @@ from . import coerce
 if ty.TYPE_CHECKING:
     from frametree.xnat import Xnat
 
-    from .spec import StageSpec, XnatConnectionSpec
+    from .spec import StageSpec
 
 
 @attrs.define
 class StageContext:
     """What a stage's kwarg-builder is given beyond its own ``args:`` dict: its
     resolved input path (``None`` if the stage's own ``args`` must supply one, e.g.
-    the first stage of a pipeline), resolved output directory (``None`` for a
-    terminal stage such as ``upload``), and the workflow's shared ``xnat:`` block."""
+    the first stage of a pipeline) and resolved output directory (``None`` for a
+    terminal stage such as ``upload``). Credentials (e.g. an ``upload`` stage's
+    XNAT server/user/password) are plain ``args:`` on that stage, not part of the
+    shared context - see ``_build_upload``."""
 
     input_path: ty.Optional[Path]
     output_path: ty.Optional[Path]
-    xnat: "ty.Optional[XnatConnectionSpec]"
 
 
 def _build_group(args: dict, ctx: StageContext) -> dict:
@@ -145,8 +147,28 @@ def _build_associate(args: dict, ctx: StageContext) -> dict:
 
 
 def _build_upload(args: dict, ctx: StageContext) -> dict:
+    """Unlike the other stages, 'upload' takes its XNAT connection details
+    (server/user/password/verify_ssl) as plain args: on the stage itself, rather
+    than from a shared workflow-level block - so they're explicit at the point
+    they're used and a future non-XNAT upload stage needs no spec-format change.
+    They're packed into the reserved '_xnat_connection' key (stripped from the
+    'unknown args' check, and popped back out by run_stage() to build/close a live
+    Xnat connection around the actual api_fn() call) rather than built into a
+    connection here, so this function stays pure/side-effect-free for dry-run
+    validation (xnat-ingest workflow check)."""
     args = dict(args)
     kwargs: dict[str, ty.Any] = {"input_dir": str(ctx.input_path)}
+    server = args.pop("server", None)
+    user = args.pop("user", None)
+    password = args.pop("password", None)
+    verify_ssl = args.pop("verify_ssl", True)
+    if server is not None:
+        kwargs["_xnat_connection"] = {
+            "server": server,
+            "user": user,
+            "password": password,
+            "verify_ssl": verify_ssl,
+        }
     if "always_include" in args:
         kwargs["always_include"] = list(args.pop("always_include"))
     if "methods" in args:
@@ -156,7 +178,7 @@ def _build_upload(args: dict, ctx: StageContext) -> dict:
             args.pop("store_credentials")
         )
     kwargs.update(args)  # wait_period, check_checksums, dry_run, ...
-    return kwargs  # 'xnat_repo' is injected by run_stage(), not built here
+    return kwargs
 
 
 @attrs.define
@@ -197,15 +219,15 @@ STAGES: dict[str, Stage] = {
 STAGE_NAMES = frozenset(STAGES)
 
 
-def _build_xnat_repo(xnat: "XnatConnectionSpec") -> "Xnat":
+def _build_xnat_repo(connection: dict) -> "Xnat":
     from frametree.xnat import Xnat
 
     repo = Xnat(
-        server=xnat.server,
-        user=xnat.user,
-        password=xnat.password,
+        server=connection["server"],
+        user=connection.get("user"),
+        password=connection.get("password"),
         cache_dir=Path(tempfile.mkdtemp()),
-        verify_ssl=xnat.verify_ssl,
+        verify_ssl=connection.get("verify_ssl", True),
     )
     repo.connection.__enter__()
     return repo
@@ -221,17 +243,19 @@ def _close_xnat_repo(repo: "Xnat") -> None:
 def run_stage(stage_spec: "StageSpec", ctx: StageContext) -> list[str]:
     """Build the kwargs for one stage from its spec + resolved context and call its
     API function, returning whatever list of per-session error strings that
-    function returns. For 'upload', opens an Xnat connection around the call and
-    closes it afterwards."""
+    function returns. For 'upload', opens an Xnat connection (from the stage's own
+    'server'/'user'/'password' args - see _build_upload) around the call and closes
+    it afterwards."""
     stage = STAGES[stage_spec.command]
     kwargs = stage.build_kwargs(stage_spec.args, ctx)
+    connection = kwargs.pop("_xnat_connection", None)
     if stage.needs_xnat:
-        if ctx.xnat is None:
+        if connection is None:
             raise ValueError(
-                f"stage '{stage_spec.name}' ({stage_spec.command}) needs a "
-                "top-level 'xnat:' block (server/user/password) in the workflow spec"
+                f"stage '{stage_spec.name}' ({stage_spec.command}) needs 'server' "
+                "(and usually 'user'/'password') under its own 'args:'"
             )
-        repo = _build_xnat_repo(ctx.xnat)
+        repo = _build_xnat_repo(connection)
         try:
             kwargs["xnat_repo"] = repo
             return stage.api_fn(**kwargs)
