@@ -132,9 +132,26 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
     xsession = SimpleNamespace(
         scans={}, resources={"DATA": remote}, xnat_session=remote.xnat_session
     )
-    connection = SimpleNamespace(
-        projects={"proj": SimpleNamespace(experiments={"sess": xsession})}
-    )
+    connection = remote.xnat_session
+
+    def get_json(uri, query=None):
+        responses = {
+            "/data/archive/projects": [{"ID": "proj", "name": "proj"}],
+            "/data/projects/proj/experiments": [
+                {"ID": "E1", "label": "sess", "xsiType": "xnat:mrSessionData"}
+            ],
+            "/data/experiments/E1/scans": [],
+            "/data/experiments/E1/resources": [
+                {
+                    "xnat_abstractresource_id": "97",
+                    "label": "DATA",
+                    "element_name": "xnat:resourceCatalog",
+                }
+            ],
+        }
+        return {"ResultSet": {"Result": responses[uri]}}
+
+    connection.get_json.side_effect = get_json
 
     class Listing(S3SessionListing):
         @property

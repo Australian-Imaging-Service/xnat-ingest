@@ -61,7 +61,7 @@ class FakeExperiment:
 
 
 class FakeProject:
-    experiments: dict[str, ty.Any] = {}  # session not on XNAT: all_uploaded() is False
+    experiments: dict[str, ty.Any] = {}
 
 
 class FakeConnection:
@@ -76,6 +76,17 @@ class FakeConnection:
 
     def clearcache(self) -> None:
         pass
+
+    def get_json(self, uri: str, query: ty.Any = None) -> dict[str, ty.Any]:
+        # The completeness check reads REST rows; the upload steps still use
+        # the object tree. Both views describe the same absent session.
+        if uri == "/data/archive/projects":
+            rows = [{"ID": "proj", "name": "proj"}]
+        elif uri == "/data/projects/proj/experiments":
+            rows = []
+        else:
+            raise AssertionError(f"Unexpected REST read: {uri}")
+        return {"ResultSet": {"Result": rows}}
 
     def put(self, uri: str) -> None:  # triggerPipelines
         pass
