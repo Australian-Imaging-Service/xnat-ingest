@@ -64,15 +64,19 @@ def _staged_upload_batch(
         for fspath in files:
             dest = upload_dir / fspath.relative_to(source_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            # Keep the manifest path, but stage file link targets as file bytes.
-            # A batch must not depend on a target in another batch.
+            # Put the file data in the batch, not a symbolic link. A link can
+            # point to a file in a different batch, or out of the resource.
+            # Keep the path of the link, because the manifest uses that path.
+            # On Python 3.11, hardlink_to() does not follow a link. So resolve it.
             source = fspath.resolve(strict=True)
             try:
                 dest.hardlink_to(source)
             except OSError as error:
                 if error.errno != errno.EXDEV or source == fspath:
                     raise
-                # Only a link target can leave the source filesystem.
+                # Copy a link target that is on a different file system. For
+                # any other file, raise the error: the batch is next to the
+                # resource, on the same file system.
                 shutil.copy2(source, dest)
         yield upload_dir
 
