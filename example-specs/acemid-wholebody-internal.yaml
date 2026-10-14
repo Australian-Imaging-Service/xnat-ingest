@@ -13,10 +13,12 @@ name: acemid-wholebody-internal
 params:
   input_dir:
     description: "Root of this site's Canfield Vectra export"
-    default: /data/canfield-export
   spec_dir:
     description: "Directory of project-specific deidentification specs"
     default: /etc/xnat-ingest/deid-specs
+  reid_dir:
+    description: "Directory to write the original<->deidentified mapping to"
+    default: /var/lib/xnat-ingest/reid
   xnat_server:
     description: "URL of the XNAT server to upload to"
   xnat_user:
@@ -34,12 +36,12 @@ stages:
         - medimage/vnd.canfield.vectra-export
         - application/vnd.sqlite3
       session:
-        - specifier: session_uid
+        - expr: session_uid
           # datatype omitted -> 'all'
       path_metadata_regex:
-        - regex: '.*/(?P<session_uid>[\w-]+)'
+        - pattern: '.*/(?P<session_uid>[\w-]+)'
           datatype: medimage/vnd.canfield.vectra-export
-        - regex: '.*/(?P<SubjectID>[^/_]+)_(?P<session_uid>[\w-]+)'
+        - pattern: '.*/(?P<SubjectID>[^/_]+)_(?P<session_uid>[\w-]+)'
           datatype: application/vnd.sqlite3
       # Needs the vectra-export -> +zip converter from fileformats-extras loaded
       # in the image this runs in.
@@ -51,6 +53,9 @@ stages:
     command: assign
     input: group
     args:
+      # assign() still requires a project field even when constant_project_id
+      # overrides the actual project assigned below - it's otherwise unused.
+      project: "all"
       subject: SubjectID
       session: session_uid
       constant_project_id: ACEMID-Internal
@@ -60,6 +65,7 @@ stages:
     input: assign
     args:
       spec_dir: "${spec_dir}"
+      reid_dir: "${reid_dir}"
 
   - name: upload
     command: upload

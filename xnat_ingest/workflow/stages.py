@@ -22,7 +22,7 @@ import attrs
 from ..api.assign_api import assign
 from ..api.associate_api import associate
 from ..api.deidentify_api import deidentify
-from ..api.group_api import group
+from ..api.group_api import group, group_orthanc
 from ..api.upload_api import upload
 from . import coerce
 
@@ -82,6 +82,20 @@ def _build_group(args: dict, ctx: StageContext) -> dict:
         kwargs["copy_mode"] = coerce.copy_mode(args.pop("copy_mode"))
     # Remaining plain scalars pass straight through unchanged: recursive,
     # wait_period, allow_unrecognised, exclude_paths, unlink_source, raise_errors.
+    kwargs.update(args)
+    return kwargs
+
+
+def _build_group_orthanc(args: dict, ctx: StageContext) -> dict:
+    """Unlike 'group', this has no 'input:' notion at all - it's always the root
+    of a pipeline, pulling DICOM sessions straight from an Orthanc instance
+    rather than a mounted directory (see 'url'/'store_dir' below)."""
+    args = dict(args)
+    kwargs: dict[str, ty.Any] = {"output_dir": ctx.output_path}
+    if "copy_mode" in args:
+        kwargs["copy_mode"] = coerce.copy_mode(args.pop("copy_mode"))
+    # url, store_dir, user, password, to_process_label, processed_label,
+    # unlink_source, raise_errors, wait_period all pass straight through.
     kwargs.update(args)
     return kwargs
 
@@ -191,6 +205,18 @@ class Stage:
     input_arg: str = "input_dir"
     takes_output_dir: bool = True
     needs_xnat: bool = False
+    # api_fn parameters run_stage() supplies itself (e.g. upload's 'xnat_repo',
+    # built from '_xnat_connection' - see run_stage()) rather than build_kwargs()
+    # - so spec-validation's required-argument check treats them as present.
+    injected_args: ty.FrozenSet[str] = attrs.field(factory=frozenset)
+    # args: keys this stage's build_kwargs() runs through a coerce.* function
+    # (parses into a structured type - IDSpec, a mime-type lookup, ClashSpec,
+    # ...) rather than passing straight through. A '${NAME}' placeholder here
+    # must be resolved before the flow is even built, since check/deploy-time
+    # validation depends on it - see spec._resolve_stage_args(). Anything not
+    # listed here is a plain value, eligible to become a real (non-secret) Prefect
+    # flow parameter instead of being baked in at load time.
+    coerced_args: ty.FrozenSet[str] = attrs.field(factory=frozenset)
 
 
 STAGES: dict[str, Stage] = {
@@ -199,13 +225,46 @@ STAGES: dict[str, Stage] = {
         api_fn=group,
         build_kwargs=_build_group,
         input_arg="input_paths",
+        coerced_args=frozenset(
+            {
+                "datatypes",
+                "ignore_datatypes",
+                "session",
+                "scan",
+                "resource",
+                "path_metadata_regex",
+                "on_resource_clash",
+                "metadata_tables",
+                "collate_resources",
+                "convert",
+                "copy_mode",
+            }
+        ),
     ),
-    "assign": Stage(command="assign", api_fn=assign, build_kwargs=_build_assign),
+    "group-orthanc": Stage(
+        command="group-orthanc",
+        api_fn=group_orthanc,
+        build_kwargs=_build_group_orthanc,
+        input_arg="url",
+        coerced_args=frozenset({"copy_mode"}),
+    ),
+    "assign": Stage(
+        command="assign",
+        api_fn=assign,
+        build_kwargs=_build_assign,
+        coerced_args=frozenset({"include", "copy_mode"}),
+    ),
     "deidentify": Stage(
-        command="deidentify", api_fn=deidentify, build_kwargs=_build_deidentify
+        command="deidentify",
+        api_fn=deidentify,
+        build_kwargs=_build_deidentify,
+        coerced_args=frozenset({"copy_mode"}),
     ),
     "associate": Stage(
-        command="associate", api_fn=associate, build_kwargs=_build_associate
+        command="associate",
+        api_fn=associate,
+        build_kwargs=_build_associate,
+        coerced_args=frozenset({"datatype", "copy_mode"}),
     ),
     "upload": Stage(
         command="upload",
@@ -213,6 +272,8 @@ STAGES: dict[str, Stage] = {
         build_kwargs=_build_upload,
         takes_output_dir=False,
         needs_xnat=True,
+        injected_args=frozenset({"xnat_repo"}),
+        coerced_args=frozenset({"methods", "store_credentials"}),
     ),
 }
 
