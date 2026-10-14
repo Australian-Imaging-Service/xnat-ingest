@@ -149,9 +149,13 @@ are uploaded to XNAT
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
-    default=None,
+    # True, as in associate(). None was read as "not required".
+    default=True,
     envvar="XINGEST_REQUIRE_MANIFEST",
-    help=("Whether to require manifest files in the staged resources or not"),
+    help=(
+        "Whether to require manifest files in the staged resources or not "
+        "(default: required)"
+    ),
     type=bool,
 )
 def associate_cmd(
