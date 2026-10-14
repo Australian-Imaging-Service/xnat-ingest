@@ -31,15 +31,18 @@ def test_require_manifest_option_defaults_to_true(cmd: ty.Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "flags, expected",
+    "flags, env_value, expected",
     [
-        ([], True),
-        (["--require-manifest"], True),
-        (["--dont-require-manifest"], False),
+        ([], None, True),
+        (["--require-manifest"], None, True),
+        (["--dont-require-manifest"], None, False),
+        ([], "false", False),
+        ([], "true", True),
+        (["--require-manifest"], "false", True),
     ],
 )
 def test_upload_passes_require_manifest(
-    cli_runner: ty.Any, flags: list[str], expected: bool
+    cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
         patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
@@ -51,7 +54,7 @@ def test_upload_passes_require_manifest(
             upload_cmd,
             ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
             + flags,
-            env=CLEAN_ENV,
+            env={**CLEAN_ENV, "XINGEST_REQUIRE_MANIFEST": env_value},
         )
     assert result.exit_code == 0, show_cli_trace(result)
     assert mock_upload.call_args.kwargs["require_manifest"] is expected
