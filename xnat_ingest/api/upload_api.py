@@ -1,4 +1,6 @@
+import errno
 import math
+import shutil
 import tempfile
 import traceback
 import typing as ty
@@ -61,7 +63,20 @@ def _staged_upload_batch(
         for fspath in files:
             dest = upload_dir / fspath.relative_to(source_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.hardlink_to(fspath)
+            # Put the file data in the batch, not a symbolic link. A link can
+            # point to a file in a different batch, or out of the resource.
+            # Keep the path of the link, because the manifest uses that path.
+            # On Python 3.11, hardlink_to() does not follow a link. So resolve it.
+            source = fspath.resolve(strict=True)
+            try:
+                dest.hardlink_to(source)
+            except OSError as error:
+                if error.errno != errno.EXDEV or source == fspath:
+                    raise
+                # Copy a link target that is on a different file system. For
+                # any other file, raise the error: the batch is next to the
+                # resource, on the same file system.
+                shutil.copy2(source, dest)
         yield upload_dir
 
 
@@ -363,9 +378,16 @@ def upload(
                     be pointless and, on a large resource, expensive.
                     """
 
+                    resource_dir = resource.fileset.parent
+                    # The same walk as the checksums, which raises on broken links
+                    fspaths = resource.fileset.all_file_paths()
+                    if not fspaths:
+                        raise RuntimeError(
+                            f"Resource '{resource.path}' has no files to upload"
+                        )
                     wanted_fspaths = select_files_to_upload(
-                        list(resource.fileset.fspaths),
-                        resource.fileset.parent,
+                        fspaths,
+                        resource_dir,
                         only_files,
                         resource.path,
                     )
@@ -391,7 +413,7 @@ def upload(
                         )
                         # Keep batch directories alongside their source files so
                         # that hard links stay on the same filesystem.
-                        dir_to_upload = resource.fileset.parent
+                        dir_to_upload = resource_dir
                         files_to_upload = wanted_fspaths
                         num_files = len(files_to_upload)
                         batch_size = (

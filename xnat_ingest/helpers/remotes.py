@@ -1189,19 +1189,12 @@ def calculate_checksums(
         the calculated checksums
     """
 
-    def _hash(fspath: Path) -> ty.Tuple[str, str]:
-        try:
-            hsh = hashlib.md5()
-            with open(fspath, "rb") as f:
-                for chunk in iter(lambda: f.read(HASH_CHUNK_SIZE), b""):
-                    hsh.update(chunk)
-            checksum = hsh.hexdigest()
-        except OSError:
-            raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        return str(fspath.relative_to(scan.parent)), checksum
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return dict(executor.map(_hash, scan.fspaths))
+    return scan.hash_files(
+        crypto=hashlib.md5,
+        chunk_len=HASH_CHUNK_SIZE,
+        relative_to=scan.parent,
+        max_workers=max_workers,
+    )
 
 
 HASH_CHUNK_SIZE = 2**20
