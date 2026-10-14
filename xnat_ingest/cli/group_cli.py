@@ -67,7 +67,7 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=DEFAULT_SCAN_FIELD,
-    metavar="<specifier> <datatype>",
+    metavar="<expr> <datatype>",
     envvar="XINGEST_SCAN",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
@@ -82,7 +82,7 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=DEFAULT_RESOURCE_FIELD,
-    metavar="<specifier> <datatype>",
+    metavar="<expr> <datatype>",
     envvar="XINGEST_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
@@ -128,13 +128,13 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=(),
-    metavar="<policy> <scope>",
+    metavar="<policy> <datatype>",
     envvar="XINGEST_ON_RESOURCE_CLASH",
     help=(
         "How to handle two filesets resolving to the same scan/resource name: a <policy> "
         "('avoid' appends a _2/_3 suffix, 'merge' folds both into one SetOf, 'overwrite' "
-        "replaces) plus the datatype <scope> it applies to (a mime-like, a '|'-union, or "
-        "'all'). Repeatable. A clash is resolved by the first spec whose scope covers BOTH "
+        "replaces) plus the <datatype> it applies to (a mime-like, a '|'-union, or "
+        "'all'). Repeatable. A clash is resolved by the first spec whose datatype covers BOTH "
         "filesets; a clash no spec covers raises. (XINGEST_ON_RESOURCE_CLASH env. var)"
     ),
 )

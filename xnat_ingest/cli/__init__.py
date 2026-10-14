@@ -6,6 +6,7 @@ from .deidentify_cli import deidentify_cmd
 from .group_cli import group_cmd, group_orthanc_cmd
 from .package_cli import package_cmd
 from .upload_cli import upload_cmd
+from .workflow_cli import workflow
 
 __all__ = [
     "assign_cmd",
@@ -17,4 +18,5 @@ __all__ = [
     "group_cmd",
     "group_orthanc_cmd",
     "package_cmd",
+    "workflow",
 ]
