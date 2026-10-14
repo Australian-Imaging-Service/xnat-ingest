@@ -336,7 +336,13 @@ class LocalSessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        paths = {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
+        # Hidden entries are not resources, as the loaders treat them: an upload
+        # batch folder (".<resource>-upload-*") that a killed uploader left.
+        paths = {
+            str(p.relative_to(self.fspath))
+            for p in self.fspath.glob("*/*")
+            if not p.name.startswith(".") and not p.parent.name.startswith(".")
+        }
         # session resources: top-level dirs with no "." in name
         for item in self.fspath.iterdir():
             if item.is_dir() and "." not in item.name:
@@ -483,6 +489,10 @@ class S3SessionListing(SessionListing):
             if not path_parts:
                 continue
             first = path_parts[0]
+            if first.startswith(".") or (
+                len(path_parts) >= 2 and path_parts[1].startswith(".")
+            ):
+                continue  # hidden: an upload batch folder copied with the session
             if "." in first:
                 # scan resource: <scan_id>.<scan_type>/<resource_name>
                 if len(path_parts) >= 2:

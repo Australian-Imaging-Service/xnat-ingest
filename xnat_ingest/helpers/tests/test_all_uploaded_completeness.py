@@ -8,6 +8,7 @@ all_uploaded() reads XNAT through REST calls, not xnatpy objects, so these
 tests answer those calls from a small model of one XNAT session.
 """
 
+import json
 import typing as ty
 from pathlib import Path
 from unittest import mock
@@ -15,7 +16,11 @@ from unittest import mock
 import pytest
 from xnat.core import XNATBaseListing, XNATBaseObject
 
-from xnat_ingest.helpers.remotes import S3SessionListing, SessionOnlyListing
+from xnat_ingest.helpers.remotes import (
+    LocalSessionListing,
+    S3SessionListing,
+    SessionOnlyListing,
+)
 
 RESOURCE_PATH = "1.scan_one/DICOM"
 LOCAL = {"a.dcm": "d1", "b.dcm": "d2", "c.dcm": "d3"}
@@ -145,6 +150,41 @@ def _one_scan(files: ty.Dict[str, str]) -> FakeXnat:
 def test_complete_resource_is_uploaded(tmp_path: ty.Any) -> None:
     listing = _listing(tmp_path, {RESOURCE_PATH: LOCAL})
     assert listing.all_uploaded(_one_scan(dict(LOCAL))) is True  # type: ignore[arg-type]
+
+
+def test_local_listing_ignores_a_batch_folder_left_by_a_killed_uploader(
+    tmp_path: ty.Any,
+) -> None:
+    """The orphan ".<resource>-upload-*" folder is not a resource: a complete
+    session is still skipped, not prepared and checked again on every pass."""
+    session_dir = tmp_path / "proj.subj.sess"
+    resource_dir = session_dir / RESOURCE_PATH
+    resource_dir.mkdir(parents=True)
+    for name in LOCAL:
+        (resource_dir / name).write_bytes(name.encode())
+    (resource_dir / "__MANIFEST__.json").write_text(json.dumps({"checksums": LOCAL}))
+    orphan = resource_dir.parent / ".DICOM-upload-orphan"
+    orphan.mkdir()
+    (orphan / "a.dcm").hardlink_to(resource_dir / "a.dcm")
+
+    listing = LocalSessionListing(fspath=session_dir)
+
+    assert listing.resource_paths == {RESOURCE_PATH}
+    assert listing.all_uploaded(_one_scan(dict(LOCAL))) is True  # type: ignore[arg-type]
+
+
+def test_s3_listing_ignores_a_batch_folder_copied_with_the_session(
+    tmp_path: ty.Any,
+) -> None:
+    objects = [
+        (["1.scan_one", "DICOM", "a.dcm"], None),
+        (["1.scan_one", ".DICOM-upload-orphan", "a.dcm"], None),
+        ([".notes-upload-orphan", "notes.txt"], None),
+    ]
+    listing = S3SessionListing(
+        name="proj.subj.sess", objects=objects, bucket=None, cache_path=tmp_path
+    )
+    assert listing.resource_paths == {RESOURCE_PATH}
 
 
 def test_short_resource_is_not_uploaded(tmp_path: ty.Any) -> None:
