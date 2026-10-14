@@ -135,9 +135,14 @@ by setting the "XNAT_INGEST_HOST" environment variable.
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
-    default=None,
+    # True, as in upload(). None was read as "not required", so a resource
+    # without its manifest was uploaded as it was.
+    default=True,
     envvar="XINGEST_REQUIRE_MANIFEST",
-    help=("Whether to require manifest files in the staged resources or not"),
+    help=(
+        "Whether to require manifest files in the staged resources or not "
+        "(default: required)"
+    ),
     type=bool,
 )
 @click.option(
