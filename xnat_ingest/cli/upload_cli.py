@@ -1,5 +1,6 @@
 import datetime
 import logging
+import shutil
 import subprocess as sp
 import tempfile
 import time
@@ -268,6 +269,16 @@ def upload_cmd(
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
 
+    # The run's temporary files go in one directory, which is removed on exit.
+    # A new directory for each pass and each connection was never removed. The
+    # directory is unique to this run (inside --temp-dir when given), so two
+    # runs that share a --temp-dir cannot remove each other's files.
+    run_tmp_dir = Path(tempfile.mkdtemp())
+    xnat_cache_dir = run_tmp_dir / "xnat_cache"
+    xnat_cache_dir.mkdir()
+    s3_cache_dir = run_tmp_dir / "s3_cache"
+    s3_cache_dir.mkdir()
+
     # Open ONE XNAT connection for the whole `--loop` lifetime.
     #
     # Previously upload() created a fresh Xnat() and called xnat.connect()
@@ -286,7 +297,7 @@ def upload_cmd(
             server=server,
             user=user,
             password=password,
-            cache_dir=Path(tempfile.mkdtemp()),
+            cache_dir=xnat_cache_dir,
             verify_ssl=verify_ssl,
         )
         if use_curl_jsession:
@@ -329,8 +340,9 @@ def upload_cmd(
         signatures = ("status 401", "status 403", "Unauthorized", "Forbidden")
         return any(any(sig in msg for sig in signatures) for msg in error_messages)
 
-    xnat_repo = _open_repo()
+    xnat_repo = None
     try:
+        xnat_repo = _open_repo()
         # Loop the upload process if loop is set to a positive value, otherwise just run it once
         while True:
             start_time = datetime.datetime.now()
@@ -362,11 +374,7 @@ def upload_cmd(
                     num_files_per_batch=num_files_per_batch,
                     check_checksums=check_checksums,
                     dry_run=dry_run,
-                    s3_cache_dir=(
-                        Path(temp_dir) / "s3_cache"
-                        if temp_dir is not None
-                        else tempfile.mkdtemp()
-                    ),
+                    s3_cache_dir=s3_cache_dir,
                     s3_max_workers=s3_max_workers,
                     xnat_max_workers=xnat_max_workers,
                 )
@@ -438,3 +446,4 @@ def upload_cmd(
             time.sleep(loop)
     finally:
         _close_repo(xnat_repo)
+        shutil.rmtree(run_tmp_dir, ignore_errors=True)
