@@ -65,7 +65,9 @@ class _RemoteResource:
         self.held.update(batch)
 
 
-def _upload(tmp_path, fileset, remote, only_files=None, batch_size=1):
+def _upload(
+    tmp_path, fileset, remote, only_files=None, batch_size=1, after_staging=None
+):
     """Run upload with real files and a real session, without a server."""
     staging = tmp_path / "staged"
     (staging / "proj.subj.sess").mkdir(parents=True)
@@ -73,6 +75,8 @@ def _upload(tmp_path, fileset, remote, only_files=None, batch_size=1):
         uid="uid", project_id="proj", subject_id="subj", session_id="sess"
     )
     session.add_resource("1", "scan", "DATA", fileset)
+    if after_staging is not None:
+        after_staging()
     connection = mock.MagicMock()
     connection.projects = {"proj": SimpleNamespace(experiments={})}
 
@@ -133,12 +137,13 @@ def test_directory_checksums_match_manifest_walk(tmp_path):
     assert calculate_checksums(fileset, max_workers=2) == expected
 
 
-def test_broken_link_checksum_keeps_fileformats_contract(tmp_path):
+def test_broken_link_checksum_raises(tmp_path):
     fileset = _directory(tmp_path)
     (fileset.fspath / "broken.bin").symlink_to("missing.bin")
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
-    assert expected["data/broken.bin"] == hashlib.md5(b"\0").hexdigest()
-    assert calculate_checksums(fileset) == expected
+    with pytest.raises(FileNotFoundError, match="broken.bin"):
+        ImagingResource("DATA", fileset)
+    with pytest.raises(FileNotFoundError, match="broken.bin"):
+        calculate_checksums(fileset)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 2])
@@ -202,11 +207,14 @@ def test_directory_links_are_not_followed_in_upload(tmp_path):
 
 def test_broken_link_upload_fails_before_any_batch(tmp_path):
     fileset = _directory(tmp_path)
-    (fileset.fspath / "broken.bin").symlink_to("missing.bin")
+    target = tmp_path / "target.bin"
+    target.write_bytes(b"target")
+    (fileset.fspath / "broken.bin").symlink_to(target)
     remote = _RemoteResource()
+    # A broken link can't be staged, so break it between staging and upload
     with pytest.raises(RuntimeError) as caught:
-        _upload(tmp_path, fileset, remote)
-    assert "not a file" in str(caught.value.__cause__)
+        _upload(tmp_path, fileset, remote, after_staging=target.unlink)
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
     assert "broken.bin" in str(caught.value.__cause__)
     assert remote.batches == []
 
