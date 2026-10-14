@@ -1,0 +1,51 @@
+# The second, independent ACEMID pipeline: archives the whole Vectra export
+# directory plus its sidecar SQLite .db as single resources (no --recursive -
+# nothing here is pulled apart), converting the export to a .zip on the way in.
+# Shares common.yaml's xnat: block with acemid-lesion.yaml via 'extends', but is
+# otherwise a fully separate spec/deployment - each redeployable independently.
+
+name: acemid-wholebody-internal
+
+work_dir: /var/lib/xnat-ingest/work/acemid-wholebody-internal
+
+extends: common.yaml
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: [/data/canfield-export]
+      datatypes:
+        - medimage/vnd.canfield.vectra-export
+        - application/vnd.sqlite3
+      session:
+        - specifier: session_uid
+          # datatype omitted -> 'all'
+      path_metadata_regex:
+        - regex: '.*/(?P<session_uid>[\w-]+)'
+          datatype: medimage/vnd.canfield.vectra-export
+        - regex: '.*/(?P<SubjectID>[^/_]+)_(?P<session_uid>[\w-]+)'
+          datatype: application/vnd.sqlite3
+      # Needs the vectra-export -> +zip converter from fileformats-extras loaded
+      # in the image this runs in.
+      convert:
+        - source: medimage/vnd.canfield.vectra-export
+          target: medimage/vnd.canfield.vectra-export+zip
+
+  - name: assign
+    command: assign
+    input: group
+    args:
+      subject: SubjectID
+      session: session_uid
+      constant_project_id: ACEMID-Internal
+
+  - name: deidentify
+    command: deidentify
+    input: assign
+    args:
+      spec_dir: /etc/xnat-ingest/deid-specs
+
+  - name: upload
+    command: upload
+    input: deidentify
