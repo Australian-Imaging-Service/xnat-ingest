@@ -113,7 +113,7 @@ class FakeXnat:
         return FakeResponse(
             {
                 "ResultSet": {
-                    "Result": [{"Name": n, "digest": d} for n, d in files.items()]
+                    "Result": [{"Name": n, "URI": f"{uri}/{n}", "digest": d} for n, d in files.items()]
                 }
             }
         )
