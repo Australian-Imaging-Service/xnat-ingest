@@ -129,6 +129,11 @@ class ImagingScan:
             if resource_dir.name == Metadata.FNAME:
                 scan.metadata = Metadata.load(scan_dir, scan)
                 continue
+            if resource_dir.name.startswith("."):
+                # Hidden: an upload batch folder that a killed uploader left
+                # behind (".<resource>-upload-*"), or an editor file. Not a
+                # resource. Reading it as one failed the whole session.
+                continue
             if resource_dir.is_dir():
                 resource = ImagingResource.load(
                     resource_dir,

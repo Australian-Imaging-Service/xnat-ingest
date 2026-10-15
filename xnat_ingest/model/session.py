@@ -1858,7 +1858,9 @@ class ImagingSession:
                 run_uid=run_uid,
             )
         for item in session_dir.iterdir():
-            if not item.is_dir():
+            if not item.is_dir() or item.name.startswith("."):
+                # Hidden: an upload batch folder of a session resource that a
+                # killed uploader left behind, or an editor file. Not a scan.
                 continue
             if "." in item.name:
                 # scan directory: <scan_id>.<scan_type>
