@@ -25,7 +25,7 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
-from ..exceptions import IncompleteCheckumsException
+from ..exceptions import IncompleteCheckumsException, UnsupportedModalityError
 from ..model.resource import ImagingResource
 from ..model.scan import ImagingScan
 from ..model.session import ImagingSession
@@ -669,15 +669,24 @@ def remove_old_files_on_ssh(remote_store: str, threshold: int) -> None:
     ssh_client.close()
 
 
-def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
+def get_xnat_session(
+    session: ImagingSession, xproject: ty.Any, modality: str | None = None
+) -> ty.Any:
     """Get the XNAT session object for the given session
 
     Parameters
     ----------
     session : ImagingSession
         the session to upload
-    xnat_repo : Xnat
-        the XNAT repository to upload to
+    xproject : ty.Any
+        the XNAT project to upload to
+    modality : str, optional
+        the DICOM modality code (e.g. 'MR', 'PT', 'CT') that determines the XNAT
+        session type when the session needs to be created. Defaults to the modality
+        in the session's metadata, ignoring non-image modalities such as structured
+        reports and preferring MR, then PT, then CT if it has several. Sessions whose
+        modalities have no session type on the server are created as
+        'xnat:otherDicomSessionData' unless the modality is given explicitly
 
     Returns
     -------
@@ -690,19 +699,119 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
     try:
         xsession = xproject.experiments[session.session_id]
     except KeyError:
-        if "MR" in session.modalities:
-            SessionClass = xclasses.MrSessionData
-        elif "PT" in session.modalities:
-            SessionClass = xclasses.PetSessionData
-        elif "CT" in session.modalities:
-            SessionClass = xclasses.CtSessionData
+        if modality is not None:
+            SessionClass = _xnat_session_class(xclasses, modality)
+            if SessionClass is None:
+                raise UnsupportedModalityError(
+                    f"XNAT server has no 'xnat:{xnat_session_type(modality)}' session "
+                    f"type for the '{modality}' modality given for {session.name}"
+                )
         else:
-            raise RuntimeError(
-                "Found the following unsupported modalities in "
-                f"{session.name}: {session.modalities}"
+            if session.modalities is None:
+                raise RuntimeError(
+                    f"Cannot determine modality for session {session.name} because it "
+                    "has no modalities metadata. Please provide the modality explicitly "
+                    "via the 'modality' parameter."
+                )
+            # Use the session type of the first image modality the server has one
+            # for, trying the preferred modalities first
+            image_modalities = sorted(
+                (m for m in session.modalities if m not in NON_IMAGE_MODALITIES),
+                key=lambda m: (
+                    PREFERRED_SESSION_MODALITIES.index(m)
+                    if m in PREFERRED_SESSION_MODALITIES
+                    else len(PREFERRED_SESSION_MODALITIES)
+                ),
             )
+            SessionClass = next(
+                (
+                    c
+                    for c in (
+                        _xnat_session_class(xclasses, m) for m in image_modalities
+                    )
+                    if c is not None
+                ),
+                None,
+            )
+            if SessionClass is None:
+                # The session type XNAT itself uses for DICOMs of modalities
+                # without a session type of their own
+                logger.warning(
+                    "No XNAT session type for the modalities of %s (%s), creating "
+                    "it as 'xnat:otherDicomSessionData'",
+                    session.name,
+                    ", ".join(session.modalities),
+                )
+                try:
+                    SessionClass = xclasses.OtherDicomSessionData
+                except AttributeError:
+                    raise UnsupportedModalityError(
+                        f"XNAT server has no session type for the modalities of "
+                        f"{session.name} ({', '.join(session.modalities)}), and no "
+                        "'xnat:otherDicomSessionData' type to fall back to"
+                    ) from None
         xsession = SessionClass(label=session.session_id, parent=xsubject)
     return xsession
+
+
+# The modality used to pick the session type when a session contains more than one,
+# e.g. a PET/CT session is stored as a PET session
+PREFERRED_SESSION_MODALITIES = ("MR", "PT", "CT")
+
+# DICOM modalities of objects that annotate or are derived from the images in a
+# session rather than being acquisitions in their own right, so they shouldn't
+# determine its session type (e.g. an MR session with a structured dose report)
+NON_IMAGE_MODALITIES = frozenset(
+    (
+        "SR",  # Structured report
+        "PR",  # Presentation state
+        "KO",  # Key object selection
+        "REG",  # Registration
+        "SEG",  # Segmentation
+        "FID",  # Fiducials
+        "RWV",  # Real world value map
+        "DOC",  # Encapsulated document
+        "PLAN",  # Plan
+        "RTSTRUCT",  # Radiotherapy structure set
+        "RTPLAN",  # Radiotherapy plan
+        "RTRECORD",  # Radiotherapy treatment record
+        "RTDOSE",  # Radiotherapy dose
+    )
+)
+
+# DICOM modalities whose XNAT session type isn't named after the lower-cased modality
+# code (e.g. 'MR' -> 'mrSessionData', 'OPT' -> 'optSessionData'), see the
+# 'xnat:*SessionData' types in XNAT's xnat.xsd schema
+XNAT_SESSION_TYPE_EXCEPTIONS = {"PT": "petSessionData"}
+
+
+def xnat_session_type(modality: str) -> str:
+    """The XSI type (without the 'xnat:' prefix) of the XNAT session that DICOMs of
+    the given modality are stored in, e.g. 'MR' -> 'mrSessionData'"""
+    modality = modality.upper()
+    return XNAT_SESSION_TYPE_EXCEPTIONS.get(modality, f"{modality.lower()}SessionData")
+
+
+def _xnat_session_class(xclasses: ty.Any, modality: str) -> ty.Any:
+    """The xnatpy class for the session type of the given modality, or None if the
+    server has no such type"""
+    xsi_type = xnat_session_type(modality)
+    # xnatpy names the classes after the XSI type with the first letter capitalised
+    return getattr(xclasses, xsi_type[0].upper() + xsi_type[1:], None)
+
+
+def _xnat_scan_class_from_session(xsession: ty.Any) -> ty.Any:
+    """The xnatpy class for the scan type matching the session's type (e.g.
+    'xnat:petSessionData' -> 'xnat:petScanData'), or 'xnat:otherDicomScanData' if
+    the server has no such type"""
+    xclasses = xsession.xnat_session.classes
+    session_type = getattr(xsession, "__xsi_type__", None)
+    if isinstance(session_type, str) and session_type.endswith("SessionData"):
+        scan_type = session_type[: -len("SessionData")] + "ScanData"
+        ScanClass = xclasses.XNAT_CLASS_LOOKUP.get(scan_type)
+        if ScanClass is not None:
+            return ScanClass
+    return xclasses.OtherDicomScanData
 
 
 def _files_held_in(
@@ -976,12 +1085,12 @@ def get_xnat_resource(
             scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
-            # No SOP class to decide from -- not DICOM, or DICOM whose header didn't
-            # carry one. XNAT's schema has no generic scan type outside the
-            # DICOM-derived ones (every xnat:*ScanData is modality-specific), so this
-            # falls back to the same catch-all XNAT itself uses for an unrecognised
-            # SOP class rather than guessing a modality from ImageType/session type.
-            ScanClass = xclasses.OtherDicomScanData
+            # No SOP class to decide from -- not DICOM (e.g. vendor raw data), or
+            # DICOM whose header didn't carry one -- so the scan takes the modality
+            # of its session, whose types are named in parallel with the scan ones
+            # (e.g. 'xnat:petSessionData' -> 'xnat:petScanData'). Falls back to the
+            # catch-all XNAT itself uses for an unrecognised SOP class.
+            ScanClass = _xnat_scan_class_from_session(xsession)
         logger.debug(
             "Creating scan %s in %s", resource.scan.id, resource.scan.session.path
         )
