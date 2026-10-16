@@ -81,7 +81,8 @@ def assign(
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
     unlink_source: str | None
-        If "all", the grouped session directory is removed in its entirety after assignment. If "keep-metadata", the
+        If "all", record files present before assign loads the session. After a
+        successful save, remove those files and empty directories. Files at new paths remain. If "keep-metadata", the
         resource data is removed but the session/scan-level metadata is left behind as a lightweight skeleton. If
         None, the grouped session directory is left in place.
     raise_errors: bool
@@ -136,6 +137,17 @@ def assign(
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
         try:
+            # Published files must be immutable. Replacements at recorded paths
+            # are outside this cleanup contract.
+            source_files = (
+                [
+                    p
+                    for p in session_listing.fspath.rglob("*")
+                    if p.is_symlink() or not p.is_dir()
+                ]
+                if unlink_source == "all"
+                else []
+            )
             session = ImagingSession.load(
                 session_listing.cache_path,
             )
@@ -248,8 +260,17 @@ def assign(
             errors.append(str(e))
         else:
             if unlink_source == "all":
-                # remove the grouped session directory in its entirety
-                shutil.rmtree(session_listing.fspath)
+                for path in source_files:
+                    path.unlink(missing_ok=True)
+                for path in sorted(
+                    [session_listing.fspath, *session_listing.fspath.rglob("*")],
+                    key=lambda p: len(p.parts),
+                    reverse=True,
+                ):
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
             elif unlink_source == "keep-metadata":
                 # remove just the resource data, leaving the session/scan-level
                 # metadata behind as a lightweight skeleton
