@@ -1286,14 +1286,16 @@ class ImagingSession:
         )
 
         staged: list[ImagingSession] = []
-        # The build directory of the study being staged, for the clean-up
-        # when staging fails part way.
-        current_work_dir: dict[str, Path] = {}
+        # The build directory and the conversion scratch directories of the
+        # study being staged, for the clean-up when staging fails part way.
+        current_work_dir: dict[str, ty.Any] = {}
 
         def _discard_work_dir() -> None:
             work_dir = current_work_dir.pop("path", None)
             if work_dir is not None and work_dir.exists():
                 shutil.rmtree(work_dir, ignore_errors=True)
+            for convert_dir in current_work_dir.pop("convert", []):
+                shutil.rmtree(convert_dir, ignore_errors=True)
 
         def _stage_study(study_id: str) -> ImagingSession | None:
             study = get_json(f"/studies/{study_id}")
@@ -1374,6 +1376,7 @@ class ImagingSession:
                     convert_tmp_dir = Path(
                         tempfile.mkdtemp(prefix="__convert_", dir=output_dir)
                     )
+                    current_work_dir.setdefault("convert", []).append(convert_tmp_dir)
                     resource_dir = convert_tmp_dir / resource_label
                 else:
                     resource_dir = scan_dir / resource_label
@@ -1467,6 +1470,8 @@ class ImagingSession:
                     final_dir,
                 )
                 shutil.rmtree(work_dir)
+                if errors is not None:
+                    errors.append(study_id)
                 return None
             session_dir.rename(final_dir)
             for resource in staged_session.resources:
