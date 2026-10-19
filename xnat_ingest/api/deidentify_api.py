@@ -22,24 +22,147 @@ from .group_api import BUILD_NAME_DEFAULT
 DEFAULT_SPEC_DIR = "__default__"
 
 
-def _data_file_count(session_dir: Path) -> int:
-    """Number of DATA files under a session directory.
+_SIDECARS = {
+    ImagingResource.MANIFEST_FNAME,
+    ImagingResource.OLD_MANIFEST_FNAME,
+    Metadata.FNAME,
+}
+
+
+def _data_files(session_dir: Path) -> list[Path]:
+    """The DATA files under a session directory.
 
     Sidecars are excluded on both sides of the comparison: they are written by
     ImagingResource.save/Metadata.save rather than carried through from the input,
     so counting them would make a complete session look short by exactly the number
     of manifests and metadata files it happens to contain.
     """
-    sidecars = {
-        ImagingResource.MANIFEST_FNAME,
-        ImagingResource.OLD_MANIFEST_FNAME,
-        Metadata.FNAME,
-    }
     if not session_dir.exists():
-        return 0
-    return sum(
-        1 for f in session_dir.rglob("*") if f.is_file() and f.name not in sidecars
-    )
+        return []
+    return [
+        f for f in session_dir.rglob("*") if f.is_file() and f.name not in _SIDECARS
+    ]
+
+
+def _data_file_count(session_dir: Path) -> int:
+    """Number of DATA files under a session directory."""
+    return len(_data_files(session_dir))
+
+
+# Formats whose deidentification changes the bytes. Everything else is copied
+# through unchanged, so for those the content itself can be compared.
+_DEIDENTIFIED_PREFIX = "medimage/dicom"
+
+
+def _resource_dirs(session_dir: Path) -> list[Path]:
+    """The resource directories of a session directory, laid out as
+    ImagingSession.load reads them: <scan_id>.<type>/<resource> and the
+    session-level <resource> directories. Hidden entries are not resources."""
+    dirs: list[Path] = []
+    for item in sorted(session_dir.iterdir()):
+        if not item.is_dir() or item.name.startswith("."):
+            continue
+        if "." in item.name:
+            dirs.extend(
+                r
+                for r in sorted(item.iterdir())
+                if r.is_dir() and not r.name.startswith(".")
+            )
+        else:
+            dirs.append(item)
+    return dirs
+
+
+def _resource_identity(
+    resource_dir: Path, from_manifest: bool
+) -> tuple[str, dict[str, str]] | None:
+    """The format and the per-file checksums of a resource directory. None if
+    it cannot be read.
+
+    For an INPUT the checksums are computed from the files on disk: its
+    manifest can be behind the directory (a producer that was interrupted
+    between writing a file and updating the manifest), and a file the manifest
+    does not list is still a file that would be deleted with the input. For an
+    OUTPUT the manifest is used; _output_verifies checks it against the disk.
+    """
+    try:
+        resource = ImagingResource.load(
+            resource_dir, require_manifest=False, check_checksums=False
+        )
+        if from_manifest and resource.checksums is not None:
+            checksums = resource.checksums
+        else:
+            checksums = resource.calculate_checksums()
+        return resource.mime_like, dict(checksums)
+    except Exception:
+        return None
+
+
+def _output_covers_input(output_session_dir: Path, input_session_dir: Path) -> bool:
+    """Whether the output already holds THIS input: every file of every input
+    resource, at the same path inside the session, and, for every format that is
+    copied through unchanged, with the same content.
+
+    Deidentification changes the bytes of a DICOM file but keeps its name (the
+    SOP Instance UID, the identity of the instance), so DICOM is matched by name.
+    Every other format is copied, so its checksums must agree: a result file
+    sent again with other content under the same name is not covered. A
+    deidentified session directory can also hold scans from an earlier run of
+    the same session (a series that arrived late, staged as a session of its
+    own); those files are not this input's and never stand in for its files.
+    The input's files are read from the disk, not from its manifests, which can
+    be behind the directory. A resource that cannot be read on either side, and
+    a data file outside every resource, mean the input is not covered.
+    """
+    resource_dirs = _resource_dirs(input_session_dir)
+    if not resource_dirs:
+        return False
+    covered: set[Path] = set()
+    for in_dir in resource_dirs:
+        identity = _resource_identity(in_dir, from_manifest=False)
+        if identity is None or not identity[1]:
+            return False
+        in_type, in_sums = identity
+        out_identity = _resource_identity(
+            output_session_dir / in_dir.relative_to(input_session_dir),
+            from_manifest=True,
+        )
+        if out_identity is None:
+            return False
+        out_sums = out_identity[1]
+        for name, digest in in_sums.items():
+            if name not in out_sums:
+                return False
+            if (
+                not in_type.startswith(_DEIDENTIFIED_PREFIX)
+                and out_sums[name] != digest
+            ):
+                return False
+            covered.add((in_dir / name).relative_to(input_session_dir))
+    return not (_relative_data_files(input_session_dir) - covered)
+
+
+def _produced_file_count(
+    saved_session: ImagingSession, built_dir: Path, final_dir: Path
+) -> int:
+    """Number of DATA files this run produced, as they stand in the output: the
+    files of the saved session's own resources, not whatever else the output
+    directory holds. A directory-backed resource counts the files inside it.
+    The session may have been saved in `built_dir` and moved to `final_dir`
+    afterwards; the paths are read where the files are now."""
+    count = 0
+    for resource in saved_session.resources:
+        for fspath in resource.fileset.fspaths:
+            target = final_dir / Path(fspath).relative_to(built_dir)
+            if target.is_dir():
+                count += sum(
+                    1
+                    for f in target.rglob("*")
+                    if f.is_file() and f.name not in _SIDECARS
+                )
+            elif target.is_file() and target.name not in _SIDECARS:
+                count += 1
+    return count
 
 
 def _newest_mtime(path: Path) -> float:
@@ -70,7 +193,8 @@ def _output_is_current(
     """
     if not output_session_dir.exists():
         return False
-    if _data_file_count(output_session_dir) != n_in:
+    # Every file of THIS input, by name, not a count: see _output_covers_input.
+    if not _output_covers_input(output_session_dir, input_session_dir):
         return False
     if _newest_mtime(output_session_dir) < _newest_mtime(input_session_dir):
         return False
@@ -109,13 +233,25 @@ def _output_verifies(output_session_dir: Path) -> bool:
     return True
 
 
+def _relative_data_files(session_dir: Path) -> set[Path]:
+    """The data files of a session directory, as paths inside it."""
+    return {f.relative_to(session_dir) for f in _data_files(session_dir)}
+
+
 def _unlink_source(
     session_listing: LocalSessionListing,
     session: ImagingSession,
     unlink_source: str | None,
     errors: list[str],
+    read_files: set[Path] | None = None,
 ) -> None:
     """Retire a session's input now that a complete output exists for it.
+
+    `read_files` are the data files the input held when this cycle read it. A
+    file that arrived since (the assign stage merges a late series into a
+    session it has already written) is not in the output, and removing the
+    input directory would remove it too. In that case nothing is unlinked: the
+    input is kept and deidentified again, in full, on a later cycle.
 
     Shared by the path that has just produced the output and the path that
     found one already there. Both need it: with --unlink-source set, a session
@@ -128,6 +264,17 @@ def _unlink_source(
     out of the session loop and, under --loop, kill the stage for every other
     session.
     """
+    if read_files is not None:
+        now = _relative_data_files(session_listing.fspath)
+        if now != read_files:
+            logger.warning(
+                "Not unlinking '%s': %d file(s) arrived in it while it was being "
+                "deidentified. It is deidentified again on a later cycle.",
+                session_listing.name,
+                len(now - read_files),
+                extra={"event": "deid_input_changed", "session": session_listing.name},
+            )
+            return
     if unlink_source == "all":
         # rmtree, NOT rmdir: the session directory holds scan directories, so
         # rmdir() raises "Directory not empty". assign does the same job the
@@ -276,7 +423,10 @@ def deidentify(
             # from "my output is short": the first means the stage before this
             # one failed or the directory is a leftover, and only the second
             # says anything about this stage's work.
-            n_in = _data_file_count(session_listing.fspath)
+            # The data files this cycle works from, as paths inside the session.
+            # Measured once, here: the gates and the unlink refer to this set.
+            read_files = _relative_data_files(session_listing.fspath)
+            n_in = len(read_files)
             if n_in == 0:
                 # TWO DIFFERENT THINGS LOOK LIKE ZERO, and only one is a fault.
                 #
@@ -365,7 +515,9 @@ def deidentify(
                 # before it was turned on: they are skipped as current on every
                 # cycle, so the branch that unlinks is never reached and the
                 # backlog stays for ever.
-                _unlink_source(session_listing, session, unlink_source, errors)
+                _unlink_source(
+                    session_listing, session, unlink_source, errors, read_files
+                )
                 continue
 
             build_dir = output_dir / BUILD_NAME_DEFAULT
@@ -403,12 +555,13 @@ def deidentify(
                     # because the checksum short-circuit rewrites only resources
                     # whose content actually changed, and a stale resource left by
                     # a half-finished pass is overwritten on the next one.
-                    _, saved_dir = deidentified_session.save(
+                    saved_session, saved_dir = deidentified_session.save(
                         output_dir, available_projects
                     )
+                    built_dir = saved_dir
                 else:
                     work_dir.mkdir(parents=True)
-                    _, built_dir = deidentified_session.save(
+                    saved_session, built_dir = deidentified_session.save(
                         work_dir, available_projects
                     )
                     # Appears under its real name in one step. If final_dir did
@@ -449,7 +602,10 @@ def deidentify(
                     complete = False
                     n_out = -1
                 else:
-                    n_out = _data_file_count(saved_dir)
+                    # THIS RUN'S files, as saved, not the directory's: an older
+                    # scan in the output, or an older file in the same resource,
+                    # must not pad a short run.
+                    n_out = _produced_file_count(saved_session, built_dir, saved_dir)
                     # THE SAME CHECK THE SKIP PATH USES, and it belongs here
                     # more than there. This gate is what permits the unlink, and
                     # the unlink is irreversible: the input is the only copy that
@@ -534,7 +690,9 @@ def deidentify(
                 )
                 errors.append(msg)
             else:
-                _unlink_source(session_listing, session, unlink_source, errors)
+                _unlink_source(
+                    session_listing, session, unlink_source, errors, read_files
+                )
     if n_skeletons:
         # ONE line per pass, not one per skeleton: see the DEBUG line above.
         logger.info(
