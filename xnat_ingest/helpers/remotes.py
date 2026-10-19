@@ -20,7 +20,7 @@ import paramiko
 import xnat
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from fileformats.application import Json
+from fileformats.application import Json, Zip
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
@@ -969,6 +969,17 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
     ]
 
 
+def _is_zipped_dicom_collection(fileset: FileSet) -> bool:
+    """A `Zip[...]` whose classifier is a DICOM collection, such as the package
+    stage's `Zip[DicomSeries]`. A plain `Zip` is not."""
+    if not isinstance(fileset, Zip):
+        return False
+    classifiers = getattr(type(fileset), "classifiers", None) or ()
+    return any(
+        isinstance(c, type) and issubclass(c, DicomCollection) for c in classifiers
+    )
+
+
 def get_xnat_resource(
     resource: ImagingResource, xsession: ty.Any
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
@@ -1068,8 +1079,24 @@ def get_xnat_resource(
     # Only resources XNAT parses as DICOM can determine this. Other formats may
     # expose a SOPClassUID in their metadata without being DICOM upload resources;
     # using that key alone would incorrectly rename their XNAT catalogs.
+    # The SOP class that decides the scan datatype. For DICOM it also decides
+    # the resource label; for a zipped series it decides the datatype only.
+    scan_sop_class_uids = None
     if isinstance(resource.fileset, DicomCollection):
         sop_class_uids = resource.metadata.get("SOPClassUID")
+    elif _is_zipped_dicom_collection(resource.fileset) and resource.metadata.get(
+        "SOPClassUID"
+    ):
+        # A zipped DICOM series (the package stage's DICOM-zip). XNAT does not
+        # open the zip, so the resource keeps its own label. The scan it
+        # creates still takes the datatype of the series inside it: the DICOM
+        # sample uploaded beside it is parsed by XNAT and needs a scan of that
+        # datatype, and XNAT cannot change a scan's datatype afterwards.
+        # Only a zip typed as a DICOM collection: a plain zip of vendor raw
+        # data can carry a provenance SOP class in its metadata and must still
+        # take the datatype of its session, like any non-DICOM resource.
+        sop_class_uids = None
+        scan_sop_class_uids = resource.metadata.get("SOPClassUID")
     elif isinstance(resource.fileset, DicomImage):
         # Use the image being uploaded, not resource metadata that may have been
         # inherited from a larger source collection.
@@ -1087,12 +1114,13 @@ def get_xnat_resource(
         sop_class_uids = None
     if sop_class_uids:
         resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+        scan_sop_class_uids = sop_class_uids
 
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        if sop_class_uids:
-            scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
+        if scan_sop_class_uids:
+            scan_type = xnat_scan_type_from_sop_class(scan_sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
             # No SOP class to decide from -- not DICOM (e.g. vendor raw data), or
@@ -1110,8 +1138,10 @@ def get_xnat_resource(
             series_description=resource.scan.type,
             parent=xsession,
         )
-    if sop_class_uids:
-        expected_scan_type = f"xnat:{xnat_scan_type_from_sop_class(sop_class_uids)}"
+    if scan_sop_class_uids:
+        expected_scan_type = (
+            f"xnat:{xnat_scan_type_from_sop_class(scan_sop_class_uids)}"
+        )
         existing_scan_type = getattr(xscan, "__xsi_type__", None)
         if (
             isinstance(existing_scan_type, str)
