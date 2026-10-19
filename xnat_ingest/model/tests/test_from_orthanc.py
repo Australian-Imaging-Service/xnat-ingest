@@ -1056,3 +1056,52 @@ def test_a_failed_processed_label_write_keeps_the_published_session(
     assert not list((output_dir / "__build__").glob("orthanc_*"))
     [message] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert message == "Skipping Orthanc study 'study-ready': label write failed"
+
+
+def test_a_failed_conversion_leaves_no_scratch_directory_behind(tmp_path, caplog):
+    """A conversion that fails before the resource is saved used to leave its
+    __convert_* scratch directory in the output directory; with the stage now
+    continuing after a failed study, those would pile up on every pass."""
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+    real_get = fake.get
+
+    def failing_attachment_info(path):
+        if path.endswith("/attachments/dicom/info"):
+            raise RuntimeError("attachment unreadable")
+        return real_get(path)
+
+    fake.get = failing_attachment_info
+    errors: ty.List[str] = []
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store),
+            conversion_map={DicomSeries: (Zip, {})},
+            errors=errors,
+        )
+
+    assert staged == [] and errors == ["study-ready"]
+    assert not list(output_dir.glob("__convert_*"))
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+
+
+def test_an_existing_destination_counts_as_a_failed_study(tmp_path, caplog):
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+    (output_dir / "_.1_2_3_0").mkdir(parents=True)
+    errors: ty.List[str] = []
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+
+    assert staged == [] and errors == ["study-ready"]
+    assert ("study-ready", "done") not in fake.labelled
+    [message] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert message.startswith(
+        "Skipping Orthanc study 'study-ready': destination exists"
+    )
