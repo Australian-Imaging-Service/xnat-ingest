@@ -752,3 +752,24 @@ def test_too_long_processed_label_is_refused_before_staging(tmp_path):
     with _patch_requests(fake), pytest.raises(ValueError, match="too long"):
         ImagingSession.from_orthanc(**kwargs)
     assert fake.labelled == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("Labels", "ready"), ("Labels", [1, 2]), ("LastUpdate", None), ("LastUpdate", "yesterday")],
+)
+def test_malformed_study_fields_in_the_expanded_reply_are_an_error(tmp_path, field, value):
+    fake, store = _make_fake_orthanc(tmp_path)
+    real_find = fake.find
+
+    def bad_find(body):
+        result = real_find(body)
+        if body.get("Expand"):
+            for entry in result:
+                entry[field] = value
+        return result
+
+    fake.find = bad_find
+    with _patch_requests(fake), pytest.raises(ValueError, match="Unexpected Labels or LastUpdate"):
+        ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert fake.labelled == [] and fake.unlabelled == []
