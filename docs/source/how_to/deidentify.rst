@@ -27,6 +27,26 @@ As with ``assign``, ``--unlink-source all``/``--unlink-source keep-metadata`` cl
 the ``assign`` output once a session's been deidentified — see
 :ref:`2. Assign project/subject/session IDs` for what the two modes do.
 
+A session that is deidentified more than once (a series that arrived late is staged
+as a session of its own, under the same name) is saved into the deidentified session
+directory that already exists. The stage judges each run by the files of the input
+in front of it: before a run, an output counts as current only if it holds a file
+for every data file of the input, at the same path inside the session, and verifies
+against its manifests; after a run, only the files that run produced are counted
+against the input. Older files in the output never stand in for missing ones. The
+input is removed only when it still holds exactly the files the run read; a file
+that arrives while the session is being deidentified is kept, with the rest of the
+input, for the next cycle. The check and the removal are two steps: a file that
+lands between them is removed with the input. Closing that window needs the
+writer (``assign``) and this stage to agree on who owns the session, which no
+stage enforces today. A DICOM file is matched by name: deidentification changes
+its bytes but keeps the SOP Instance UID the name derives from, which DICOM defines as
+the identity of an instance, so a DICOM file sent again under the same name with
+other content is not told apart from the one already deidentified. Every other
+format is copied through unchanged and is matched by content as well. A change of
+recipe does not refresh an output that already exists: remove that output, or stage
+the input again, to deidentify it with the new recipe.
+
 Only formats known to carry patient information are touched — DICOM is treated this
 way by default, while derived formats like NIfTI are assumed already
 de-identifiable-in-place and are just copied through unchanged. If a session contains
