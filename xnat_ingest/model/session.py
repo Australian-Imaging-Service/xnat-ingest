@@ -1170,6 +1170,49 @@ class ImagingSession:
 
         if processed_label:
             candidates -= _find_studies([processed_label], "All")
+            # A processed study can change after it was staged: a series that
+            # arrives late. The staging run records the LastUpdate it staged
+            # as a second label, "<processed_label>-<LastUpdate>". A processed
+            # study whose current LastUpdate has no such label (or none at
+            # all, from an older version) has instances this stage never
+            # saw: its labels are removed and it is staged again in full.
+            snapshot_prefix = f"{processed_label}-"
+            resp = requests.post(
+                f"{url}/tools/find",
+                auth=auth,
+                json={
+                    "Level": "Study",
+                    "Query": {},
+                    "Labels": [processed_label],
+                    "LabelsConstraint": "All",
+                    "Expand": True,
+                },
+            )
+            resp.raise_for_status()
+            for entry in resp.json():
+                labels = entry.get("Labels") or []
+                if to_process_label and to_process_label not in labels:
+                    continue
+                snapshots = [lb for lb in labels if lb.startswith(snapshot_prefix)]
+                # "<processed>-<LastUpdate>-<digest>": the cheap check here is
+                # the LastUpdate; the digest of the staged instance ids is for
+                # the reclaimer, which holds the instance list anyway.
+                if len(snapshots) == 1 and snapshots[0][len(snapshot_prefix) :].split(
+                    "-"
+                )[0] == str(entry.get("LastUpdate")):
+                    continue
+                logger.info(
+                    "Orthanc study '%s' changed after it was staged "
+                    "(LastUpdate %s, snapshot labels %s): staging it again",
+                    entry["ID"],
+                    entry.get("LastUpdate"),
+                    snapshots,
+                )
+                for label in [processed_label, *snapshots]:
+                    requests.delete(
+                        f"{url}/studies/{entry['ID']}/labels/{label}", auth=auth
+                    ).raise_for_status()
+                candidates.add(entry["ID"])
 
         study_ids = sorted(candidates)
         logger.info(
@@ -1374,6 +1417,34 @@ class ImagingSession:
                 )
             work_dir.rmdir()
             if processed_label:
+                # The snapshot label names the LastUpdate the final check
+                # verified. A stale one from an earlier staging goes first,
+                # and the processed label last, so a processed study always
+                # carries exactly one snapshot label.
+                exported = sorted(
+                    iid for ids in staged_instance_ids.values() for iid in ids
+                )
+                # Orthanc labels are at most 64 characters: 24 hex digits of
+                # the digest, fewer for a long processed label, never under 8.
+                head = f"{processed_label}-{study['LastUpdate']}-"
+                digest_len = min(24, 64 - len(head))
+                if digest_len < 8:
+                    raise ValueError(
+                        f"processed label {processed_label!r} is too long for a "
+                        "snapshot label (64 characters at most)"
+                    )
+                digest = hashlib.sha256(
+                    ("\n".join(exported) + "\n").encode()
+                ).hexdigest()[:digest_len]
+                snapshot = head + digest
+                for stale in current_study.get("Labels") or []:
+                    if stale.startswith(f"{processed_label}-") and stale != snapshot:
+                        requests.delete(
+                            f"{url}/studies/{study_id}/labels/{stale}", auth=auth
+                        ).raise_for_status()
+                requests.put(
+                    f"{url}/studies/{study_id}/labels/{snapshot}", auth=auth
+                ).raise_for_status()
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
