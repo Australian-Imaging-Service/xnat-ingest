@@ -754,9 +754,21 @@ def test_too_long_processed_label_is_refused_before_staging(tmp_path):
     assert fake.labelled == []
 
 
+_ABSENT = object()
+
+
 @pytest.mark.parametrize(
     "field, value",
-    [("Labels", "ready"), ("Labels", [1, 2]), ("LastUpdate", None), ("LastUpdate", "yesterday")],
+    [
+        ("Labels", "ready"),
+        ("Labels", [1, 2]),
+        ("Labels", _ABSENT),
+        ("LastUpdate", None),
+        ("LastUpdate", "yesterday"),
+        ("LastUpdate", _ABSENT),
+        ("LastUpdate", "20260230T000000"),  # no such day
+        ("LastUpdate", "20261019T250000"),  # no such hour
+    ],
 )
 def test_malformed_study_fields_in_the_expanded_reply_are_an_error(tmp_path, field, value):
     fake, store = _make_fake_orthanc(tmp_path)
@@ -766,7 +778,10 @@ def test_malformed_study_fields_in_the_expanded_reply_are_an_error(tmp_path, fie
         result = real_find(body)
         if body.get("Expand"):
             for entry in result:
-                entry[field] = value
+                if value is _ABSENT:
+                    del entry[field]
+                else:
+                    entry[field] = value
         return result
 
     fake.find = bad_find

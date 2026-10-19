@@ -469,6 +469,15 @@ def _deidentify_or_copy_resource(
     return deid_resource, reid_mdata
 
 
+
+def _is_timestamp(value: str) -> bool:
+    """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
+    try:
+        datetime.strptime(value, "%Y%m%dT%H%M%S")
+    except ValueError:
+        return False
+    return True
+
 @attrs.define(slots=False)
 class ImagingSession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
@@ -1215,13 +1224,17 @@ class ImagingSession:
                     f"Unexpected reply to the expanded study query at '{url}'"
                 )
             for entry in expanded:
-                labels = entry.get("Labels", [])
+                # Both keys must be present. A study document without Labels
+                # comes from an Orthanc without label support, which this
+                # mode cannot work with.
+                labels = entry.get("Labels")
                 last_update = entry.get("LastUpdate")
                 if (
                     not isinstance(labels, list)
                     or not all(isinstance(lb, str) for lb in labels)
                     or not isinstance(last_update, str)
                     or not re.fullmatch(r"\d{8}T\d{6}", last_update)
+                    or not _is_timestamp(last_update)
                 ):
                     raise ValueError(
                         f"Unexpected Labels or LastUpdate for Orthanc study "
