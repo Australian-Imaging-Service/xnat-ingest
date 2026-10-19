@@ -1,8 +1,14 @@
+import hashlib
+import os
+import shutil
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from fileformats.application import Zip
+from fileformats.core import FileSet
 from fileformats.generic import File
 from fileformats.medimage import DicomImage, DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -469,3 +475,104 @@ def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
     assert late.exists(), "input kept"
     out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert sorted(out.scans) == ["1"]
+
+
+def _dicom_series_session(root: Path, seed: Path) -> Path:
+    root.mkdir(parents=True)
+    paths = []
+    for name in ("a.dcm", "b.dcm"):
+        shutil.copy(seed / name, root / name)
+        paths.append(root / name)
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[ImagingScan(id="1", type="MR", resources={"DICOM": DicomSeries(paths)})],
+    ).save(root / "staged")
+    return root / "staged"
+
+
+def test_package_writes_the_same_zip_for_the_same_files(tmp_path: Path) -> None:
+    """The zip of a series depends on its files only, not on when they were
+    written: a study staged again gives the same checksum on the upload."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.4", study_uid)
+    zips = []
+    for run in ("first", "second"):
+        input_dir = _dicom_series_session(tmp_path / run, seed)
+        for f in input_dir.rglob("*.dcm"):
+            os.utime(f, (1_700_000_000 + len(run), 1_700_000_000 + len(run)))
+        output_dir = tmp_path / f"{run}-out"
+        errors = package(
+            input_dir,
+            output_dir,
+            DicomSeries,
+            {"DICOM-zip": (Zip[DicomSeries], {"compression": "ZIP_STORED"})},
+        )
+        assert errors == []
+        out = ImagingSession.load(
+            output_dir / "PROJECT.SUBJECT.SESSION", check_checksums=True
+        )
+        zips.append(out.scans["1"].resources["DICOM-zip"].fileset.fspath)
+    digests = [hashlib.md5(z.read_bytes()).hexdigest() for z in zips]
+    assert digests[0] == digests[1]
+    with zipfile.ZipFile(zips[0]) as z:
+        infos = z.infolist()
+    assert sorted(i.filename for i in infos) == ["a.dcm", "b.dcm"]
+    assert all(i.compress_type == zipfile.ZIP_STORED for i in infos)
+    assert all(i.date_time == (1980, 1, 1, 0, 0, 0) for i in infos)
+    assert {
+        hashlib.md5(zipfile.ZipFile(zips[0]).read(i)).hexdigest() for i in infos
+    } == {hashlib.md5((seed / n).read_bytes()).hexdigest() for n in ("a.dcm", "b.dcm")}
+
+
+def test_package_leaves_a_zip_source_untouched(tmp_path: Path) -> None:
+    """When the source already is a zip, the conversion is the input itself.
+    The normalised copy is a file of its own: the input keeps its bytes and
+    its manifest stays valid."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.4", study_uid)
+    src_zip = tmp_path / "archive.zip"
+    with zipfile.ZipFile(src_zip, "w") as z:
+        for name in ("a.dcm", "b.dcm"):
+            z.write(seed / name, name)
+    input_dir = tmp_path / "input"
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(
+                id="1", type="MR", resources={"DICOM-zip": Zip[DicomSeries](src_zip)}
+            )
+        ],
+    ).save(input_dir, copy_mode=FileSet.CopyMode.copy)
+    staged_zip = next(input_dir.rglob("archive.zip"))
+    before = hashlib.md5(staged_zip.read_bytes()).hexdigest()
+
+    errors = package(
+        input_dir,
+        tmp_path / "out",
+        Zip[DicomSeries],
+        {"DICOM-zip": (Zip[DicomSeries], {})},
+        copy_mode=FileSet.CopyMode.copy,
+    )
+
+    assert errors == []
+    assert hashlib.md5(staged_zip.read_bytes()).hexdigest() == before, "input kept"
+    ImagingSession.load(input_dir / "PROJECT.SUBJECT.SESSION", check_checksums=True)
+    out = ImagingSession.load(
+        tmp_path / "out" / "PROJECT.SUBJECT.SESSION", check_checksums=True
+    )
+    with zipfile.ZipFile(out.scans["1"].resources["DICOM-zip"].fileset.fspath) as z:
+        assert sorted(z.namelist()) == ["a.dcm", "b.dcm"]
+        assert all(i.date_time == (1980, 1, 1, 0, 0, 0) for i in z.infolist())
+    assert not (tmp_path / "out" / "__build__").exists(), "scratch removed"

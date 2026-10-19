@@ -1,9 +1,12 @@
 import os
 import shutil
+import tempfile
 import traceback
 import typing as ty
+import zipfile
 from pathlib import Path
 
+from fileformats.application import Zip
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
@@ -25,6 +28,7 @@ def _package_session(
     source_datatype: type[FileSet],
     output_resources: OutputResources,
     on_resource_clash: OnResourceClash,
+    scratch: Path | None = None,
 ) -> ImagingSession:
     """Create a session whose matching scan resources are replaced by conversions.
 
@@ -32,6 +36,8 @@ def _package_session(
     can be copied directly from a deidentified DICOM series instead of being read
     back out of another conversion's zip output.
     """
+    # Where the normalised zips go until the session is saved.
+    scratch = scratch or Path(tempfile.gettempdir())
     packaged = session.new_empty()
     packaged.metadata.update(dict(session.metadata))
     study_uids: set[str] = set()
@@ -72,6 +78,8 @@ def _package_session(
                     converted = target_datatype.convert(
                         resource.fileset, **dict(options)
                     )
+                    if isinstance(converted, Zip):
+                        converted = _normalised_zip(converted, scratch)
                     if isinstance(converted, DicomImage):
                         sop_class_uid = converted.metadata.get("SOPClassUID")
                         study_uid = converted.metadata.get("StudyInstanceUID")
@@ -142,6 +150,41 @@ def _package_session(
         packaged.session_resources[resource.name] = packaged_resource
 
     return packaged
+
+
+ZIP_ENTRY_TIME = (1980, 1, 1, 0, 0, 0)
+
+
+def _normalised_zip(converted: Zip, scratch: Path) -> Zip:
+    """A private copy of the zip in which every entry has the same timestamp,
+    so the same files give the same zip.
+
+    ZipFile.write stores each file's mtime in its entry. The files of a staged
+    session are created again every time the study is staged again (a series
+    that arrives late stages the whole study again). Without this, the zip of
+    an unchanged series gets a new checksum each time, and the upload stage
+    reports it as different from the copy on XNAT.
+
+    The copy goes into `scratch`. The converter's file is never written: when
+    the source already is a zip, it is the input itself."""
+    out = Path(tempfile.mkdtemp(prefix="zip-", dir=scratch)) / converted.fspath.name
+    with (
+        zipfile.ZipFile(converted.fspath) as src,
+        zipfile.ZipFile(out, "w", allowZip64=True) as dst,
+    ):
+        for info in src.infolist():
+            fixed = zipfile.ZipInfo(info.filename, date_time=ZIP_ENTRY_TIME)
+            fixed.compress_type = info.compress_type
+            fixed.external_attr = info.external_attr
+            fixed.create_system = 3
+            fixed.file_size = info.file_size
+            if info.is_dir():
+                dst.writestr(fixed, b"")
+                continue
+            # Streamed member by member: a multi-frame image can be large.
+            with src.open(info) as member, dst.open(fixed, "w") as entry:
+                shutil.copyfileobj(member, entry, 1 << 20)
+    return type(converted)(out)
 
 
 FileState = tuple[int, int, int]
@@ -249,18 +292,21 @@ def package(
                 )
                 packaged = session
             else:
+                work_dir = output_dir / BUILD_NAME_DEFAULT / f"package_{listing.name}"
+                if work_dir.exists():
+                    shutil.rmtree(work_dir)
+                work_dir.mkdir(parents=True)
                 packaged = _package_session(
                     session,
                     source_datatype=source_datatype,
                     output_resources=output_resources,
                     on_resource_clash=on_resource_clash,
+                    scratch=work_dir,
                 )
 
             final_dir = output_dir / packaged.staging_dirname()
             build_dir = output_dir / BUILD_NAME_DEFAULT
             work_dir = build_dir / f"package_{listing.name}"
-            if work_dir.exists():
-                shutil.rmtree(work_dir)
             try:
                 if final_dir.exists():
                     existing = ImagingSession.load(
@@ -309,7 +355,7 @@ def package(
                         )
                     packaged.save(output_dir, copy_mode=copy_mode)
                 else:
-                    work_dir.mkdir(parents=True)
+                    work_dir.mkdir(parents=True, exist_ok=True)
                     _, built_dir = packaged.save(work_dir, copy_mode=copy_mode)
                     os.replace(built_dir, final_dir)
             finally:
