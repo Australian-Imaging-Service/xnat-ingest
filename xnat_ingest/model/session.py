@@ -1127,6 +1127,7 @@ class ImagingSession:
         list[ImagingSession]
             Staged sessions loaded from output_dir.
         """
+        output_dir = Path(output_dir).resolve()
         auth = (user, password) if user else None
 
         def get_json(path: str) -> ty.Any:
@@ -1203,8 +1204,14 @@ class ImagingSession:
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
-            session_dir = output_dir / f"_.{session_uid}"
-            session_dir.mkdir(parents=True, exist_ok=True)
+            final_dir = output_dir / f"_.{session_uid}"
+            # One group-orthanc producer must own this output directory. A
+            # converter child that outlives its parent is outside this contract.
+            work_dir = output_dir / "__build__" / f"orthanc_{session_uid}"
+            if work_dir.exists():
+                shutil.rmtree(work_dir)
+            session_dir = work_dir / final_dir.name
+            session_dir.mkdir(parents=True)
 
             modalities: set[str] = set()
             staged_instance_ids: dict[str, set[str]] = {}
@@ -1313,12 +1320,28 @@ class ImagingSession:
                         raise RuntimeError(
                             f"Orthanc study '{study_id}' changed while it was being staged"
                         )
+            if os.path.lexists(final_dir):
+                logger.error(
+                    "Skipping Orthanc study '%s': destination exists at '%s'",
+                    study_id,
+                    final_dir,
+                )
+                shutil.rmtree(work_dir)
+                continue
+            session_dir.rename(final_dir)
+            for resource in staged_session.resources:
+                resource.fileset.fspaths = frozenset(
+                    final_dir / path.relative_to(session_dir)
+                    for path in resource.fileset.fspaths
+                )
+            work_dir.rmdir()
+            if processed_label:
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
 
             logger.info(
-                "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
+                "Staged and labelled study '%s' -> '%s'", study_id, final_dir.name
             )
             staged.append(staged_session)
 
