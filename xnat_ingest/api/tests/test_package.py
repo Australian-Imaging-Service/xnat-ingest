@@ -1,8 +1,11 @@
+import shutil
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from fileformats.application import Zip
 from fileformats.generic import File
 from fileformats.medimage import DicomImage, DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
@@ -469,3 +472,63 @@ def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
     assert late.exists(), "input kept"
     out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert sorted(out.scans) == ["1"]
+
+
+def _dicom_series_session(root: Path, seed: Path) -> Path:
+    root.mkdir(parents=True)
+    paths = []
+    for name in ("a.dcm", "b.dcm"):
+        shutil.copy(seed / name, root / name)
+        paths.append(root / name)
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[ImagingScan(id="1", type="MR", resources={"DICOM": DicomSeries(paths)})],
+    ).save(root / "staged")
+    return root / "staged"
+
+
+def test_package_refuses_a_zip_that_would_lose_members(tmp_path: Path) -> None:
+    """A session staged with part of a series already packaged gives a smaller
+    zip. It must not replace the packaged one: the images not in this input
+    would be lost, and the upload stage cannot merge zips."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.4", study_uid)
+    output_dir = tmp_path / "out"
+    outputs = {"DICOM-zip": (Zip[DicomSeries], {"compression": "ZIP_STORED"})}
+    input_dir = _dicom_series_session(tmp_path / "full", seed)
+    assert (
+        package(input_dir, output_dir, DicomSeries, outputs, unlink_source="all") == []
+    )
+
+    part = tmp_path / "part"
+    part.mkdir()
+    shutil.copy(seed / "a.dcm", part / "a.dcm")
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(
+                id="1", type="MR", resources={"DICOM": DicomSeries([part / "a.dcm"])}
+            )
+        ],
+    ).save(part / "staged")
+
+    errors = package(
+        part / "staged", output_dir, DicomSeries, outputs, unlink_source="all"
+    )
+
+    assert len(errors) == 1 and "lacks 1 member(s)" in errors[0]
+    out = ImagingSession.load(
+        output_dir / "PROJECT.SUBJECT.SESSION", check_checksums=True
+    )
+    with zipfile.ZipFile(out.scans["1"].resources["DICOM-zip"].fileset.fspath) as z:
+        assert sorted(z.namelist()) == ["a.dcm", "b.dcm"]
+    assert (part / "staged" / "PROJECT.SUBJECT.SESSION").exists(), "input kept"
