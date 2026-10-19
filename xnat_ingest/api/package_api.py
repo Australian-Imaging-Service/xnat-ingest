@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fileformats.application import Zip
 from fileformats.core import FileSet
-from fileformats.medimage import DicomCollection, DicomImage
+from fileformats.medimage import DicomCollection, DicomImage, DicomSeries
 from tqdm import tqdm
 
 from ..helpers.arg_types import OnResourceClash
@@ -75,9 +75,25 @@ def _package_session(
                         target_datatype.mime_like,
                         label,
                     )
-                    converted = target_datatype.convert(
-                        resource.fileset, **dict(options)
-                    )
+                    source = resource.fileset
+                    if issubclass(target_datatype, DicomImage) and isinstance(
+                        source, DicomCollection
+                    ):
+                        # Sampling one image out of a series. The sample
+                        # converter copies the first of the collection's
+                        # contents, which sort by a DICOM header a localizer or
+                        # a secondary capture may not carry; the tie-break is
+                        # not stable from one run to the next, so a re-staged
+                        # study (a late series) sampled a different instance and
+                        # the upload rejected it as a different resource. Choose
+                        # the instance here, by its path, and hand the converter
+                        # a one-instance collection so its own pick cannot vary.
+                        # `contents` are the image files for a series and for a
+                        # directory alike (`fspaths` of a directory is the
+                        # directory). A one-file series is a valid collection.
+                        chosen = min(source.contents, key=str)
+                        source = DicomSeries([chosen])
+                    converted = target_datatype.convert(source, **dict(options))
                     if isinstance(converted, Zip):
                         converted = _normalised_zip(converted, scratch)
                     if isinstance(converted, DicomImage):

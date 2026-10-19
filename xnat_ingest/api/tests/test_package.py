@@ -10,8 +10,9 @@ from click.testing import CliRunner
 from fileformats.application import Zip
 from fileformats.core import FileSet
 from fileformats.generic import File
-from fileformats.medimage import DicomImage, DicomSeries
+from fileformats.medimage import DicomDir, DicomImage, DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
+from fileformats.vendor.australianimagingservice.medimage import DicomSample
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -620,3 +621,84 @@ def test_package_refuses_a_zip_that_would_lose_members(tmp_path: Path) -> None:
     with zipfile.ZipFile(out.scans["1"].resources["DICOM-zip"].fileset.fspath) as z:
         assert sorted(z.namelist()) == ["a.dcm", "b.dcm"]
     assert (part / "staged" / "PROJECT.SUBJECT.SESSION").exists(), "input kept"
+
+
+def test_package_samples_one_instance_of_a_dicom_directory(tmp_path: Path) -> None:
+    """A DICOM directory lists the directory as its path, not its images. The
+    sample is still one image of it, the same one every run."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("c.dcm", "a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.4", study_uid)
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[ImagingScan(id="1", type="MR", resources={"DICOM": DicomDir(seed)})],
+    ).save(input_dir, copy_mode=FileSet.CopyMode.copy)
+
+    errors = package(
+        input_dir,
+        tmp_path / "out",
+        DicomDir,
+        {"auto": (DicomSample, {})},
+        copy_mode=FileSet.CopyMode.copy,
+    )
+
+    assert errors == []
+    out = ImagingSession.load(
+        tmp_path / "out" / "PROJECT.SUBJECT.SESSION", check_checksums=True
+    )
+    (resource,) = out.scans["1"].resources.values()
+    (fspath,) = resource.fileset.fspaths
+    assert fspath.is_file() and fspath.name == "a-sample", fspath
+
+
+def test_package_samples_the_same_instance_every_run(tmp_path: Path) -> None:
+    """The DICOM sample is chosen by path, not by the collection's own order,
+    so a study packaged again (a late series re-stages the whole study) gives
+    the same sample and the upload does not see a different resource."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("c.dcm", "a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.7", study_uid)
+    outputs = {"auto": (DicomSample, {})}
+    samples = []
+    for run in ("first", "second"):
+        input_dir = tmp_path / run / "input"
+        input_dir.mkdir(parents=True)
+        paths = [seed / n for n in ("c.dcm", "a.dcm", "b.dcm")]
+        if run == "second":
+            paths = list(reversed(paths))
+        ImagingSession(
+            uid="uid",
+            project_id="PROJECT",
+            subject_id="SUBJECT",
+            session_id="SESSION",
+            scans=[
+                ImagingScan(id="1", type="OT", resources={"DICOM": DicomSeries(paths)})
+            ],
+        ).save(input_dir, copy_mode=FileSet.CopyMode.copy)
+        output_dir = tmp_path / run / "out"
+        assert (
+            package(
+                input_dir,
+                output_dir,
+                DicomSeries,
+                outputs,
+                copy_mode=FileSet.CopyMode.copy,
+            )
+            == []
+        )
+        out = ImagingSession.load(
+            output_dir / "PROJECT.SUBJECT.SESSION", check_checksums=True
+        )
+        (resource,) = out.scans["1"].resources.values()
+        (fspath,) = resource.fileset.fspaths
+        samples.append(fspath.name)
+    assert samples[0] == samples[1], samples
