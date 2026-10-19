@@ -327,3 +327,48 @@ def test_package_passes_a_session_without_source_resources_through(
     out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(out.scans["1"].resources) == {"SOURCE"}
     assert set(out.session_resources) == {"REPORT"}
+
+
+def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
+    tmp_path: Path,
+) -> None:
+    """A series that arrives late is staged as a session with only the new
+    scan. Its packaged output goes beside the scans packaged earlier instead of
+    being refused as an obsolete layout."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+    assert (
+        package(
+            input_dir,
+            output_dir,
+            MyFormat,
+            {"DICOM": (MyFormat, {})},
+            unlink_source="all",
+        )
+        == []
+    )
+
+    late_path = tmp_path / "late.my"
+    late_path.write_text("late series")
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(id="2", type="CT", resources={"SOURCE": MyFormat(late_path)})
+        ],
+    ).save(input_dir)
+
+    errors = package(
+        input_dir, output_dir, MyFormat, {"DICOM": (MyFormat, {})}, unlink_source="all"
+    )
+
+    assert errors == []
+    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    assert sorted(out.scans) == ["1", "2"]
+    assert set(out.scans["1"].resources) == {"DICOM"}
+    assert set(out.scans["2"].resources) == {"DICOM"}
+    assert not list(input_dir.iterdir())

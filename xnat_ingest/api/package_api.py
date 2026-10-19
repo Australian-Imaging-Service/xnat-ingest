@@ -228,7 +228,29 @@ def package(
                         for scan in existing.scans.values()
                         for resource in scan.resources.values()
                     }
-                    stale_paths = existing_paths - expected_paths
+                    # A scan the input does not carry was packaged by an
+                    # earlier run (a series that arrived late is staged as a
+                    # session of its own): it stays. A scan the input carries
+                    # must have exactly the expected resources, or the layout
+                    # changed and the old output must go first.
+                    earlier_scans = {
+                        scan_id
+                        for scan_id, _ in existing_paths
+                        if scan_id not in packaged.scans
+                    }
+                    if earlier_scans:
+                        logger.info(
+                            "Keeping the %d earlier packaged scan(s) %s of '%s' "
+                            "beside the new ones",
+                            len(earlier_scans),
+                            sorted(earlier_scans),
+                            listing.name,
+                        )
+                    stale_paths = {
+                        p
+                        for p in existing_paths - expected_paths
+                        if p[0] not in earlier_scans
+                    }
                     if stale_paths:
                         raise ValueError(
                             f"Existing packaged session {final_dir} contains "
