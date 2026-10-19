@@ -1215,7 +1215,18 @@ class ImagingSession:
                     f"Unexpected reply to the expanded study query at '{url}'"
                 )
             for entry in expanded:
-                labels = entry.get("Labels") or []
+                labels = entry.get("Labels", [])
+                last_update = entry.get("LastUpdate")
+                if (
+                    not isinstance(labels, list)
+                    or not all(isinstance(lb, str) for lb in labels)
+                    or not isinstance(last_update, str)
+                    or not re.fullmatch(r"\d{8}T\d{6}", last_update)
+                ):
+                    raise ValueError(
+                        f"Unexpected Labels or LastUpdate for Orthanc study "
+                        f"'{entry['ID']}' at '{url}'"
+                    )
                 if to_process_label and to_process_label not in labels:
                     continue
                 snapshots = [lb for lb in labels if lb.startswith(snapshot_prefix)]
@@ -1223,13 +1234,13 @@ class ImagingSession:
                 # LastUpdate: the cheap check. The digest is for the reclaimer,
                 # which holds the instance list anyway.
                 match = receipt_re.match(snapshots[0]) if len(snapshots) == 1 else None
-                if match and match.group(1) == str(entry.get("LastUpdate")):
+                if match and match.group(1) == last_update:
                     continue
                 logger.info(
                     "Orthanc study '%s' changed after it was staged "
                     "(LastUpdate %s, snapshot labels %s): staging it again",
                     entry["ID"],
-                    entry.get("LastUpdate"),
+                    last_update,
                     snapshots,
                 )
                 for label in [processed_label, *snapshots]:
