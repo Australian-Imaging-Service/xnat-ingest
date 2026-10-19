@@ -20,6 +20,7 @@ bytes are copied into the fake store_dir so checksums are genuine).
 import hashlib
 import json
 import logging
+import shutil
 import typing as ty
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b impo
     get_image as get_topogram_image,  # type: ignore[import-untyped]
 )
 
+from xnat_ingest.exceptions import DifferingCheckumsException
 from xnat_ingest.model.session import ImagingSession
 
 ORTHANC_URL = "http://orthanc-test:8042"
@@ -330,18 +332,19 @@ def test_from_orthanc_waits_for_recent_studies(tmp_path: Path) -> None:
 
 
 def test_from_orthanc_does_not_label_study_when_staged_session_is_invalid(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake, store_dir = _make_fake_orthanc(tmp_path)
+    errors: ty.List[str] = []
 
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
     with (
         _patch_requests(fake),
         patch.object(
             ImagingSession, "load", side_effect=RuntimeError("invalid staged session")
         ),
-        pytest.raises(RuntimeError, match="invalid staged session"),
     ):
-        ImagingSession.from_orthanc(
+        staged = ImagingSession.from_orthanc(
             url=ORTHANC_URL,
             output_dir=tmp_path / "staged",
             store_dir=store_dir,
@@ -349,13 +352,20 @@ def test_from_orthanc_does_not_label_study_when_staged_session_is_invalid(
             **{"password": ORTHANC_PASSWORD},
             to_process_label="ready",
             processed_label="done",
+            errors=errors,
         )
 
+    assert staged == []
+    assert errors == ["study-ready"]
     assert ("study-ready", "done") not in fake.labelled
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
+        "Skipping Orthanc study 'study-ready': invalid staged session"
+    ]
+    assert not list((tmp_path / "staged" / "__build__").glob("orthanc_*"))
 
 
 def test_from_orthanc_does_not_label_study_that_changes_during_staging(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake, store_dir = _make_fake_orthanc(tmp_path)
     original_load = ImagingSession.load
@@ -365,12 +375,12 @@ def test_from_orthanc_does_not_label_study_that_changes_during_staging(
         fake.studies["study-ready"]["last_update"] = "20990101T000000"
         return session
 
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
     with (
         _patch_requests(fake),
         patch.object(ImagingSession, "load", side_effect=load_then_update_study),
-        pytest.raises(RuntimeError, match="changed while it was being staged"),
     ):
-        ImagingSession.from_orthanc(
+        staged = ImagingSession.from_orthanc(
             url=ORTHANC_URL,
             output_dir=tmp_path / "staged",
             store_dir=store_dir,
@@ -380,7 +390,21 @@ def test_from_orthanc_does_not_label_study_that_changes_during_staging(
             processed_label="done",
         )
 
+    # A transient condition: a warning, no label, nothing published, and the
+    # stage keeps running. A later pass stages the study again.
+    assert staged == []
     assert ("study-ready", "done") not in fake.labelled
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "xnat-ingest"
+    ]
+    assert len(warnings) == 1
+    assert "changed while it was being staged" in warnings[0].getMessage()
+    assert "staged again on a later pass" in warnings[0].getMessage()
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not list((tmp_path / "staged" / "__build__").glob("orthanc_*"))
+    assert not list((tmp_path / "staged").glob("_.*"))
 
 
 def test_from_orthanc_retry_keeps_existing_files_in_manifest(tmp_path: Path) -> None:
@@ -453,18 +477,18 @@ def test_from_orthanc_converts_series_before_labelling(tmp_path: Path) -> None:
 
 
 def test_from_orthanc_does_not_label_study_when_conversion_fails(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake, store_dir = _make_fake_orthanc(tmp_path)
     fake.studies = {"study-ready": fake.studies["study-ready"]}
     output_dir = tmp_path / "staged"
 
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
     with (
         _patch_requests(fake),
         patch.object(Zip, "convert", side_effect=RuntimeError("conversion failed")),
-        pytest.raises(RuntimeError, match="conversion failed"),
     ):
-        ImagingSession.from_orthanc(
+        staged = ImagingSession.from_orthanc(
             url=ORTHANC_URL,
             output_dir=output_dir,
             store_dir=store_dir,
@@ -475,8 +499,16 @@ def test_from_orthanc_does_not_label_study_when_conversion_fails(
             conversion_map={DicomSeries: (Zip, {})},
         )
 
+    assert staged == []
     assert ("study-ready", "done") not in fake.labelled
     assert not list(output_dir.glob("__convert_*"))
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].getMessage() == (
+        "Skipping Orthanc study 'study-ready': conversion failed"
+    )
+    assert errors[0].exc_info is not None
 
 
 def _add_initial_series(fake, tmp_path):
@@ -829,3 +861,198 @@ def test_malformed_study_fields_in_the_expanded_reply_are_an_error(
     ):
         ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
     assert fake.labelled == [] and fake.unlabelled == []
+
+
+def _add_series(fake, tmp_path, name, series_tags):
+    """A second series in study-ready with the given SeriesNumber/Description."""
+    dcm_dir = tmp_path / name
+    get_topogram_image(
+        dcm_dir,
+        StudyInstanceUID="1.2.3.0",
+        SeriesInstanceUID=f"1.2.3.0.{name}",
+        AccessionNumber="ACC-READY",
+        PatientID="subject1",
+    )
+    fake.add_study(
+        name,
+        next(dcm_dir.iterdir()),
+        study_tags={"StudyInstanceUID": "1.2.3.0"},
+        patient_tags={},
+        series_tags=series_tags,
+    )
+    fake.studies["study-ready"]["series"].extend(fake.studies.pop(name)["series"])
+
+
+def test_series_sharing_a_scan_directory_fail_the_study_and_the_stage_goes_on(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, store = _make_fake_orthanc(tmp_path)
+    # Same SeriesNumber and SeriesDescription as the first series of study-ready,
+    # a new SeriesInstanceUID: both would land in '1.Topogram/DICOM'.
+    _add_series(
+        fake, tmp_path, "twin", {"SeriesNumber": "1", "SeriesDescription": "Topogram"}
+    )
+    fake.studies["study-plain"]["labels"].add("ready")
+    output_dir = tmp_path / "staged"
+
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(output_dir, store))
+
+    # The clashing study is refused with a clear reason and left unlabelled.
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    message = errors[0].getMessage()
+    assert message.startswith("Skipping Orthanc study 'study-ready': ")
+    assert "'1.Topogram/DICOM'" in message
+    assert "SeriesNumber '1'" in message and "SeriesDescription 'Topogram'" in message
+    assert ("study-ready", "done") not in fake.labelled
+    assert not (output_dir / "_.1_2_3_0").exists()
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+    # The other study of the same pass is staged and labelled as usual.
+    assert [s.metadata["AccessionNumber"] for s in staged] == ["ACC-PLAIN"]
+    assert ("study-plain", "done") in fake.labelled
+
+
+def test_a_study_that_fails_to_load_does_not_stop_the_other_studies(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies["study-plain"]["labels"].add("ready")
+    output_dir = tmp_path / "staged"
+    original_load = ImagingSession.load
+
+    def load_or_fail(session_dir: Path) -> ImagingSession:
+        if session_dir.name == "_.1_2_3_0":
+            raise DifferingCheckumsException("Checksum file paths don't match")
+        return original_load(session_dir)
+
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with (
+        _patch_requests(fake),
+        patch.object(ImagingSession, "load", side_effect=load_or_fail),
+    ):
+        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(output_dir, store))
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == [
+        "Skipping Orthanc study 'study-ready': Checksum file paths don't match"
+    ]
+    assert ("study-ready", "done") not in fake.labelled
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+    assert [s.metadata["AccessionNumber"] for s in staged] == ["ACC-PLAIN"]
+    assert ("study-plain", "done") in fake.labelled
+
+
+def test_series_with_one_number_and_two_descriptions_fail_the_study(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, store = _make_fake_orthanc(tmp_path)
+    # Same SeriesNumber, another SeriesDescription: two scan directories that
+    # ImagingSession.load would read as ONE scan, dropping one of them.
+    _add_series(
+        fake, tmp_path, "other", {"SeriesNumber": "1", "SeriesDescription": "Other"}
+    )
+    output_dir = tmp_path / "staged"
+    errors: ty.List[str] = []
+
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+
+    assert staged == [] and errors == ["study-ready"]
+    [message] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert message.startswith("Skipping Orthanc study 'study-ready': ")
+    assert "SeriesNumber '1' is used by series with different descriptions" in message
+    assert "'Topogram'" in message and "'Other'" in message
+    assert ("study-ready", "done") not in fake.labelled
+    assert not (output_dir / "_.1_2_3_0").exists()
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+
+
+def test_a_failing_study_first_in_the_pass_does_not_block_the_next_and_recovers(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, store = _make_fake_orthanc(tmp_path)
+    # study-plain sorts before study-ready; make IT the clashing one.
+    fake.studies["study-plain"]["labels"].add("ready")
+    dcm_dir = tmp_path / "twin"
+    get_topogram_image(
+        dcm_dir,
+        StudyInstanceUID="1.2.3.2",
+        SeriesInstanceUID="1.2.3.2.twin",
+        AccessionNumber="ACC-PLAIN",
+        PatientID="subject1",
+    )
+    fake.add_study(
+        "twin",
+        next(dcm_dir.iterdir()),
+        study_tags={"StudyInstanceUID": "1.2.3.2"},
+        patient_tags={},
+        series_tags={"SeriesNumber": "1", "SeriesDescription": "Topogram"},
+    )
+    twin_series = fake.studies.pop("twin")["series"]
+    fake.studies["study-plain"]["series"].extend(twin_series)
+    output_dir = tmp_path / "staged"
+    errors: ty.List[str] = []
+
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+
+    # Pass 1: the first study fails, the second is staged.
+    assert errors == ["study-plain"]
+    assert [s.metadata["AccessionNumber"] for s in staged] == ["ACC-READY"]
+    assert ("study-plain", "done") not in fake.labelled
+    assert ("study-ready", "done") in fake.labelled
+
+    # The clash is resolved upstream (the twin series goes away): pass 2 stages
+    # the study like any other. Nothing from pass 1 is in the way.
+    for series_id in twin_series:
+        fake.studies["study-plain"]["series"].remove(series_id)
+    for session in staged:
+        uid = session.metadata["StudyInstanceUID"].replace(".", "_")
+        shutil.rmtree(output_dir / f"_.{uid}")
+    errors = []
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+    assert errors == []
+    assert [s.metadata["AccessionNumber"] for s in staged] == ["ACC-PLAIN"]
+    assert ("study-plain", "done") in fake.labelled
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+
+
+def test_a_failed_processed_label_write_keeps_the_published_session(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake, store = _make_fake_orthanc(tmp_path)
+    output_dir = tmp_path / "staged"
+    real_label = fake.label
+
+    def label_but_not_processed(study_id: str, label: str) -> None:
+        if label == "done":
+            raise RuntimeError("label write failed")
+        real_label(study_id, label)
+
+    fake.label = label_but_not_processed
+    errors: ty.List[str] = []
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+
+    # The session was published before the label write; it stays for the next
+    # stage, the study is not certified, and the error names the study.
+    assert staged == [] and errors == ["study-ready"]
+    assert (output_dir / "_.1_2_3_0").is_dir()
+    assert ("study-ready", "done") not in fake.labelled
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
+    [message] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert message == "Skipping Orthanc study 'study-ready': label write failed"
