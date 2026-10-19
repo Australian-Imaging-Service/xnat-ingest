@@ -20,6 +20,7 @@ bytes are copied into the fake store_dir so checksums are genuine).
 import hashlib
 import json
 import typing as ty
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -693,3 +694,61 @@ def test_changed_processed_study_without_ready_label_is_not_staged(tmp_path):
         staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
     assert not any(sid == "study-done" for sid, _ in fake.labelled + fake.unlabelled)
     assert len(staged) == 1
+
+
+def test_processed_study_with_a_malformed_snapshot_is_staged_again(tmp_path):
+    # A timestamp without a digest is not a receipt this version wrote.
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"ready", "done", "done-20261019T011324"}
+    done["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert ("study-done", "done-20261019T011324") in fake.unlabelled
+    assert len(staged) == 2
+
+
+def test_processed_study_with_two_snapshots_is_staged_again(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567",
+                      "done-20261019T011300-0123456789abcdef01234567"}
+    done["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert len(staged) == 2
+    assert len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
+
+
+def test_malformed_expanded_find_reply_is_an_error(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    real_find = fake.find
+
+    def bad_find(body):
+        return {} if body.get("Expand") else real_find(body)
+
+    fake.find = bad_find
+    with _patch_requests(fake), pytest.raises(ValueError, match="expanded study query"):
+        ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert fake.labelled == [] and fake.unlabelled == []
+
+
+def test_processed_label_forces_a_one_second_wait(tmp_path, caplog):
+    # Without a wait a late instance can share the staged LastUpdate's second.
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies["study-ready"]["last_update"] = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    kwargs = _snapshot_kwargs(tmp_path / "staged", store)
+    kwargs["wait_period"] = 0
+    with _patch_requests(fake), caplog.at_level(logging.INFO):
+        staged = ImagingSession.from_orthanc(**kwargs)
+    assert [s.name for s in staged] == []
+    assert "wait period of 1 second" in caplog.text
+
+
+def test_too_long_processed_label_is_refused_before_staging(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    kwargs = _snapshot_kwargs(tmp_path / "staged", store)
+    kwargs["processed_label"] = "p" * 45
+    with _patch_requests(fake), pytest.raises(ValueError, match="too long"):
+        ImagingSession.from_orthanc(**kwargs)
+    assert fake.labelled == []

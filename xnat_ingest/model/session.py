@@ -1169,6 +1169,30 @@ class ImagingSession:
             candidates = _find_studies([], "All")
 
         if processed_label:
+            # The snapshot label below is "<processed>-<LastUpdate>-<digest>" in
+            # at most 64 characters (Orthanc's label limit), with a digest of
+            # at least 8 hex digits. Checked here, before any study is staged.
+            snapshot_prefix = f"{processed_label}-"
+            digest_len = min(24, 64 - len(snapshot_prefix) - len("YYYYMMDDTHHMMSS-"))
+            if digest_len < 8:
+                raise ValueError(
+                    f"processed label {processed_label!r} is too long for a "
+                    "snapshot label (64 characters at most)"
+                )
+            receipt_re = re.compile(
+                re.escape(snapshot_prefix) + r"(\d{8}T\d{6})-([0-9a-f]{%d})$" % digest_len
+            )
+            # LastUpdate has one-second resolution. The change check relies on
+            # a late instance getting a LastUpdate in a later second than the
+            # one staged, so the study must have been quiet for a second.
+            if not wait_period or wait_period < 1:
+                logger.info(
+                    "Using a wait period of 1 second with the processed label "
+                    "%r (requested: %r)",
+                    processed_label,
+                    wait_period,
+                )
+                wait_period = 1
             candidates -= _find_studies([processed_label], "All")
             # A processed study can change after it was staged: a series that
             # arrives late. The staging run records the LastUpdate it staged
@@ -1176,7 +1200,6 @@ class ImagingSession:
             # study whose current LastUpdate has no such label (or none at
             # all, from an older version) has instances this stage never
             # saw: its labels are removed and it is staged again in full.
-            snapshot_prefix = f"{processed_label}-"
             resp = requests.post(
                 f"{url}/tools/find",
                 auth=auth,
@@ -1189,17 +1212,23 @@ class ImagingSession:
                 },
             )
             resp.raise_for_status()
-            for entry in resp.json():
+            expanded = resp.json()
+            if not isinstance(expanded, list) or not all(
+                isinstance(e, dict) and isinstance(e.get("ID"), str) for e in expanded
+            ):
+                raise ValueError(
+                    f"Unexpected reply to the expanded study query at '{url}'"
+                )
+            for entry in expanded:
                 labels = entry.get("Labels") or []
                 if to_process_label and to_process_label not in labels:
                     continue
                 snapshots = [lb for lb in labels if lb.startswith(snapshot_prefix)]
-                # "<processed>-<LastUpdate>-<digest>": the cheap check here is
-                # the LastUpdate; the digest of the staged instance ids is for
-                # the reclaimer, which holds the instance list anyway.
-                if len(snapshots) == 1 and snapshots[0][len(snapshot_prefix) :].split(
-                    "-"
-                )[0] == str(entry.get("LastUpdate")):
+                # Exactly one well-formed snapshot label naming the current
+                # LastUpdate: the cheap check. The digest is for the reclaimer,
+                # which holds the instance list anyway.
+                match = receipt_re.match(snapshots[0]) if len(snapshots) == 1 else None
+                if match and match.group(1) == str(entry.get("LastUpdate")):
                     continue
                 logger.info(
                     "Orthanc study '%s' changed after it was staged "
@@ -1424,19 +1453,10 @@ class ImagingSession:
                 exported = sorted(
                     iid for ids in staged_instance_ids.values() for iid in ids
                 )
-                # Orthanc labels are at most 64 characters: 24 hex digits of
-                # the digest, fewer for a long processed label, never under 8.
-                head = f"{processed_label}-{study['LastUpdate']}-"
-                digest_len = min(24, 64 - len(head))
-                if digest_len < 8:
-                    raise ValueError(
-                        f"processed label {processed_label!r} is too long for a "
-                        "snapshot label (64 characters at most)"
-                    )
                 digest = hashlib.sha256(
                     ("\n".join(exported) + "\n").encode()
                 ).hexdigest()[:digest_len]
-                snapshot = head + digest
+                snapshot = f"{snapshot_prefix}{study['LastUpdate']}-{digest}"
                 for stale in current_study.get("Labels") or []:
                     if stale.startswith(f"{processed_label}-") and stale != snapshot:
                         requests.delete(
