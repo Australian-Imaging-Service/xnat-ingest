@@ -190,6 +190,36 @@ def _normalised_zip(converted: Zip, scratch: Path) -> Zip:
 FileState = tuple[int, int, int]
 
 
+def _refuse_member_loss(
+    existing: ImagingSession, packaged: ImagingSession, shared: set[tuple[str, str]]
+) -> None:
+    """A zip about to replace a packaged one must hold every member of it.
+
+    A session staged with only part of a series (a file drop that brings more
+    images of a series already packaged) gives a zip with fewer members. Writing
+    it over the packaged one would lose the images that are not in this input,
+    and the upload stage cannot merge zips. The session fails instead, its
+    input and output both stay, and the error says why."""
+    for scan_id, label in sorted(shared):
+        old = existing.scans[scan_id].resources[label].fileset
+        new = packaged.scans[scan_id].resources[label].fileset
+        if not (isinstance(old, Zip) and isinstance(new, Zip)):
+            continue
+        with zipfile.ZipFile(old.fspath) as z:
+            old_members = set(z.namelist())
+        with zipfile.ZipFile(new.fspath) as z:
+            new_members = set(z.namelist())
+        missing = old_members - new_members
+        if missing:
+            raise ValueError(
+                f"The new {label!r} of scan {scan_id!r} lacks {len(missing)} "
+                f"member(s) of the packaged copy, for example "
+                f"{sorted(missing)[:3]}: this input holds only part of the "
+                "series, and a packaged zip cannot be merged. Both copies are "
+                "kept."
+            )
+
+
 def _file_states(session_dir: Path) -> dict[Path, FileState]:
     """The data files of a staged session, as paths inside it, each with its
     size, mtime and inode. Sidecars and hidden entries are not data."""
@@ -353,6 +383,9 @@ def package(
                             f"obsolete scan resources {sorted(stale_paths)}; "
                             "write the new layout to a fresh output directory"
                         )
+                    _refuse_member_loss(
+                        existing, packaged, expected_paths & existing_paths
+                    )
                     packaged.save(output_dir, copy_mode=copy_mode)
                 else:
                     work_dir.mkdir(parents=True, exist_ok=True)
