@@ -20,6 +20,12 @@ class IdentityXnat(FakeXnat):
         super().__init__([("1", "scan_one", {"DICOM": dict(LOCAL)})])
         self.fields = {"ID": "E1", "subject_ID": subject, "UID": uid, "project": "proj"}
         self.subjects = [{"ID": "S1", "label": "subj"}]
+        self.recovered_uid = uid
+        self.puts = []
+
+    def put(self, uri):
+        self.puts.append(uri)
+        self.fields["UID"] = self.recovered_uid
 
     def get_json(self, uri, query=None):
         if uri == "/data/experiments/E1":
@@ -74,8 +80,11 @@ def test_existing_experiment_identity_mismatch_refused_without_writes(subject, u
 )
 def test_all_uploaded_cannot_skip_other_subject_or_study(tmp_path, subject, uid):
     listing = staged(tmp_path)
-    with pytest.raises(ValueError, match="identity"):
-        listing.all_uploaded(IdentityXnat(subject, uid))
+    if subject == "S1" and uid == "":
+        assert listing.all_uploaded(IdentityXnat(subject, uid)) is False
+    else:
+        with pytest.raises(ValueError, match="identity"):
+            listing.all_uploaded(IdentityXnat(subject, uid))
 
 
 def test_matching_identity_and_shared_project_are_allowed(tmp_path):
@@ -186,3 +195,34 @@ def test_s3_metadata_download_failure_is_not_unknown_identity(tmp_path):
     )
     with pytest.raises(OSError, match="transport unavailable"):
         listing.all_uploaded(IdentityXnat())
+
+
+@pytest.mark.parametrize("recovered", ["1.2.3", "9.8.7", ""])
+def test_legacy_blank_uid_uses_existing_headers_before_reuse(recovered, caplog):
+    connection = IdentityXnat(uid="")
+    connection.recovered_uid = recovered
+    xproject = project(connection)
+    if recovered == "1.2.3":
+        assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    else:
+        with pytest.raises(ValueError, match="identity"):
+            get_xnat_session(session(), xproject)
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+    connection.classes.SubjectData.assert_not_called()
+    assert (
+        len(
+            [
+                r
+                for r in caplog.records
+                if getattr(r, "event", "") == "xnat_identity_recovery"
+            ]
+        )
+        == 1
+    )
+
+
+def test_blank_uid_other_subject_is_never_recovered():
+    connection = IdentityXnat(subject="S2", uid="")
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == []

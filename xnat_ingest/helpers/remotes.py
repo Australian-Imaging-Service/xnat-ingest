@@ -119,6 +119,10 @@ def _study_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
     return value
 
 
+class UnknownStudyIdentity(ValueError):
+    """The subject matches, but remote headers have not established a study UID."""
+
+
 def _assert_session_identity(
     connection: xnat.XNATSession,
     uri: str,
@@ -150,12 +154,16 @@ def _assert_session_identity(
             subject = subjects.lookup(subject_id, "label")
             if fields.get("subject_ID") != subject["ID"]:
                 raise ValueError("subject mismatch")
-        if study_uid is not None and fields.get("UID") != study_uid:
-            raise ValueError("StudyInstanceUID mismatch or absent")
+        if study_uid is not None and fields.get("UID") not in (None, "", study_uid):
+            raise ValueError("StudyInstanceUID mismatch")
     except Exception as exc:
         # Do not disclose patient identifiers in the error or silently fall back
         # to creation/upload after an unreadable or malformed identity response.
         raise ValueError("Cannot verify XNAT session identity") from exc
+    if study_uid is not None and fields.get("UID") in (None, ""):
+        raise UnknownStudyIdentity(
+            "Cannot verify XNAT study identity before header recovery"
+        )
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -302,7 +310,10 @@ class SessionListing(metaclass=abc.ABCMeta):
         bool
             whether every staged resource is complete on XNAT
         """
-        session_uri = self.find_xnat_session_uri(connection)
+        try:
+            session_uri = self.find_xnat_session_uri(connection)
+        except UnknownStudyIdentity:
+            return False  # get_xnat_session may recover identity from existing headers.
         if session_uri is None:
             return False
 
@@ -972,13 +983,30 @@ def get_xnat_session(
             session_kwargs["UID"] = study_uid
         xsession = SessionClass(**session_kwargs)
     else:
-        _assert_session_identity(
-            xproject.xnat_session,
-            xsession.uri,
-            study_uid,
-            xproject.id,
-            session.subject_id,
-        )
+        try:
+            _assert_session_identity(
+                xproject.xnat_session,
+                xsession.uri,
+                study_uid,
+                xproject.id,
+                session.subject_id,
+            )
+        except UnknownStudyIdentity:
+            # Subject equality alone cannot distinguish two studies sharing an
+            # accession. Derive identity from EXISTING remote data before adding
+            # any new files, then compare again. A failed/unknown recovery refuses.
+            logger.warning(
+                "XNAT study identity is unknown; recovering existing headers before reuse",
+                extra={"event": "xnat_identity_recovery"},
+            )
+            xproject.xnat_session.put(f"{xsession.uri}?pullDataFromHeaders=true")
+            _assert_session_identity(
+                xproject.xnat_session,
+                xsession.uri,
+                study_uid,
+                xproject.id,
+                session.subject_id,
+            )
     return xsession
 
 
