@@ -121,10 +121,16 @@ def test_missing_modality_raises():
 
 
 def test_existing_experiment_ignores_modality():
-    existing = object()
-    xsession = get_xnat_session(
-        _session(), _xproject({"sess": existing}), modality="CT"
+    existing = SimpleNamespace(uri="/data/experiments/E1")
+    xproject = _xproject({"sess": existing})
+    xproject.id = "proj"
+    xproject.xnat_session.get_json = mock.Mock(
+        side_effect=[
+            {"items": [{"data_fields": {"subject_ID": "S1"}}]},
+            {"ResultSet": {"Result": [{"ID": "S1", "label": "subj"}]}},
+        ]
     )
+    xsession = get_xnat_session(_session(), xproject, modality="CT")
     assert xsession is existing
 
 
