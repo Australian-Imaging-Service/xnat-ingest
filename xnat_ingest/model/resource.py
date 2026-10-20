@@ -247,9 +247,10 @@ class ImagingResource:
         system, so a reader never finds a truncated manifest when this process
         dies mid-write. A process that dies before the move leaves the data files
         and ``MANIFEST_TMP_FNAME``, but no manifest. A load that requires a
-        manifest refuses that directory. A load that does not require one reads
-        all its files, the temporary file too, as a generic FileSet. The
-        producer's next save replaces the directory, whatever the file times."""
+        manifest refuses that directory. Readers ignore this publication file,
+        including when a staging copy contains both it and a valid manifest.
+        The producer's next save replaces a directory without a manifest,
+        whatever the file times."""
         fspath = resource_dir / cls.MANIFEST_FNAME
         tmp = resource_dir / cls.MANIFEST_TMP_FNAME
         with open(tmp, "w") as f:
@@ -275,6 +276,10 @@ class ImagingResource:
             p
             for p in resource_dir.rglob("*")
             if p.is_file()
+            # Only the publisher's temporary file at the resource root is
+            # metadata. Other .tmp names, and this name inside a data directory,
+            # still participate in the checksum checks.
+            and p != resource_dir / cls.MANIFEST_TMP_FNAME
             and p.name
             not in (cls.MANIFEST_FNAME, cls.OLD_MANIFEST_FNAME, Metadata.FNAME)
         ]
