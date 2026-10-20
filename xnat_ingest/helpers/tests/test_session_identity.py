@@ -22,12 +22,16 @@ class IdentityXnat(FakeXnat):
         self.subjects = [{"ID": "S1", "label": "subj"}]
         self.recovered_uid = uid
         self.puts = []
+        self.headers = []
 
-    def put(self, uri):
+    def put(self, uri, query=None):
         self.puts.append(uri)
-        self.fields["UID"] = self.recovered_uid
+        self.fields["UID"] = (
+            query["xnat:imageSessionData/UID"] if query else self.recovered_uid
+        )
 
-    def get_json(self, uri, query=None):
+    def get_json(self, uri, query=None, headers=None):
+        self.headers.append((uri, headers))
         if uri == "/data/experiments/E1":
             self.calls.append(uri)
             return {"items": [{"data_fields": dict(self.fields)}]}
@@ -153,7 +157,7 @@ def test_new_experiment_records_uid_with_creation():
 def test_malformed_identity_response_is_not_proof(tmp_path, response):
     connection = IdentityXnat()
     original = connection.get_json
-    connection.get_json = lambda uri, query=None: (
+    connection.get_json = lambda uri, query=None, headers=None: (
         response if uri == "/data/experiments/E1" else original(uri, query)
     )
     with pytest.raises(ValueError, match="identity"):
@@ -164,7 +168,7 @@ def test_failed_subject_read_never_falls_back_to_upload(tmp_path):
     connection = IdentityXnat()
     original = connection.get_json
 
-    def read(uri, query=None):
+    def read(uri, query=None, headers=None):
         if uri.endswith("/subjects"):
             raise OSError("transport unavailable")
         return original(uri, query)
@@ -226,3 +230,49 @@ def test_blank_uid_other_subject_is_never_recovered():
     with pytest.raises(ValueError, match="identity"):
         get_xnat_session(session(), project(connection))
     assert connection.puts == []
+
+
+def test_empty_legacy_experiment_can_establish_uid():
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    xproject = project(connection)
+    assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    assert connection.fields["UID"] == "1.2.3"
+    assert connection.puts == [
+        "/data/experiments/E1?pullDataFromHeaders=true",
+        "/data/experiments/E1",
+    ]
+    assert all(
+        headers == {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+        for _, headers in connection.headers
+    )
+
+
+@pytest.mark.parametrize("collection", ["scans", "resources"])
+@pytest.mark.parametrize("rows", [[{"ID": "present"}], None, {}, [{"malformed": True}]])
+def test_empty_recovery_requires_both_raw_listings_to_be_empty(collection, rows):
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.get_json
+
+    def read(uri, **kwargs):
+        if uri == f"/data/experiments/E1/{collection}":
+            return {"ResultSet": {"Result": rows}}
+        return original(uri, **kwargs)
+
+    connection.get_json = read
+    with pytest.raises(ValueError, match="not proven empty"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+
+
+def test_uid_write_is_rechecked_and_not_assumed():
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    connection.put = lambda uri, **kwargs: connection.puts.append(uri)
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), project(connection))
+    assert len(connection.puts) == 2

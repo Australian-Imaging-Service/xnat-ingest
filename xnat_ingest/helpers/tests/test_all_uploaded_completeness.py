@@ -82,7 +82,7 @@ class FakeXnat:
         return resources
 
     def get_json(
-        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None
+        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None, headers=None
     ) -> ty.Any:
         self.calls.append(uri)
         rows: ty.List[ty.Dict[str, str]]
