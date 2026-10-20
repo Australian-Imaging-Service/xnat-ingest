@@ -130,7 +130,9 @@ class ImagingResource:
             Whether to overwrite the resource if it already exists, if None then the files
             are overwritten if they are newer than the ones saved, otherwise a warning is
             issued, if False an exception will be raised, if True then the resource is
-            saved regardless of the files being newer
+            saved regardless of the files being newer. An existing resource that is
+            incomplete (no manifest, a manifest that cannot be read, or files that do
+            not match the manifest) is always replaced
 
         Returns
         -------
@@ -140,14 +142,32 @@ class ImagingResource:
         Raises
         ------
         FileExistsError
-            If the resource already exists and overwrite is False or None and the files
-            are not newer
+            If a complete resource already exists and overwrite is False or None and
+            the files are not newer
         """
         fileset = self.fileset
         resource_dir = dest_dir / self.name
         checksums = (
             self.calculate_checksums() if calculate_checksums else self.checksums
         )
+        if resource_dir.exists() and not self.manifest_fpath(resource_dir).exists():
+            # A producer stopped after it wrote data files and before it published
+            # the manifest. It can leave the temporary manifest. This save cannot
+            # verify these files and it holds the complete resource, so it
+            # replaces the directory. It does not compare file times. The files
+            # left behind can be newer than an input that did not change, and
+            # then that check refused every later save.
+            tmp_fpath = resource_dir / self.MANIFEST_TMP_FNAME
+            detail = (
+                f" (a save stopped before it moved '{tmp_fpath.name}' into place)"
+                if tmp_fpath.exists()
+                else ""
+            )
+            logger.warning(
+                f"Resource '{self.name}' already exists in '{dest_dir}', but it has "
+                f"no manifest{detail}, so it is incomplete, overwriting"
+            )
+            shutil.rmtree(resource_dir)
         if resource_dir.exists():
             try:
                 loaded = self.load(resource_dir, require_manifest=False)
@@ -225,10 +245,13 @@ class ImagingResource:
         """Publish the manifest in one step. The file is written beside its final
         name and moved into place with os.replace, which is atomic on one file
         system, so a reader never finds a truncated manifest when this process
-        dies mid-write. A leftover ``.tmp`` file counts as an unlisted file on the
-        next load, so the producer's next save replaces the directory."""
+        dies mid-write. A process that dies before the move leaves the data files
+        and ``MANIFEST_TMP_FNAME``, but no manifest. A load that requires a
+        manifest refuses that directory. A load that does not require one reads
+        all its files, the temporary file too, as a generic FileSet. The
+        producer's next save replaces the directory, whatever the file times."""
         fspath = resource_dir / cls.MANIFEST_FNAME
-        tmp = fspath.with_name(fspath.name + ".tmp")
+        tmp = resource_dir / cls.MANIFEST_TMP_FNAME
         with open(tmp, "w") as f:
             json.dump(manifest, f)
             f.flush()
@@ -361,4 +384,5 @@ class ImagingResource:
         return manifest_file
 
     MANIFEST_FNAME = "__MANIFEST__.json"
+    MANIFEST_TMP_FNAME = MANIFEST_FNAME + ".tmp"
     OLD_MANIFEST_FNAME = "MANIFEST.json"
