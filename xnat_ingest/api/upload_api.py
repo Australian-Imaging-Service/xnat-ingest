@@ -346,6 +346,7 @@ def upload(
                 to_upload: list[tuple[ImagingResource, ty.Any, ty.Any]] = []
                 incomplete_on_xnat: list[str] = []
                 repaired_on_xnat: list[str] = []
+                warned_resources: set[str] = set()
                 for resource in selected_resources:
                     # A DICOM resource whose series carries more than one modality is
                     # split into one part per modality here, uploaded to its own scan,
@@ -353,7 +354,9 @@ def upload(
                     # session from the headers (see `split_resource_by_modality`)
                     for part in split_resource_by_modality(resource):
                         try:
-                            xresource, only_files = get_xnat_resource(part, xsession)
+                            xresource, only_files = get_xnat_resource(
+                                part, xsession, warned_resources=warned_resources
+                            )
                         except IncompleteCheckumsException as e:
                             # Exists on XNAT but is short and cannot be repaired by
                             # uploading. Record it so the session does not report as
@@ -468,7 +471,7 @@ def upload(
                             calc_checksums, remote_checksums
                         )
                         warn_if_compared_by_name_only(
-                            comparison, resource.path, session.name
+                            comparison, resource.path, session.name, warned_resources
                         )
                         if not comparison.complete:
                             raise RuntimeError(

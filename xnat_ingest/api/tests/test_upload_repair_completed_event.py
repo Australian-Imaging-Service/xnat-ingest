@@ -145,7 +145,9 @@ def json_log() -> ty.Iterator[JsonCapture]:
 def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]:
     """Drive the real upload() with each scan's re-send outcome, keyed by scan id."""
 
-    def fake_get_xnat_resource(resource: ty.Any, xsession: ty.Any) -> ty.Any:
+    def fake_get_xnat_resource(
+        resource: ty.Any, xsession: ty.Any, **kwargs: ty.Any
+    ) -> ty.Any:
         outcome = outcomes[resource.scan.id]
         if outcome == "incomplete":  # short on XNAT and NOT repairable
             raise IncompleteCheckumsException(f"{resource.path} is short")

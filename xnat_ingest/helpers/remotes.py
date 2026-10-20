@@ -857,6 +857,7 @@ class ResourceComparison:
     extra: ty.Set[str] = attrs.field(factory=set)
     differing: ty.Set[str] = attrs.field(factory=set)
     comparable: bool = True
+    without_checksums: ty.Set[str] = attrs.field(factory=set)
 
     @property
     def complete(self) -> bool:
@@ -883,7 +884,8 @@ def compare_resource_with_xnat(
     XNAT leaves `digest` empty until a catalog refresh populates it, so files
     uploaded but not yet refreshed report ''. Comparing content in that state
     would call a healthy resource corrupt, so a file with no digest is compared
-    by NAME only and the result is marked not `comparable`.
+    by NAME only and recorded in `without_checksums`. `comparable` means at
+    least one remote digest exists, not that every file was verified by content.
     api/check_upload_api.py guards the same way.
     """
     local_names = set(local_checksums)
@@ -901,22 +903,35 @@ def compare_resource_with_xnat(
         extra=xnat_names - local_names,
         differing=differing,
         comparable=comparable,
+        without_checksums={
+            n for n in local_names & xnat_names if not xnat_checksums[n]
+        },
     )
 
 
 def warn_if_compared_by_name_only(
-    comparison: ResourceComparison, resource: str, session: str
+    comparison: ResourceComparison,
+    resource: str,
+    session: str,
+    warned_resources: ty.Optional[ty.Set[str]] = None,
 ) -> None:
-    """One WARNING per resource whose files XNAT lists without a digest, so a
-    clean upload log is not read as a checksum match on a site that has
-    checksums off. The comparison itself is unchanged."""
-    if not comparison.comparable:
+    """Report files compared without digests, including partially digested resources.
+
+    The uploader shares a set across the pre/post checks of one session attempt.
+    A later attempt can warn again; no state is retained across polling passes.
+    """
+    if comparison.without_checksums and (
+        warned_resources is None or resource not in warned_resources
+    ):
+        if warned_resources is not None:
+            warned_resources.add(resource)
         logger.warning(
             # Keep this phrase stable: external log alerts may match it.
-            "'%s' in '%s' was compared by file name only: XNAT lists its files "
+            "'%s' in '%s' has %d file(s) compared by file name only: XNAT lists them "
             "without checksums (site checksums off, or not computed yet)",
             resource,
             session,
+            len(comparison.without_checksums),
         )
 
 
@@ -986,7 +1001,10 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
 
 
 def get_xnat_resource(
-    resource: ImagingResource, xsession: ty.Any
+    resource: ImagingResource,
+    xsession: ty.Any,
+    *,
+    warned_resources: ty.Optional[ty.Set[str]] = None,
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
 
@@ -1029,6 +1047,9 @@ def get_xnat_resource(
             # returning it for a short resource loses the data silently.
             comparison = compare_resource_with_xnat(
                 resource.checksums, get_xnat_checksums(xresource)
+            )
+            warn_if_compared_by_name_only(
+                comparison, resource.path, xsession.label, warned_resources
             )
             if comparison.repairable:
                 logger.warning(
@@ -1146,7 +1167,9 @@ def get_xnat_resource(
     else:
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
-        warn_if_compared_by_name_only(comparison, resource_name, resource.scan.path)
+        warn_if_compared_by_name_only(
+            comparison, resource.path, resource.scan.path, warned_resources
+        )
         if comparison.repairable:
             # We hold files XNAT does not and nothing else is wrong, so hand
             # back the shortfall. Not the whole resource: XNAT would reject or
