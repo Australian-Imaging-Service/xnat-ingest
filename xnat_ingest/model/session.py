@@ -469,7 +469,6 @@ def _deidentify_or_copy_resource(
     return deid_resource, reid_mdata
 
 
-
 def _is_timestamp(value: str) -> bool:
     """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
     try:
@@ -477,6 +476,7 @@ def _is_timestamp(value: str) -> bool:
     except ValueError:
         return False
     return True
+
 
 @attrs.define(slots=False)
 class ImagingSession:
@@ -1189,7 +1189,8 @@ class ImagingSession:
                     "snapshot label (64 characters at most)"
                 )
             receipt_re = re.compile(
-                re.escape(snapshot_prefix) + r"(\d{8}T\d{6})-([0-9a-f]{%d})$" % digest_len
+                re.escape(snapshot_prefix)
+                + r"(\d{8}T\d{6})-([0-9a-f]{%d})$" % digest_len
             )
             # LastUpdate has one-second resolution. The change check relies on
             # a late instance getting a LastUpdate in a later second than the
