@@ -263,6 +263,26 @@ bit most likely to need tweaking per node/site. Any of them can also be a format
 string composing more than one field, e.g. ``--project '{PatientID}_{StudyDate:%Y}'``
 — see :ref:`Composing IDs from more than one field` above.
 
+Routing labels and upgrades
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Assignment preserves labels that contain only ASCII letters, digits, underscores
+and hyphens. Other values use ``XNAT_ESC_`` followed by the hexadecimal UTF-8 bytes
+of the full value. Values that already start with ``XNAT_ESC_`` use the same
+encoding. Thus ``A/B``, ``A B`` and ``A_B`` have different labels. This encoding
+preserves identity; it does not deidentify a patient. A format expression that
+removes distinguishing information still needs correction in the site settings.
+An explicit constant project ID continues to name the existing project literally.
+
+Previous versions replaced punctuation with underscores. Before upgrading a site
+with such labels, stop assignment and reconcile its grouped and assigned data,
+XNAT labels and project mapping with the new encoding. Drain or explicitly migrate
+old staging directories. Do not alias an encoded label to an old underscore label:
+that can attach one patient's data to another patient. Safe labels outside the
+reserved prefix do not change. Long encoded labels can exceed server or filesystem
+limits; shorten the site's source identifiers through an unambiguous mapping
+instead of truncating the encoded result.
+
 What happens when an ID can't be resolved
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

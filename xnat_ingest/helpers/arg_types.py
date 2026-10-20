@@ -426,6 +426,27 @@ class IDSpec(MultiCliTyped):
             value = self.xnat_id_escape_re.sub("_", value)
         return value
 
+    def get_routing_value(
+        self, metadata: MetadataLike, missing_ids: dict[str, str] | None = None
+    ) -> str:
+        """Encode a project, subject or session label without losing identity.
+
+        Safe labels remain readable. Unsafe values are UTF-8 hex under a reserved
+        prefix; values already starting with that prefix are encoded too. Thus no
+        literal safe label can impersonate an encoded value, and no two source
+        strings share an output. This is encoding, not deidentification.
+
+        This applies after the site's ID expression. A lossy expression (such as
+        slicing or formatting away distinguishing digits) cannot be repaired here.
+        Existing labels made by the old underscore replacement need an explicit
+        site migration; never alias the new encoding to the old label.
+        """
+        value = self.get_value(metadata, escape=False, missing_ids=missing_ids)
+        prefix = "XNAT_ESC_"
+        if self.xnat_id_escape_re.search(value) or value.startswith(prefix):
+            return prefix + value.encode("utf-8").hex()
+        return value
+
     def _missing_field_placeholder(
         self,
         field_name: str,

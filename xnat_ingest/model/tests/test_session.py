@@ -1366,7 +1366,9 @@ def test_id_escape(tmp_path: Path) -> None:
         subject_field="PatientID",
         session_field="AccessionNumber",
     )
-    assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
+    assert sessions[0].subject_id == (
+        "XNAT_ESC_" + "INSTRUMENT_SURNAME^FIRST_NAME".encode("utf-8").hex()
+    )
 
 
 def test_assign_unresolvable_field_uses_placeholder_instead_of_raising(

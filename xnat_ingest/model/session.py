@@ -1043,18 +1043,25 @@ class ImagingSession:
         metadata, a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder is used
         instead of raising, so the session can still be saved (see `invalid_ids`) for
         manual review/reprocessing rather than being silently dropped.
+
+        Routing labels use an injective encoding: safe labels are unchanged,
+        other values and those beginning with XNAT_ESC_ become that prefix plus
+        UTF-8 hex. This prevents distinct patient/accession values from merging
+        after punctuation replacement. Sites upgrading from the old escaping
+        must reconcile old labels before resuming assignment. Encoding does not
+        remove identifying information; deidentification remains a separate step.
         """
         missing_ids: dict[str, str] = {}
         if constant_project_id is None:
-            self.project_id = IDSpec(project_field).get_value(
+            self.project_id = IDSpec(project_field).get_routing_value(
                 self.metadata, missing_ids=missing_ids
             )
         else:
             self.project_id = constant_project_id
-        self.subject_id = IDSpec(subject_field).get_value(
+        self.subject_id = IDSpec(subject_field).get_routing_value(
             self.metadata, missing_ids=missing_ids
         )
-        self.session_id = IDSpec(session_field).get_value(
+        self.session_id = IDSpec(session_field).get_routing_value(
             self.metadata, missing_ids=missing_ids
         )
 
