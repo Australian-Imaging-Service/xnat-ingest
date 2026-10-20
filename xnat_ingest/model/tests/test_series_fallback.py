@@ -45,7 +45,7 @@ def make_fake(tmp_path, number, description, series_uid="1.2.3.4"):
     "number,description",
     [("1", None), ("", "MR"), (None, None), ("   ", " "), (0, "MR")],
 )
-def test_optional_series_tags_do_not_block_study(tmp_path, number, description):
+def test_optional_series_tags_do_not_block_study(tmp_path, number, description, caplog):
     fake, store = make_fake(tmp_path, number, description)
     with _patch_requests(fake):
         sessions = ImagingSession.from_orthanc(
@@ -55,9 +55,17 @@ def test_optional_series_tags_do_not_block_study(tmp_path, number, description):
     scan = next(iter(sessions[0].scans.values()))
     assert scan.id and scan.type.strip()
     if number in (None, "", "   "):
-        assert scan.id.startswith("series_")
+        assert scan.id == "1_2_3_4"
     else:
         assert scan.id == str(number)
+    if number in (None, "", "   ") or not description or not str(description).strip():
+        events = [
+            r
+            for r in caplog.records
+            if getattr(r, "event", "") == "series_metadata_fallback"
+        ]
+        assert len(events) == 1
+        assert events[0].orthanc_series_id == "study-series1"
     assert fake.labelled == [("study", "done")]
     for resource in sessions[0].resources:
         resource.check_checksums()
@@ -96,8 +104,22 @@ def test_two_unnumbered_series_remain_separate(tmp_path):
         )
     assert len(sessions) == 1
     assert len(sessions[0].scans) == 2
-    assert all(scan.id.startswith("series_") for scan in sessions[0].scans.values())
+    assert set(sessions[0].scans) == {"1_2_3_4", "1_2_3_5"}
+    assert {s.type for s in sessions[0].scans.values()} == {
+        "Series_1_2_3_4",
+        "Series_1_2_3_5",
+    }
     assert fake.labelled == [("study", "done")]
+    # FrameTree keys its resource entries by type/resource, not by scan ID.
+    # Calling every unnamed type "unknown" would collide during column selection.
+    from xnat_ingest.model.store import ImagingSessionMockStore
+
+    store = ImagingSessionMockStore(sessions[0])
+    store.populate_row(store.row)
+    for scan in sessions[0].scans.values():
+        scan.type = "unknown"
+    with pytest.raises(KeyError, match="multiple entries"):
+        store.populate_row(store.row)
 
 
 def test_missing_uid_uses_stable_orthanc_series_identity(tmp_path):
@@ -118,3 +140,21 @@ def test_normal_series_labels_stay_unchanged(tmp_path):
             **_publication_kwargs(tmp_path / "staged", store)
         )
     assert sessions[0].scans["2"].type == "T1"
+
+
+@pytest.mark.parametrize("description", [None, "", " "])
+def test_missing_description_survives_following_assign_stage(tmp_path, description):
+    fake, store = make_fake(tmp_path, "", description)
+    with _patch_requests(fake):
+        session = ImagingSession.from_orthanc(
+            **_publication_kwargs(tmp_path / "staged", store)
+        )[0]
+    missing = session.assign(
+        project_field="Unused",
+        constant_project_id="proj",
+        subject_field="PatientID",
+        session_field="StudyInstanceUID",
+        scan_field="SeriesDescription",
+    )
+    assert missing == {}
+    assert session.scans["1_2_3_4"].type == "Series_1_2_3_4"

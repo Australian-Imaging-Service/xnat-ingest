@@ -1061,9 +1061,14 @@ class ImagingSession:
         if scan_field is not None:
             for scan in self.scans.values():
                 try:
-                    scan.type = IDSpec(scan_field).get_value(
-                        scan.metadata, escape=False, missing_ids=missing_ids
+                    description = IDSpec(scan_field).get_value(
+                        scan.metadata, escape=False
                     )
+                    if not description.strip():
+                        raise ImagingSessionParseError(
+                            "Empty optional scan description"
+                        )
+                    scan.type = description
                 except ImagingSessionParseError:
                     logger.debug(
                         "Could not resolve a description for scan '%s' from field "
@@ -1071,7 +1076,7 @@ class ImagingSession:
                         scan.id,
                         scan_field,
                     )
-                    scan.type = scan.id
+                    scan.type = scan.type or "Series_" + scan.id
         return missing_ids
 
     @classmethod
@@ -1227,8 +1232,15 @@ class ImagingSession:
                     # Prefer the DICOM UID; Orthanc's series ID is the fallback
                     # when its indexed tags do not include that UID. Never use
                     # iteration order or a shared "unknown" scan number.
-                    identity = str(all_tags.get("SeriesInstanceUID") or series_id)
-                    scan_id = "series_" + hashlib.sha256(identity.encode()).hexdigest()
+                    series_uid = all_tags.get("SeriesInstanceUID")
+                    if series_uid and str(series_uid).strip():
+                        # Match XNAT's header importer, otherwise it creates a
+                        # second scan for the same unnumbered DICOM series.
+                        scan_id = IDSpec("SeriesInstanceUID").get_value(all_tags)
+                    else:
+                        scan_id = (
+                            "series_" + hashlib.sha256(series_id.encode()).hexdigest()
+                        )
                     fallback_fields.append("SeriesNumber")
                 else:
                     scan_id = IDSpec("SeriesNumber").get_value(
@@ -1244,7 +1256,10 @@ class ImagingSession:
                     logger.warning(
                         "Using a stable series fallback for missing %s",
                         ", ".join(fallback_fields),
-                        extra={"event": "series_metadata_fallback"},
+                        extra={
+                            "event": "series_metadata_fallback",
+                            "orthanc_series_id": series_id,
+                        },
                     )
 
                 if "ImageType" in all_tags:
