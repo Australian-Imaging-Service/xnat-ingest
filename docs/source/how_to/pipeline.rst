@@ -268,15 +268,14 @@ Routing labels and upgrades
 
 ``assign --injective-ids`` (or ``XINGEST_INJECTIVE_IDS=1``) opts in to distinct
 subject/session labels. The default retains legacy normalization, including for
-project IDs. Thus this option does not close DV-03 under the default configuration.
+project IDs. Thus the default configuration can still merge distinct identifiers after punctuation is replaced.
 
 With the option enabled, assignment preserves subject/session labels that contain
 only ASCII letters, digits, underscores
 and hyphens. Other values use ``XNAT_ESC_`` followed by the hexadecimal UTF-8 bytes
 of the full value. Values that already start with ``XNAT_ESC_`` use the same
 encoding. Thus ``A/B``, ``A B`` and ``A_B`` have different labels. This encoding
-preserves identity; encoding is not de-identification. This is the DV-01 limitation:
-with the ingest deidentification engine, routing labels can still carry raw patient
+preserves identity; encoding is not de-identification. With the ingest deidentification engine, routing labels can still carry raw patient
 identifiers; the site must supply an appropriate pseudonymous mapping. A format expression that
 removes distinguishing information still needs correction in the site settings.
 An explicit constant project ID continues to name the existing project literally.
