@@ -1,5 +1,7 @@
 import hashlib
+import json
 import logging
+import os
 import shutil
 import typing as ty
 from pathlib import Path
@@ -7,6 +9,7 @@ from pathlib import Path
 import attrs
 from fileformats.application import Json
 from fileformats.core import FileSet
+from fileformats.core.exceptions import FormatMismatchError
 from fileformats.generic import Directory
 from typing_extensions import Self
 
@@ -172,6 +175,18 @@ class ImagingResource:
                     "incomplete, overwriting"
                 )
                 shutil.rmtree(resource_dir)
+            except FormatMismatchError as exc:
+                # The manifest cannot be read, or the files do not match the
+                # format it names. A producer killed while it wrote the manifest
+                # left this behind (before the manifest was published in one
+                # step). Nothing in the directory can be verified and this save
+                # holds the complete resource, so replace the directory. Stages
+                # that only load (package, upload) still refuse such a resource.
+                logger.warning(
+                    f"Resource '{self.name}' already exists in '{dest_dir}', but it "
+                    f"cannot be loaded ({exc}), overwriting"
+                )
+                shutil.rmtree(resource_dir)
         collation = FileSet.CopyCollation.any
         if collation_map:
             for dtype, coll_level in collation_map.items():
@@ -199,11 +214,26 @@ class ImagingResource:
             crypto=hashlib.md5, relative_to=resource_dir
         )
         manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
-        Json.new(resource_dir / self.MANIFEST_FNAME, manifest)
+        self.write_manifest(resource_dir, manifest)
         self.metadata.save(resource_dir)
         return type(self)(
             name=self.name, fileset=saved_fileset, checksums=saved_checksums
         )
+
+    @classmethod
+    def write_manifest(cls, resource_dir: Path, manifest: dict[str, ty.Any]) -> None:
+        """Publish the manifest in one step. The file is written beside its final
+        name and moved into place with os.replace, which is atomic on one file
+        system, so a reader never finds a truncated manifest when this process
+        dies mid-write. A leftover ``.tmp`` file counts as an unlisted file on the
+        next load, so the producer's next save replaces the directory."""
+        fspath = resource_dir / cls.MANIFEST_FNAME
+        tmp = fspath.with_name(fspath.name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(manifest, f)
+            f.flush()
+            os.fsync(f.fileno())  # on disk before it gets the final name
+        os.replace(tmp, fspath)
 
     @classmethod
     def load(

@@ -1275,8 +1275,7 @@ class ImagingSession:
                 checksums: dict[str, str] = dict(linked)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
-                with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
-                    json.dump(manifest, f, indent=4)
+                ImagingResource.write_manifest(resource_dir, manifest)
 
                 if convert_series:
                     try:
