@@ -44,6 +44,7 @@ from .xnat_scan_types import (
 )
 
 DEFAULT_MAX_WORKERS = 10
+IDENTITY_HEADERS = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
 
 # An upload loop keeps this first-listing result across sessions and passes.
 _xnat_has_checksums: bool | None = None
@@ -70,11 +71,13 @@ class XnatRows:
         uri: str,
         lookup_field: str,
         xsi_type: str | None = None,
+        fresh: bool = False,
     ) -> "XnatRows":
         columns = f"ID,URI,{lookup_field}"
         if xsi_type is None:
             columns += ",xsiType"
-        result = connection.get_json(uri, query={"columns": columns})
+        kwargs = {"headers": IDENTITY_HEADERS} if fresh else {}
+        result = connection.get_json(uri, query={"columns": columns}, **kwargs)
         rows = []
         for row in result["ResultSet"]["Result"]:
             if "URI" not in row and "ID" not in row:
@@ -140,7 +143,7 @@ def _assert_session_identity(
     if subject_id is None and study_uid is None:
         return
     try:
-        items = connection.get_json(uri)["items"]
+        items = connection.get_json(uri, headers=IDENTITY_HEADERS)["items"]
         if len(items) != 1:
             raise ValueError("expected one experiment document")
         fields = items[0]["data_fields"]
@@ -150,6 +153,7 @@ def _assert_session_identity(
                 f"/data/projects/{project_id}/subjects",
                 "label",
                 xsi_type="xnat:subjectData",
+                fresh=True,
             )
             subject = subjects.lookup(subject_id, "label")
             if fields.get("subject_ID") != subject["ID"]:
@@ -1000,13 +1004,41 @@ def get_xnat_session(
                 extra={"event": "xnat_identity_recovery"},
             )
             xproject.xnat_session.put(f"{xsession.uri}?pullDataFromHeaders=true")
-            _assert_session_identity(
-                xproject.xnat_session,
-                xsession.uri,
-                study_uid,
-                xproject.id,
-                session.subject_id,
-            )
+            try:
+                _assert_session_identity(
+                    xproject.xnat_session,
+                    xsession.uri,
+                    study_uid,
+                    xproject.id,
+                    session.subject_id,
+                )
+            except UnknownStudyIdentity:
+                # A previous writer may have died after creating an EMPTY
+                # experiment. Inspect raw listings: malformed rows must never
+                # disappear through XnatRows' compatibility filtering.
+                for collection in ("scans", "resources"):
+                    result = xproject.xnat_session.get_json(
+                        f"{xsession.uri}/{collection}",
+                        headers=IDENTITY_HEADERS,
+                    )
+                    try:
+                        rows = result["ResultSet"]["Result"]
+                        if not isinstance(rows, list) or rows:
+                            raise ValueError
+                    except (KeyError, TypeError, ValueError):
+                        raise ValueError(
+                            "Cannot verify XNAT session identity: experiment not proven empty"
+                        ) from None
+                xproject.xnat_session.put(
+                    xsession.uri, query={"xnat:imageSessionData/UID": study_uid}
+                )
+                _assert_session_identity(
+                    xproject.xnat_session,
+                    xsession.uri,
+                    study_uid,
+                    xproject.id,
+                    session.subject_id,
+                )
     return xsession
 
 
