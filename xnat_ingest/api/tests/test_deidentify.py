@@ -868,6 +868,19 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     assert reloaded.scans[scan_id].resources[resource_name].fileset.fspath.exists()
 
 
+def _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir):
+    """The arguments of a run that retires its input: no manifest required,
+    the input unlinked once the output is complete."""
+    return dict(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        spec_dir=spec_dir,
+        reid_dir=reid_dir,
+        require_manifest=False,
+        unlink_source="all",
+    )
+
+
 def test_deidentify_counts_only_its_own_scans_in_an_existing_output(
     dirs: tuple[Path, Path, Path, Path],
 ):
@@ -878,14 +891,7 @@ def test_deidentify_counts_only_its_own_scans_in_an_existing_output(
     the whole directory called the run incomplete, kept its input and repeated it
     on every cycle, and the new scan never reached the upload stage."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -959,14 +965,7 @@ def test_deidentify_keeps_a_late_scan_that_is_short_despite_the_older_files(
     resources; the run carries one. 2 old + 1 new is more than the 2 input
     files, and the run is incomplete all the same."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -994,14 +993,7 @@ def test_deidentify_keeps_a_late_scan_when_an_older_output_file_is_corrupt(
     the output, so the new input is kept and the problem is reported. Nothing is
     deleted on the strength of a directory that does not verify."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -1033,14 +1025,7 @@ def test_deidentify_runs_for_new_files_of_a_scan_the_output_already_has(
     The files are matched by name: the run happens, the new file is in the
     output, and only then is the input retired."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -1073,14 +1058,7 @@ def test_deidentify_runs_for_another_resource_of_a_scan_the_output_already_has(
     """Same scan ID, another resource: not covered by the output, so the run
     happens and the input is retired only after it."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     ImagingSession(
@@ -1111,14 +1089,7 @@ def test_deidentify_keeps_an_input_that_gained_files_during_the_run(
     input is kept, and deidentified in full on the next cycle."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
 
     def passthrough_while_a_file_arrives(self, dest_dir, **kw):
         late = session_dir / "3.late" / "DICOM"
@@ -1148,14 +1119,7 @@ def test_deidentify_runs_again_for_a_copied_file_with_new_content(
     not by name alone: a result file sent again with other bytes under the same
     name is deidentified (copied) again, and its input retired only after that."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -1272,14 +1236,7 @@ def test_deidentify_does_not_skip_an_input_with_a_file_outside_its_resources(
     output; the output cannot be current for such an input. The run happens,
     produces nothing for the stray file, and keeps the input."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = dict(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        spec_dir=spec_dir,
-        reid_dir=reid_dir,
-        require_manifest=False,
-        unlink_source="all",
-    )
+    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     _stage(input_dir, SESSION_NAME)

@@ -44,11 +44,6 @@ def _data_files(session_dir: Path) -> list[Path]:
     ]
 
 
-def _data_file_count(session_dir: Path) -> int:
-    """Number of DATA files under a session directory."""
-    return len(_data_files(session_dir))
-
-
 # Formats whose deidentification changes the bytes. Everything else is copied
 # through unchanged, so for those the content itself can be compared.
 _DEIDENTIFIED_PREFIX = "medimage/dicom"
@@ -174,9 +169,7 @@ def _newest_mtime(path: Path) -> float:
     return max(mtimes)
 
 
-def _output_is_current(
-    output_session_dir: Path, input_session_dir: Path, n_in: int
-) -> bool:
+def _output_is_current(output_session_dir: Path, input_session_dir: Path) -> bool:
     """Whether this session's output can be left alone for this cycle.
 
     Re-deidentifying an unchanged session is wasted work: measured at roughly 80
@@ -496,7 +489,7 @@ def deidentify(
             # fails open: the guess does not exist, nothing is skipped, and the
             # session is processed as usual.
             if _output_is_current(
-                output_dir / session.staging_dirname(), session_listing.fspath, n_in
+                output_dir / session.staging_dirname(), session_listing.fspath
             ):
                 logger.debug(
                     "Skipping '%s', its deidentified output is complete and current",
