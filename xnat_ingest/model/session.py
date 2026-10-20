@@ -1220,8 +1220,32 @@ class ImagingSession:
                 if modality := series["MainDicomTags"].get("Modality"):
                     modalities.add(modality)
                 all_tags = {**study_tags, **series["MainDicomTags"]}
-                scan_id = IDSpec("SeriesNumber").get_value(all_tags)
-                scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                fallback_fields = []
+                number = all_tags.get("SeriesNumber")
+                if number is None or not str(number).strip():
+                    # Series identity is stable across retries and late instances.
+                    # Prefer the DICOM UID; Orthanc's series ID is the fallback
+                    # when its indexed tags do not include that UID. Never use
+                    # iteration order or a shared "unknown" scan number.
+                    identity = str(all_tags.get("SeriesInstanceUID") or series_id)
+                    scan_id = "series_" + hashlib.sha256(identity.encode()).hexdigest()
+                    fallback_fields.append("SeriesNumber")
+                else:
+                    scan_id = IDSpec("SeriesNumber").get_value(
+                        {**all_tags, "SeriesNumber": str(number)}
+                    )
+                description = all_tags.get("SeriesDescription")
+                if description is None or not str(description).strip():
+                    scan_type = "Series_" + scan_id
+                    fallback_fields.append("SeriesDescription")
+                else:
+                    scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                if fallback_fields:
+                    logger.warning(
+                        "Using a stable series fallback for missing %s",
+                        ", ".join(fallback_fields),
+                        extra={"event": "series_metadata_fallback"},
+                    )
 
                 if "ImageType" in all_tags:
                     resource_label = dicom_image_type_to_resource_label(

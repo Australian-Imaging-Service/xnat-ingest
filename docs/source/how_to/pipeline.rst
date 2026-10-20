@@ -217,6 +217,19 @@ eligible for re-staging. Note that ``--unlink-source`` is not yet implemented fo
 ``group-orthanc`` — the source studies always stay in Orthanc, and the processed
 label is what stops them being staged again.
 
+Missing series display tags
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``group-orthanc`` does not refuse a study solely because ``SeriesDescription`` or
+``SeriesNumber`` is missing, empty or whitespace. A missing number becomes
+``series_`` plus the full SHA-256 of ``SeriesInstanceUID``. If that UID is not in
+Orthanc's indexed tags, it uses Orthanc's series ID as the hash input. This keeps
+late instances of a series together without assigning every unnamed series to
+one scan. The fallback is stable across retries on the same source. A missing
+description becomes ``Series_<scan-id>``. A numeric zero remains a valid number.
+Each fallback emits ``series_metadata_fallback``. Normal series keep their current
+labels. These labels do not repair missing study or patient routing identity.
+
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
