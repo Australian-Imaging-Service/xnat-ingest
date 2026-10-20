@@ -56,6 +56,7 @@ def assign(
     unlink_source: str | None = None,
     raise_errors: bool = False,
     include: ty.Sequence[type[FileSet]] = (),
+    injective_ids: bool = False,
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -90,6 +91,9 @@ def assign(
     include: Sequence[type[FileSet]]
         Only stage resources matching at least one of these datatypes. An empty
         sequence stages all resources.
+
+    injective_ids: bool
+        Opt in to collision-free subject/session encoding. Requires a site label migration.
 
     Notes
     -----
@@ -155,6 +159,7 @@ def assign(
                 subject_field=subject_field,
                 session_field=session_field,
                 constant_project_id=project_id,
+                injective_ids=injective_ids,
                 scan_field=scan_field,
             )
 

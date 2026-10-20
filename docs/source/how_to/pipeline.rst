@@ -266,15 +266,22 @@ string composing more than one field, e.g. ``--project '{PatientID}_{StudyDate:%
 Routing labels and upgrades
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Assignment preserves labels that contain only ASCII letters, digits, underscores
+``assign --injective-ids`` (or ``XINGEST_INJECTIVE_IDS=1``) opts in to distinct
+subject/session labels. The default retains legacy normalization, including for
+project IDs. Thus this option does not close DV-03 under the default configuration.
+
+With the option enabled, assignment preserves subject/session labels that contain
+only ASCII letters, digits, underscores
 and hyphens. Other values use ``XNAT_ESC_`` followed by the hexadecimal UTF-8 bytes
 of the full value. Values that already start with ``XNAT_ESC_`` use the same
 encoding. Thus ``A/B``, ``A B`` and ``A_B`` have different labels. This encoding
-preserves identity; it does not deidentify a patient. A format expression that
+preserves identity; encoding is not de-identification. This is the DV-01 limitation:
+with the ingest deidentification engine, routing labels can still carry raw patient
+identifiers; the site must supply an appropriate pseudonymous mapping. A format expression that
 removes distinguishing information still needs correction in the site settings.
 An explicit constant project ID continues to name the existing project literally.
 
-Previous versions replaced punctuation with underscores. Before upgrading a site
+Legacy normalization replaces punctuation with underscores. Before enabling the option at a site
 with such labels, stop assignment and reconcile its grouped and assigned data,
 XNAT labels and project mapping with the new encoding. Drain or explicitly migrate
 old staging directories. Do not alias an encoded label to an old underscore label:

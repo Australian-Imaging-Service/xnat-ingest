@@ -75,6 +75,12 @@ manually reviewed/reprocessed rather than silently lost.
     ),
 )
 @click.option(
+    "--injective-ids/--legacy-ids",
+    default=False,
+    envvar="XINGEST_INJECTIVE_IDS",
+    help="Opt in to injective subject/session labels. Migrate existing labels first; project normalization is unchanged.",
+)
+@click.option(
     "--scan",
     "scan_field",
     type=str,
@@ -176,6 +182,7 @@ def assign_cmd(
     subject_field: str,
     session_field: str,
     constant_project_id: str | None,
+    injective_ids: bool,
     include_types: tuple[MimeType, ...],
     scan_field: str | None,
     unlink_source: str | None,
@@ -207,6 +214,7 @@ def assign_cmd(
             subject_field=subject_field,
             session_field=session_field,
             project_id=constant_project_id,
+            injective_ids=injective_ids,
             scan_field=scan_field,
             unlink_source=unlink_source,
             raise_errors=raise_errors,

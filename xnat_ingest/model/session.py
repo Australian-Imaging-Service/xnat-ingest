@@ -1016,6 +1016,7 @@ class ImagingSession:
         session_field: str,
         scan_field: str | None = None,
         constant_project_id: str | None = None,
+        injective_ids: bool = False,
     ) -> None:
         """Assigns project, subject and session IDs to the session, extracted from its
         metadata. Also resolves a description for each scan in the session, if
@@ -1044,7 +1045,7 @@ class ImagingSession:
         instead of raising, so the session can still be saved (see `invalid_ids`) for
         manual review/reprocessing rather than being silently dropped.
 
-        Routing labels use an injective encoding: safe labels are unchanged,
+        With injective_ids=True, subject and session labels use an injective encoding: safe labels are unchanged,
         other values and those beginning with XNAT_ESC_ become that prefix plus
         UTF-8 hex. This prevents distinct patient/accession values from merging
         after punctuation replacement. Sites upgrading from the old escaping
@@ -1053,16 +1054,17 @@ class ImagingSession:
         """
         missing_ids: dict[str, str] = {}
         if constant_project_id is None:
-            self.project_id = IDSpec(project_field).get_routing_value(
+            self.project_id = IDSpec(project_field).get_value(
                 self.metadata, missing_ids=missing_ids
             )
         else:
             self.project_id = constant_project_id
-        self.subject_id = IDSpec(subject_field).get_routing_value(
-            self.metadata, missing_ids=missing_ids
+        extract = IDSpec.get_routing_value if injective_ids else IDSpec.get_value
+        self.subject_id = extract(
+            IDSpec(subject_field), self.metadata, missing_ids=missing_ids
         )
-        self.session_id = IDSpec(session_field).get_routing_value(
-            self.metadata, missing_ids=missing_ids
+        self.session_id = extract(
+            IDSpec(session_field), self.metadata, missing_ids=missing_ids
         )
 
         if scan_field is not None:

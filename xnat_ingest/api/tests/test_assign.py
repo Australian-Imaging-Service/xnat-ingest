@@ -75,6 +75,7 @@ def test_assign_calls_load_assign_save_for_each_session(
         subject_field=SUBJECT_FIELD,
         session_field=SESSION_FIELD,
         constant_project_id=None,
+        injective_ids=False,
         scan_field=None,
     )
     # save() is handed the BUILD directory, not the output directory: a session
