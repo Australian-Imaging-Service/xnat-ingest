@@ -8,7 +8,14 @@ dict comparison calls that a mismatch when nothing is wrong.
 The comparison is per file, so a file with no digest is trusted by name.
 """
 
-from xnat_ingest.helpers.remotes import compare_resource_with_xnat
+import logging
+
+import pytest
+
+from xnat_ingest.helpers.remotes import (
+    compare_resource_with_xnat,
+    warn_if_compared_by_name_only,
+)
 
 CALCULATED = {
     "old1.dcm": "aaa",
@@ -100,3 +107,34 @@ def test_no_digests_and_all_names_present_is_a_pass() -> None:
     comparison = compare_resource_with_xnat(CALCULATED, remote)
     assert not comparison.comparable
     assert comparison.complete
+
+
+def test_a_name_only_comparison_is_logged_as_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A site with checksums off lists every file without a digest. The upload
+    log then carries one WARNING that names the resource and the session, so a
+    clean log is not read as a checksum match."""
+    comparison = compare_resource_with_xnat(CALCULATED, {k: "" for k in CALCULATED})
+    assert comparison.complete
+    assert not comparison.comparable
+
+    with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
+        warn_if_compared_by_name_only(comparison, "1:DICOM", "PROJECT.SUBJECT.SESSION")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "compared by file name only" in warnings[0]
+    assert "1:DICOM" in warnings[0] and "PROJECT.SUBJECT.SESSION" in warnings[0]
+
+
+def test_a_comparison_with_digests_logs_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    comparison = compare_resource_with_xnat(CALCULATED, dict(CALCULATED))
+    assert comparison.comparable
+
+    with caplog.at_level(logging.WARNING, logger="xnat-ingest"):
+        warn_if_compared_by_name_only(comparison, "1:DICOM", "PROJECT.SUBJECT.SESSION")
+
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

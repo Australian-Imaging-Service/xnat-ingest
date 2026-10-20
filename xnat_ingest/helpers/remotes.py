@@ -904,6 +904,22 @@ def compare_resource_with_xnat(
     )
 
 
+def warn_if_compared_by_name_only(
+    comparison: ResourceComparison, resource: str, session: str
+) -> None:
+    """One WARNING per resource whose files XNAT lists without a digest, so a
+    clean upload log is not read as a checksum match on a site that has
+    checksums off. The comparison itself is unchanged."""
+    if not comparison.comparable:
+        logger.warning(
+            # Keep this phrase stable: external log alerts may match it.
+            "'%s' in '%s' was compared by file name only: XNAT lists its files "
+            "without checksums (site checksums off, or not computed yet)",
+            resource,
+            session,
+        )
+
+
 def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
     """Split a DICOM scan resource that holds more than one modality into one
     resource per modality, each destined for its own scan.
@@ -1130,6 +1146,7 @@ def get_xnat_resource(
     else:
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
+        warn_if_compared_by_name_only(comparison, resource_name, resource.scan.path)
         if comparison.repairable:
             # We hold files XNAT does not and nothing else is wrong, so hand
             # back the shortfall. Not the whole resource: XNAT would reject or

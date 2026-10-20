@@ -29,6 +29,7 @@ from xnat_ingest.helpers.remotes import (
     iterate_s3_sessions,
     list_session_dirs,
     split_resource_by_modality,
+    warn_if_compared_by_name_only,
 )
 
 from ..exceptions import IncompleteCheckumsException
@@ -466,13 +467,9 @@ def upload(
                         comparison = compare_resource_with_xnat(
                             calc_checksums, remote_checksums
                         )
-                        if not comparison.comparable:
-                            logger.debug(
-                                "Remote checksums were not calculated for %s "
-                                "(requires `enableChecksums` to be set "
-                                "site-wide), comparing file names only",
-                                xresource,
-                            )
+                        warn_if_compared_by_name_only(
+                            comparison, resource.path, session.name
+                        )
                         if not comparison.complete:
                             raise RuntimeError(
                                 "Checksums do not match after upload of "
