@@ -19,8 +19,8 @@ bytes are copied into the fake store_dir so checksums are genuine).
 
 import hashlib
 import json
-import typing as ty
 import logging
+import typing as ty
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -202,7 +202,11 @@ def _make_fake_orthanc(tmp_path: Path) -> ty.Tuple[FakeOrthanc, Path]:
         [
             ("study-ready", "ACC-READY", ["ready"]),
             # Processed by this version: the snapshot label names its LastUpdate.
-            ("study-done", "ACC-DONE", ["ready", "done", "done-20000101T000000-0123456789abcdef01234567"]),
+            (
+                "study-done",
+                "ACC-DONE",
+                ["ready", "done", "done-20000101T000000-0123456789abcdef01234567"],
+            ),
             ("study-plain", "ACC-PLAIN", []),
         ]
     ):
@@ -629,12 +633,17 @@ def test_staging_writes_the_snapshot_label(tmp_path):
     fake, store = _make_fake_orthanc(tmp_path)
     fake.studies["study-ready"]["last_update"] = "20261019T011324"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert len(staged) == 1
     # Snapshot first, processed last: a processed study always has a snapshot.
     # The snapshot names the LastUpdate and a digest of the staged instance ids.
     import hashlib
-    ids = sorted(fake.series[s]["instances"][0] for s in fake.studies["study-ready"]["series"])
+
+    ids = sorted(
+        fake.series[s]["instances"][0] for s in fake.studies["study-ready"]["series"]
+    )
     digest = hashlib.sha256(("\n".join(ids) + "\n").encode()).hexdigest()[:24]
     assert fake.labelled[-2:] == [
         ("study-ready", f"done-20261019T011324-{digest}"),
@@ -648,7 +657,9 @@ def test_processed_study_with_matching_snapshot_is_left_alone(tmp_path):
     done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567"}
     done["last_update"] = "20261019T011324"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert [s.name for s in staged] != ["study-done"]
     assert not any(sid == "study-done" for sid, _ in fake.labelled)
     assert fake.unlabelled == []
@@ -660,13 +671,21 @@ def test_processed_study_changed_after_staging_is_staged_again(tmp_path):
     done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567"}
     done["last_update"] = "20261019T014500"  # a series arrived after the staging
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert any(sid == "study-done" for sid, _ in fake.labelled)
     assert ("study-done", "done") in fake.unlabelled
-    assert ("study-done", "done-20261019T011324-0123456789abcdef01234567") in fake.unlabelled
+    assert (
+        "study-done",
+        "done-20261019T011324-0123456789abcdef01234567",
+    ) in fake.unlabelled
     mine = [lb for sid, lb in fake.labelled if sid == "study-done"]
     assert mine[0].startswith("done-20261019T014500-") and mine[1] == "done"
-    assert "done" in done["labels"] and len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
+    assert (
+        "done" in done["labels"]
+        and len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
+    )
     assert "done-20261019T011324-0123456789abcdef01234567" not in done["labels"]
     assert len(staged) == 2
 
@@ -677,9 +696,14 @@ def test_processed_study_without_snapshot_is_staged_again(tmp_path):
     fake.studies["study-done"]["labels"] = {"ready", "done"}
     fake.studies["study-done"]["last_update"] = "20261019T011324"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert ("study-done", "done") in fake.unlabelled
-    assert any(sid == "study-done" and lb.startswith("done-20261019T011324-") for sid, lb in fake.labelled)
+    assert any(
+        sid == "study-done" and lb.startswith("done-20261019T011324-")
+        for sid, lb in fake.labelled
+    )
     assert len(staged) == 2
 
 
@@ -691,7 +715,9 @@ def test_changed_processed_study_without_ready_label_is_not_staged(tmp_path):
     done["labels"] = {"done", "done-20261019T011324-0123456789abcdef01234567"}
     done["last_update"] = "20261019T014500"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert not any(sid == "study-done" for sid, _ in fake.labelled + fake.unlabelled)
     assert len(staged) == 1
 
@@ -703,7 +729,9 @@ def test_processed_study_with_a_malformed_snapshot_is_staged_again(tmp_path):
     done["labels"] = {"ready", "done", "done-20261019T011324"}
     done["last_update"] = "20261019T011324"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert ("study-done", "done-20261019T011324") in fake.unlabelled
     assert len(staged) == 2
 
@@ -711,11 +739,17 @@ def test_processed_study_with_a_malformed_snapshot_is_staged_again(tmp_path):
 def test_processed_study_with_two_snapshots_is_staged_again(tmp_path):
     fake, store = _make_fake_orthanc(tmp_path)
     done = fake.studies["study-done"]
-    done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567",
-                      "done-20261019T011300-0123456789abcdef01234567"}
+    done["labels"] = {
+        "ready",
+        "done",
+        "done-20261019T011324-0123456789abcdef01234567",
+        "done-20261019T011300-0123456789abcdef01234567",
+    }
     done["last_update"] = "20261019T011324"
     with _patch_requests(fake):
-        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
     assert len(staged) == 2
     assert len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
 
@@ -736,7 +770,9 @@ def test_malformed_expanded_find_reply_is_an_error(tmp_path):
 def test_processed_label_forces_a_one_second_wait(tmp_path, caplog):
     # Without a wait a late instance can share the staged LastUpdate's second.
     fake, store = _make_fake_orthanc(tmp_path)
-    fake.studies["study-ready"]["last_update"] = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    fake.studies["study-ready"]["last_update"] = datetime.now(UTC).strftime(
+        "%Y%m%dT%H%M%S"
+    )
     kwargs = _snapshot_kwargs(tmp_path / "staged", store)
     kwargs["wait_period"] = 0
     with _patch_requests(fake), caplog.at_level(logging.INFO):
@@ -770,7 +806,9 @@ _ABSENT = object()
         ("LastUpdate", "20261019T250000"),  # no such hour
     ],
 )
-def test_malformed_study_fields_in_the_expanded_reply_are_an_error(tmp_path, field, value):
+def test_malformed_study_fields_in_the_expanded_reply_are_an_error(
+    tmp_path, field, value
+):
     fake, store = _make_fake_orthanc(tmp_path)
     real_find = fake.find
 
@@ -785,6 +823,9 @@ def test_malformed_study_fields_in_the_expanded_reply_are_an_error(tmp_path, fie
         return result
 
     fake.find = bad_find
-    with _patch_requests(fake), pytest.raises(ValueError, match="Unexpected Labels or LastUpdate"):
+    with (
+        _patch_requests(fake),
+        pytest.raises(ValueError, match="Unexpected Labels or LastUpdate"),
+    ):
         ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
     assert fake.labelled == [] and fake.unlabelled == []
