@@ -1,8 +1,11 @@
 import datetime
 import logging
 import shutil
+import signal
 import subprocess as sp
+import sys
 import tempfile
+import threading
 import time
 import typing as ty
 from pathlib import Path
@@ -279,11 +282,19 @@ def upload_cmd(
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
 
+    # A stop sends SIGTERM. Python ends on it at once and the finally block
+    # below does not run, so every stop left the run directory behind. Raise
+    # SystemExit instead: the block then closes the connection and removes
+    # the directory. signal.signal() works in the main thread only.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+
     # The run's temporary files go in one directory, which is removed on exit.
     # A new directory for each pass and each connection was never removed. The
     # directory is unique to this run (inside --temp-dir when given), so two
-    # runs that share a --temp-dir cannot remove each other's files.
-    run_tmp_dir = Path(tempfile.mkdtemp())
+    # runs that share a --temp-dir cannot remove each other's files. The prefix
+    # tells a directory of this version from one an older version left behind.
+    run_tmp_dir = Path(tempfile.mkdtemp(prefix="xnat-ingest-upload-"))
     xnat_cache_dir = run_tmp_dir / "xnat_cache"
     xnat_cache_dir.mkdir()
     s3_cache_dir = run_tmp_dir / "s3_cache"
