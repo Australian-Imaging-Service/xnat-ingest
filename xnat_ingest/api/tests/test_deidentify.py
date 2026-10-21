@@ -39,18 +39,7 @@ def dirs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
 
 def _stage(input_dir: Path, name: str) -> Path:
-    """Stage a valid session with one data file in it.
-
-    Deliberately NOT an empty directory. deidentify refuses a session holding no
-    data files, because the completeness gate compares an output count against an
-    input count and 0 == 0 would pass an empty session off as a complete one.
-    These tests are about spec selection, error collection and the
-    re-identification sidecar, so they need a session that is merely valid.
-
-    Written through save() rather than by hand so that the resource gets its
-    manifest; loading one without a manifest is an error unless the caller opts
-    out with require_manifest=False.
-    """
+    """Stage one resource with its manifest and metadata."""
     project_id, subject_id, session_id = name.split(".")
     ImagingSession(
         uid=name,
@@ -64,9 +53,7 @@ def _stage(input_dir: Path, name: str) -> Path:
 
 def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
     new_sess = self.new_empty()
-    # One file under the scan the staged input has ("1.T"), so that the output
-    # matches the input by scan ID. The completeness check counts the output
-    # files of the scans the input holds; a file elsewhere would not count.
+    # Return a changed non-DICOM file in the input scan.
     new_sess.add_resource("1", "T", "RES", File.sample(seed=42))
     return new_sess, dict(REID_MDATA)
 
@@ -74,26 +61,15 @@ def _mock_deidentify(self, dest_dir, **kwargs) -> tuple[ImagingSession, dict]:
 def _mock_deidentify_passthrough(
     self, dest_dir, **kwargs
 ) -> tuple[ImagingSession, dict]:
-    """Produces a COMPLETE output: the same session, unmodified.
-
-    _mock_deidentify returns an EMPTY session, which is an incomplete output by
-    definition, so it cannot be used to test the unlink: the completeness gate
-    correctly refuses to delete the input in that case.
-    """
+    """Copy the loaded input without changing its resources."""
     return self, dict(REID_MDATA)
 
 
 def test_deidentify_deletes_source_dir_on_success_when_unlink_source_all(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """A session directory is full of scan directories, so the unlink has to be
-    recursive. assign does the same job with shutil.rmtree; this mirrors its test
-    (test_assign_deletes_source_dir_on_success_when_unlink_source_all)."""
+    """Remove recorded files, then their empty directories, after success."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
-    # The fixture already stages a session with a scan directory in it, which is
-    # what makes the unlink recursive. An extra hand-made resource here would be
-    # counted as input but not carried to the output, so the completeness gate
-    # would correctly refuse the very unlink this test is asserting.
     session_dir = input_dir / SESSION_NAME
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -113,17 +89,7 @@ def test_deidentify_deletes_source_dir_on_success_when_unlink_source_all(
 def test_deidentify_discards_a_stale_build_from_a_crashed_run(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """A build tree left by a run that died before promotion must not be adopted.
-
-    save() does mkdir(exist_ok=True), so without wiping the promote directory first
-    the survivor would be merged into and then renamed in as though this run had
-    produced it. Stale files would reach XNAT, and could pad an incomplete run up to
-    n_out == n_in and unlock the unlink.
-
-    This is the first-materialisation path, which is the one that promotes: the
-    output does not exist yet, so the session is built under __build__ and renamed
-    into place.
-    """
+    """A new output must not include files from a failed earlier build."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
@@ -229,17 +195,10 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
     assert len(calls) == 2, "a corrupt output was skipped, so it can never be repaired"
 
 
-def test_deidentify_unlinks_a_backlog_session_it_skips(
+def test_deidentify_processes_and_retires_a_backlog_session(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """Turning --unlink-source on must clear sessions processed before it was.
-
-    A session whose output already exists is skipped as current on every cycle,
-    so if only the just-produced path unlinked, the backlog would sit in the
-    input directory for ever. The skip has already verified the output is
-    complete and hashes to its manifest, which is stronger than the file count
-    the post-run gate applies, so retiring the input there is safe.
-    """
+    """Turning unlink-source on processes and retires the remaining input."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
 
@@ -254,7 +213,7 @@ def test_deidentify_unlinks_a_backlog_session_it_skips(
     assert session_dir.exists(), "nothing should have been unlinked yet"
     assert (output_dir / SESSION_NAME).is_dir()
 
-    # second pass WITH unlink: the session is skipped as current, and retired
+    # Second pass with unlink: process the input again, then retire it.
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
             input_dir=input_dir,
@@ -271,14 +230,10 @@ def test_deidentify_unlinks_a_backlog_session_it_skips(
     )
 
 
-def test_deidentify_skips_an_output_that_is_complete_and_current(
+def test_deidentify_processes_input_even_when_output_is_current(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """Re-deidentifying an unchanged session is wasted work.
-
-    Measured at roughly 80 seconds for a 535-instance series, which a
-    60-second loop cannot absorb once several sessions are staged.
-    """
+    """An existing output does not suppress processing of present input."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     calls: list = []
 
@@ -295,21 +250,13 @@ def test_deidentify_skips_an_output_that_is_complete_and_current(
                 reid_dir=reid_dir,
             )
 
-    assert len(calls) == 1, f"the second cycle reprocessed the session: {calls}"
+    assert len(calls) == 2
 
 
 def test_deidentify_reports_a_session_with_no_data_files(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """An empty session directory must not pass as a complete run.
-
-    The completeness gate compares an output count against an input count, and
-    0 == 0 is vacuously true, so an empty input used to produce an output
-    directory, report no errors and exit 0. On tier-1 `upload` reads that
-    directory directly, and ImagingSession.load resolves the project and session
-    ids from the DIRECTORY NAME, so an empty directory is uploadable: XNAT gets an
-    experiment with no data in it.
-    """
+    """An empty input directory without metadata is not a staged session."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     empty = input_dir / "PROJ.SUBJ.EMPTY"
     empty.mkdir()
@@ -356,14 +303,10 @@ def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(
     assert not (output_dir / "PROJ.SUBJ.SKEL").exists()
 
 
-def test_deidentify_keeps_source_when_output_is_incomplete(
+def test_deidentify_accepts_a_method_that_removes_files(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """The gate that stops a short run deleting the only copy that can repair it.
-
-    _mock_deidentify returns an empty session, so the output is 0 files against 1
-    input file. Even with unlink_source=all the input must survive.
-    """
+    """A method may deliberately omit files or resources from its output."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
@@ -379,12 +322,8 @@ def test_deidentify_keeps_source_when_output_is_incomplete(
             unlink_source="all",
         )
 
-    assert session_dir.exists(), "an incomplete run must not delete its input"
-    # and it must SAY so. Logging alone would leave the caller with an empty error
-    # list, a "completed successfully" line and exit 0, so a permanently stuck
-    # session would be invisible to everything above this function.
-    assert errors, "an incomplete run must report an error, not just log one"
-    assert "incomplete" in errors[0]
+    assert errors == []
+    assert not session_dir.exists()
 
 
 def test_deidentify_leaves_source_dir_when_unlink_source_none(
@@ -405,12 +344,7 @@ def test_deidentify_leaves_source_dir_when_unlink_source_none(
         )
 
     assert session_dir.exists()
-    # The mock produces an empty output, so this run IS incomplete. That must be
-    # reported whether or not --unlink-source was passed: incompleteness is a
-    # property of the output, not of the deletion policy. No site passes the flag
-    # today, so tying the report to it would silence every real occurrence.
-    assert errors, "an incomplete run must report an error even without unlink_source"
-    assert "not unlinked" not in errors[0], "nothing was going to be unlinked here"
+    assert errors == []
 
 
 def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
@@ -728,8 +662,7 @@ def test_deidentify_uses_project_spec_over_default(
 
     def capturing_deidentify(self, *_, **kwargs):
         received_recipe_files.append(kwargs.get("recipe_files"))
-        # `self`, not new_empty(): an empty output is an INCOMPLETE one and the
-        # gate reports it, so this test would fail on an assertion about specs.
+        # Preserve the resource while testing spec selection.
         return self, dict(REID_MDATA)
 
     with patch.object(ImagingSession, "deidentify", capturing_deidentify):
@@ -881,15 +814,10 @@ def _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir):
     )
 
 
-def test_deidentify_counts_only_its_own_scans_in_an_existing_output(
+def test_deidentify_retires_a_late_scan_with_existing_output(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """A series that arrives after the session was deidentified and uploaded is
-    staged as a session with only the new scan, and its output is saved into the
-    existing deidentified session directory. The completeness check must count
-    the scans this run carried, not the ones that were already there: counting
-    the whole directory called the run incomplete, kept its input and repeated it
-    on every cycle, and the new scan never reached the upload stage."""
+    """A one-scan late input succeeds alongside the earlier output scan."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -926,13 +854,10 @@ def _late_scan(input_dir: Path, resources: dict) -> None:
     ).save(input_dir)
 
 
-def test_deidentify_skips_a_late_scan_whose_output_is_current(
+def test_deidentify_processes_a_late_scan_whose_output_is_current(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """The skip path judges the merged output the same way: by the scans of the
-    input in front of it. A late scan already deidentified into the existing
-    output (the run died before the unlink) is skipped and its input retired,
-    without re-deidentifying it on every cycle."""
+    """A retry processes the late scan and then removes its recorded input."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = dict(
         input_dir=input_dir,
@@ -949,21 +874,24 @@ def test_deidentify_skips_a_late_scan_whose_output_is_current(
         assert deidentify(**kwargs) == []
     assert (input_dir / SESSION_NAME).exists()
 
-    with patch.object(ImagingSession, "deidentify") as run:
+    with patch.object(
+        ImagingSession,
+        "deidentify",
+        autospec=True,
+        side_effect=_mock_deidentify_passthrough,
+    ) as run:
         errors = deidentify(**kwargs, unlink_source="all")
 
-    assert errors == [] and not run.called
+    assert errors == [] and run.call_count == 1
     assert not (input_dir / SESSION_NAME).exists()
     output = output_dir / SESSION_NAME
     assert sorted(p.name for p in output.iterdir() if p.is_dir()) == ["1.T", "2.late"]
 
 
-def test_deidentify_keeps_a_late_scan_that_is_short_despite_the_older_files(
+def test_deidentify_accepts_removed_late_files_with_older_output(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """Old files in the output must not pad a short run. The late scan has two
-    resources; the run carries one. 2 old + 1 new is more than the 2 input
-    files, and the run is incomplete all the same."""
+    """A successful method may remove a late resource and retain older scans."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -981,17 +909,15 @@ def test_deidentify_keeps_a_late_scan_that_is_short_despite_the_older_files(
     with patch.object(ImagingSession, "deidentify", drop_one):
         errors = deidentify(**kwargs)
 
-    assert errors and "incomplete (1 of 2 files)" in errors[0]
-    assert (input_dir / SESSION_NAME).exists(), "a short run must not delete its input"
+    assert errors == []
+    assert not (input_dir / SESSION_NAME).exists()
     assert (output / "1.T" / "RES").is_dir(), "the older scan is untouched"
 
 
-def test_deidentify_keeps_a_late_scan_when_an_older_output_file_is_corrupt(
+def test_deidentify_does_not_gate_new_input_on_unrelated_old_checksums(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """A corrupt file among the older scans fails the checksum verification of
-    the output, so the new input is kept and the problem is reported. Nothing is
-    deleted on the strength of a directory that does not verify."""
+    """Historical output corruption does not change the new run verdict."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -1008,8 +934,9 @@ def test_deidentify_keeps_a_late_scan_when_an_older_output_file_is_corrupt(
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(**kwargs)
 
-    assert errors and "incomplete" in errors[0]
-    assert (input_dir / SESSION_NAME).exists()
+    assert errors == []
+    assert not (input_dir / SESSION_NAME).exists()
+    assert old_file.read_bytes() == b"corrupt"
 
 
 def _data_names(resource_dir: Path) -> list[str]:
@@ -1019,11 +946,7 @@ def _data_names(resource_dir: Path) -> list[str]:
 def test_deidentify_runs_for_new_files_of_a_scan_the_output_already_has(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """Same scan, same resource, same number of files, OTHER files (a series
-    sent again with new instances while the first deidentified copy is still
-    there). A count would call the output current and delete the new input.
-    The files are matched by name: the run happens, the new file is in the
-    output, and only then is the input retired."""
+    """A new file in an existing scan is processed and saved."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -1083,10 +1006,7 @@ def test_deidentify_runs_for_another_resource_of_a_scan_the_output_already_has(
 def test_deidentify_keeps_an_input_that_gained_files_during_the_run(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """The assign stage merges a late series into a session it has already
-    written. A file that arrives while that session is being deidentified is
-    not in the output; removing the input directory would remove it too. The
-    input is kept, and deidentified in full on the next cycle."""
+    """Retire the recorded input and leave new paths for the next cycle."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
@@ -1104,7 +1024,9 @@ def test_deidentify_keeps_an_input_that_gained_files_during_the_run(
     assert (session_dir / "3.late" / "DICOM" / "late.dcm").exists(), "input kept"
     assert not (output_dir / SESSION_NAME / "3.late").exists()
 
-    # Next cycle: the whole input, late file included, is deidentified and retired.
+    assert not (session_dir / "1.T").exists()
+
+    # Next cycle: only the late input remains and is processed.
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(**kwargs)
     assert errors == []
@@ -1115,9 +1037,7 @@ def test_deidentify_keeps_an_input_that_gained_files_during_the_run(
 def test_deidentify_runs_again_for_a_copied_file_with_new_content(
     dirs: tuple[Path, Path, Path, Path], tmp_path: Path
 ):
-    """A format that is copied through (anything but DICOM) is matched by content,
-    not by name alone: a result file sent again with other bytes under the same
-    name is deidentified (copied) again, and its input retired only after that."""
+    """Always process new input, including a reused name with changed bytes."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -1143,9 +1063,8 @@ def test_deidentify_runs_again_for_a_copied_file_with_new_content(
     assert (output / "1.T" / "RES" / name).read_bytes() == b"the corrected result"
 
 
-def test_deidentify_counts_the_files_inside_a_directory_resource(tmp_path: Path):
-    """A directory-backed resource is one path in the saved session but holds
-    several files; the completeness gate counts the files, as the input does."""
+def test_deidentify_saves_a_directory_resource(tmp_path: Path):
+    """A directory resource is saved with its files and its input is retired."""
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
     for d in (input_dir, output_dir):
@@ -1180,10 +1099,7 @@ def test_deidentify_counts_the_files_inside_a_directory_resource(tmp_path: Path)
 
 
 def test_deidentify_does_not_trust_a_stale_input_manifest(tmp_path: Path):
-    """A producer interrupted between writing a file and updating the manifest
-    leaves a file the manifest does not list. The skip path reads the files on
-    disk, not the manifest: the unlisted file is not in the output, so the
-    session is deidentified again and the input retired only after that."""
+    """A directory resource includes its present files, even with a stale manifest."""
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
     for d in (input_dir, output_dir):
@@ -1229,12 +1145,10 @@ def test_deidentify_does_not_trust_a_stale_input_manifest(tmp_path: Path):
     assert [f.name for f in (output_dir / SESSION_NAME).rglob("c.txt")] == ["c.txt"]
 
 
-def test_deidentify_does_not_skip_an_input_with_a_file_outside_its_resources(
+def test_deidentify_retires_recorded_session_files_after_success(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    """A data file at the session root belongs to no resource and reaches no
-    output; the output cannot be current for such an input. The run happens,
-    produces nothing for the stray file, and keeps the input."""
+    """The all policy removes recorded files throughout the input session."""
     input_dir, output_dir, spec_dir, reid_dir = dirs
     kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
@@ -1245,5 +1159,5 @@ def test_deidentify_does_not_skip_an_input_with_a_file_outside_its_resources(
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(**kwargs)
 
-    assert errors and "incomplete" in errors[0]
-    assert (input_dir / SESSION_NAME / "stray.txt").exists()
+    assert errors == []
+    assert not (input_dir / SESSION_NAME).exists()

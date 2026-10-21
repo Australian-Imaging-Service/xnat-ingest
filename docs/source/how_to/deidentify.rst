@@ -27,31 +27,43 @@ As with ``assign``, ``--unlink-source all``/``--unlink-source keep-metadata`` cl
 the ``assign`` output once a session's been deidentified — see
 :ref:`2. Assign project/subject/session IDs` for what the two modes do.
 
-A session that is deidentified more than once (a series that arrived late is staged
-as a session of its own, under the same name) is saved into the deidentified session
-directory that already exists. The stage judges each run by the files of the input
-in front of it: before a run, an output counts as current only if it holds a file
-for every data file of the input, at the same path inside the session, and verifies
-against its manifests; after a run, only the files that run produced are counted
-against the input. Older files in the output never stand in for missing ones. The
-input is removed only when it still holds exactly the files the run read; a file
-that arrives while the session is being deidentified is kept, with the rest of the
-input, for the next cycle. The check and the removal are two steps: a file that
-lands between them is removed with the input. Closing that window needs the
-writer (``assign``) and this stage to agree on who owns the session, which no
-stage enforces today. A DICOM file is matched by name: deidentification changes
-its bytes but keeps the SOP Instance UID the name derives from, which DICOM defines as
-the identity of an instance, so a DICOM file sent again under the same name with
-other content is not told apart from the one already deidentified. Every other
-format is copied through unchanged and is matched by content as well. A change of
-recipe does not refresh an output that already exists: remove that output, or stage
-the input again, to deidentify it with the new recipe.
+Every input session with resources is processed, even when its output already
+exists. A late series is saved into the existing output session. Earlier scans
+remain there. A format's deidentification method can change bytes, remove files,
+or remove resources. The stage does not compare input and output file counts or
+use a format list to decide whether a run is complete. The method must raise an
+exception if it cannot complete its work.
 
-Only formats known to carry patient information are touched — DICOM is treated this
-way by default, while derived formats like NIfTI are assumed already
-de-identifiable-in-place and are just copied through unchanged. If a session contains
-a PHI-bearing format with no applicable spec (see below), that session is skipped and
-logged as an error rather than uploaded with PHI still attached.
+``ImagingSession.load_for_processing`` records the input file paths before loading
+the session. After processing, saving the output and writing any requested
+re-identification mapping succeed, ``--unlink-source all`` removes only those
+recorded files, then empty directories. ``--unlink-source keep-metadata`` removes
+only recorded files inside the loaded resource directories. It keeps session and
+scan metadata. A new path that arrives during the run stays for the next cycle,
+including a file that arrives during cleanup. A processing or save failure keeps
+the input. Without ``--unlink-source``, the input stays and is processed on each
+cycle. Metadata-only skeletons from ``keep-metadata`` are skipped.
+
+New sessions are built outside the visible session directory and published by
+rename. When ``ImagingSession.save`` adds or replaces a resource in an existing
+session, it also builds the resource, manifest and metadata under ``__build__``
+on the destination filesystem before publishing the complete resource by rename.
+This prevents a reader from seeing a partly copied file. A delay alone would not
+protect against a writer that pauses mid-copy. An unchanged resource is retained
+without changing its file times.
+
+This protection is per resource. It is not a transaction for the whole session.
+Replacing an existing resource has a brief interval when its directory is absent;
+a reader can fail and retry or see only the other resources. A reader can also see
+a mix of complete resources from different saves. The input path snapshot is not
+a writer lock: writers must not replace a recorded path during processing. Files
+written by external programs must also be published only after they are complete.
+Do not run two deidentify workers on the same input directory.
+
+The file format's ``contains_phi`` flag selects deidentification. DICOM uses this
+path by default. Other formats can provide their own deidentification method;
+formats without that flag are copied. If the method requires a recipe and there
+is no applicable spec (see below), the session fails and its input stays.
 
 Laying out the deidentification specs
 ------------------------------------------

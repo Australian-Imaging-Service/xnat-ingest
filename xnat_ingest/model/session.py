@@ -10,6 +10,7 @@ import tempfile
 import typing as ty
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cached_property
 from glob import glob
@@ -1445,24 +1446,7 @@ class ImagingSession:
                     deid_resource,
                     on_clash=on_resource_clash,
                 )
-        # SESSION-LEVEL RESOURCES, which this loop used to drop entirely.
-        #
-        # A session can carry resources attached to the SESSION rather than to a
-        # scan -- a report, a summary, anything added with add_session_resource.
-        # deidentified starts from new_empty(), which copies the ids and nothing
-        # else, and the loop above walks self.scans only, so those resources
-        # never reached the output. They were not de-identified, not copied, and
-        # nothing said so.
-        #
-        # save() has always handled them (included_session_resources), so this
-        # was a hole in deidentify alone, and it is worse than a plain data loss:
-        # the per-session completeness gate counts data files on both sides, so a
-        # session carrying one would come out short, be reported incomplete, and
-        # correctly refuse to unlink its input -- for ever, on every cycle,
-        # because the next run drops it again.
-        #
-        # They go at the top of dest_dir rather than under a scan id, which is
-        # where save() puts them and where load() looks for them.
+        # Session resources use the same deidentification policy as scan resources.
         for resource_name, resource in self.session_resources.items():
             contains_phi = getattr(resource.fileset, "contains_phi", False)
             resource_recipe_file = None
@@ -1908,6 +1892,62 @@ class ImagingSession:
             session_dirname += f".{self.run_uid}"
         return session_dirname
 
+    @classmethod
+    @contextmanager
+    def load_for_processing(
+        cls,
+        session_dir: Path,
+        require_manifest: bool = True,
+        check_checksums: bool = True,
+        unlink_source: str | None = None,
+    ) -> ty.Iterator[Self]:
+        """Load input and remove its recorded files after successful processing.
+
+        The context body must finish processing and save its output before it
+        returns. If it raises, no source files are removed. New paths that arrive
+        after the snapshot stay for the next cycle. Writers must not replace a
+        recorded path during processing: this is a path snapshot, not a lock.
+        """
+        if unlink_source not in (None, "all", "keep-metadata"):
+            raise ValueError(f"Unknown unlink_source mode: {unlink_source!r}")
+        source_files = (
+            [p for p in session_dir.rglob("*") if p.is_file() or p.is_symlink()]
+            if unlink_source
+            else []
+        )
+        session = cls.load(
+            session_dir,
+            require_manifest=require_manifest,
+            check_checksums=check_checksums,
+        )
+        resource_dirs = [resource.fileset.parent for resource in session.resources]
+        yield session
+        if not unlink_source:
+            return
+        if unlink_source == "keep-metadata":
+            source_files = [
+                p
+                for p in source_files
+                if any(p.is_relative_to(d) for d in resource_dirs)
+            ]
+            roots = resource_dirs
+        else:
+            roots = [session_dir]
+        for path in source_files:
+            path.unlink(missing_ok=True)
+        for root in roots:
+            directories = [
+                p for p in root.rglob("*") if p.is_dir() and not p.is_symlink()
+            ]
+            for directory in sorted(
+                directories, key=lambda p: len(p.parts), reverse=True
+            ) + [root]:
+                try:
+                    directory.rmdir()
+                except OSError:
+                    # A late file keeps its directory. Empty directories only.
+                    pass
+
     def save(
         self,
         dest_dir: Path,
@@ -1979,11 +2019,14 @@ class ImagingSession:
                 collation_map=collation_map,
                 conversion_map=conversion_map,
                 include=include,
+                build_dir=dest_dir / "__build__",
             )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         for resource in included_session_resources:
-            saved_resource = resource.save(session_dir, copy_mode=copy_mode)
+            saved_resource = resource.save(
+                session_dir, copy_mode=copy_mode, build_dir=dest_dir / "__build__"
+            )
             saved.session_resources[saved_resource.name] = saved_resource
         logger.debug("Saving session metadata")
         self.metadata[self.UID_METADATA_KEY] = self.uid
