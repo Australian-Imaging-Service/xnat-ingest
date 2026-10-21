@@ -43,7 +43,11 @@ from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
-from ..exceptions import ImagingSessionParseError, StagingError
+from ..exceptions import (
+    ImagingSessionParseError,
+    OrthancStudyChangedError,
+    StagingError,
+)
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AssociatedFiles,
@@ -467,6 +471,14 @@ def _deidentify_or_copy_resource(
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
+
+
+def _dicom_multi_value(value: ty.Any) -> list[str]:
+    """The components of a multi-valued DICOM tag as Orthanc reports it: one
+    backslash-joined string, or a list when the caller already split it."""
+    if isinstance(value, str):
+        return value.split("\\")
+    return [str(v) for v in value]
 
 
 def _is_timestamp(value: str) -> bool:
@@ -1098,6 +1110,7 @@ class ImagingSession:
         conversion_map: (
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
+        errors: list[str] | None = None,
     ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
@@ -1131,6 +1144,10 @@ class ImagingSession:
             before the study is labelled as processed, with the options passed through
             to ``convert()``.
 
+        errors : list[str], optional
+            if given, the IDs of the studies that could not be staged in this
+            pass are appended to it. Such a study is logged and left
+            unlabelled, so it is tried again on the next pass
         Returns
         -------
         list[ImagingSession]
@@ -1277,7 +1294,18 @@ class ImagingSession:
         )
 
         staged: list[ImagingSession] = []
-        for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
+        # The build directory and the conversion scratch directories of the
+        # study being staged, for the clean-up when staging fails part way.
+        current_work_dir: dict[str, ty.Any] = {}
+
+        def _discard_work_dir() -> None:
+            work_dir = current_work_dir.pop("path", None)
+            if work_dir is not None and work_dir.exists():
+                shutil.rmtree(work_dir, ignore_errors=True)
+            for convert_dir in current_work_dir.pop("convert", []):
+                shutil.rmtree(convert_dir, ignore_errors=True)
+
+        def _stage_study(study_id: str) -> ImagingSession | None:
             study = get_json(f"/studies/{study_id}")
             if wait_period:
                 try:
@@ -1297,7 +1325,7 @@ class ImagingSession:
                         age,
                         wait_period,
                     )
-                    continue
+                    return None
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
@@ -1305,6 +1333,7 @@ class ImagingSession:
             # One group-orthanc producer must own this output directory. A
             # converter child that outlives its parent is outside this contract.
             work_dir = output_dir / "__build__" / f"orthanc_{session_uid}"
+            current_work_dir["path"] = work_dir
             if work_dir.exists():
                 shutil.rmtree(work_dir)
             session_dir = work_dir / final_dir.name
@@ -1312,6 +1341,8 @@ class ImagingSession:
 
             modalities: set[str] = set()
             staged_instance_ids: dict[str, set[str]] = {}
+            staged_resources: set[tuple[str, str]] = set()
+            scan_types: dict[str, str] = {}
             for series_id in study["Series"]:
                 series = get_json(f"/series/{series_id}")
                 if modality := series["MainDicomTags"].get("Modality"):
@@ -1321,16 +1352,42 @@ class ImagingSession:
                 scan_type = IDSpec("SeriesDescription").get_value(all_tags)
 
                 if "ImageType" in all_tags:
+                    # Orthanc gives a multi-valued tag as one backslash-joined
+                    # string. The mapping wants the components; an escaped ID
+                    # string ("DERIVED_SECONDARY") never matched any of them.
                     resource_label = dicom_image_type_to_resource_label(
-                        IDSpec("ImageType").get_value(all_tags)
+                        _dicom_multi_value(all_tags["ImageType"])
                     )
                 else:
                     resource_label = "DICOM"
                 scan_dir = session_dir / f"{scan_id}.{scan_type}"
+                # The scan ID (SeriesNumber) must name one scan. Two series with
+                # the same SeriesNumber and SeriesDescription would share one
+                # resource directory and one manifest; two with the same
+                # SeriesNumber and different descriptions would be loaded as
+                # one scan, and one of them dropped. Refuse the study instead.
+                if scan_types.setdefault(scan_id, scan_type) != scan_type:
+                    raise StagingError(
+                        f"Orthanc study '{study_id}': SeriesNumber '{scan_id}' is "
+                        f"used by series with different descriptions "
+                        f"('{scan_types[scan_id]}' and '{scan_type}'). The study "
+                        "needs attention before it can be staged."
+                    )
+                resource_key = (scan_dir.name, resource_label)
+                if resource_key in staged_resources:
+                    raise StagingError(
+                        f"Orthanc study '{study_id}': series '{series_id}' maps to "
+                        f"'{scan_dir.name}/{resource_label}' like another series of "
+                        f"the study (SeriesNumber '{scan_id}', SeriesDescription "
+                        f"'{scan_type}'). The study needs attention before it can "
+                        "be staged."
+                    )
+                staged_resources.add(resource_key)
                 if convert_series:
                     convert_tmp_dir = Path(
                         tempfile.mkdtemp(prefix="__convert_", dir=output_dir)
                     )
+                    current_work_dir.setdefault("convert", []).append(convert_tmp_dir)
                     resource_dir = convert_tmp_dir / resource_label
                 else:
                     resource_dir = scan_dir / resource_label
@@ -1405,7 +1462,7 @@ class ImagingSession:
                 if current_study.get("LastUpdate") != study.get(
                     "LastUpdate"
                 ) or current_series_ids != set(staged_instance_ids):
-                    raise RuntimeError(
+                    raise OrthancStudyChangedError(
                         f"Orthanc study '{study_id}' changed while it was being staged"
                     )
                 for series_id, expected_instance_ids in staged_instance_ids.items():
@@ -1413,7 +1470,7 @@ class ImagingSession:
                     if {instance["ID"] for instance in current_instances} != (
                         expected_instance_ids
                     ):
-                        raise RuntimeError(
+                        raise OrthancStudyChangedError(
                             f"Orthanc study '{study_id}' changed while it was being staged"
                         )
             if os.path.lexists(final_dir):
@@ -1423,7 +1480,9 @@ class ImagingSession:
                     final_dir,
                 )
                 shutil.rmtree(work_dir)
-                continue
+                if errors is not None:
+                    errors.append(study_id)
+                return None
             session_dir.rename(final_dir)
             for resource in staged_session.resources:
                 resource.fileset.fspaths = frozenset(
@@ -1458,7 +1517,25 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, final_dir.name
             )
-            staged.append(staged_session)
+            return staged_session
+
+        for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
+            current_work_dir.clear()
+            try:
+                session = _stage_study(study_id)
+            except OrthancStudyChangedError as e:
+                logger.warning("%s. It is staged again on a later pass.", e)
+                _discard_work_dir()
+            except Exception as e:  # noqa: BLE001 - one study must not stop the stage
+                logger.error(
+                    "Skipping Orthanc study '%s': %s", study_id, e, exc_info=True
+                )
+                _discard_work_dir()
+                if errors is not None:
+                    errors.append(study_id)
+            else:
+                if session is not None:
+                    staged.append(session)
 
         return staged
 
@@ -2007,6 +2084,14 @@ class ImagingSession:
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
+                if scan.id in session.scans:
+                    # Two directories, one scan ID: a dict entry would silently
+                    # replace the other scan, and its files would never be saved.
+                    raise ImagingSessionParseError(
+                        f"Two scan directories of '{session_dir}' have the scan ID "
+                        f"'{scan.id}' ('{session.scans[scan.id].type}' and "
+                        f"'{scan.type}'). The session needs attention."
+                    )
                 scan.session = session
                 session.scans[scan.id] = scan
             else:

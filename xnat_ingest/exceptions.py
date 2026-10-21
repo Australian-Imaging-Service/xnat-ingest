@@ -9,6 +9,10 @@ class UnsupportedModalityError(XnatIngestError): ...
 class StagingError(XnatIngestError): ...
 
 
+class OrthancStudyChangedError(StagingError):
+    """The Orthanc study changed while it was being staged. A later pass stages it again."""
+
+
 class ImagingSessionParseError(StagingError): ...
 
 

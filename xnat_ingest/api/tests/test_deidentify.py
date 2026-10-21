@@ -124,8 +124,8 @@ def test_deidentify_discards_a_stale_build_from_a_crashed_run(
     """
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
-    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
-    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+    (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
 
     stale = (
         output_dir / "__build__" / f"promote_{SESSION_NAME}" / SESSION_NAME / "9.ghost"
@@ -160,7 +160,7 @@ def test_deidentify_does_not_skip_an_output_that_is_newer_but_short(
 
     # an output that is NEWER than the input but missing its data
     stale = output_dir / SESSION_NAME
-    (stale / "1.scan" / "RES").mkdir(parents=True)
+    (stale / "2.scan" / "RES").mkdir(parents=True)
     (stale / "__METADATA__.json").write_text("{}")
 
     calls: list = []
@@ -337,10 +337,10 @@ def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(
     """
     input_dir, output_dir, spec_dir, reid_dir = dirs
     skeleton = input_dir / "PROJ.SUBJ.SKEL"
-    (skeleton / "1.scan").mkdir(parents=True)
+    (skeleton / "2.scan").mkdir(parents=True)
     # what survives a keep-metadata unlink: the metadata, and no resource dirs
     (skeleton / "__METADATA__.json").write_text("{}")
-    (skeleton / "1.scan" / "__METADATA__.json").write_text("{}")
+    (skeleton / "2.scan" / "__METADATA__.json").write_text("{}")
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
@@ -364,8 +364,8 @@ def test_deidentify_keeps_source_when_output_is_incomplete(
     """
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
-    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
-    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+    (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(
@@ -390,8 +390,8 @@ def test_deidentify_leaves_source_dir_when_unlink_source_none(
 ):
     input_dir, output_dir, spec_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
-    (session_dir / "1.scan" / "DICOM").mkdir(parents=True)
-    (session_dir / "1.scan" / "DICOM" / "inst.dcm").write_text("data")
+    (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
+    (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
 
     with patch.object(ImagingSession, "deidentify", _mock_deidentify):
         errors = deidentify(

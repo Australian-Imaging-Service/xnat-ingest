@@ -230,6 +230,17 @@ the wait period at least one second, so a late instance always gets a later
 tool can check before it deletes a study from Orthanc: the exported instance set
 is the digest, and a changed ``LastUpdate`` means the study holds more.
 
+A study that cannot be staged does not stop the others. Two series of one study
+that map to one scan directory and resource (the same ``SeriesNumber`` and
+``SeriesDescription``), or one ``SeriesNumber`` used with two descriptions, are
+refused before the study is published; files already linked for its earlier
+series are discarded with the build directory. Loading such a session would
+keep only one of the scans. The study is logged as an error with its Orthanc ID and the reason, left
+without the processed label, and tried again on the next run, so the error stays
+visible until the study is corrected at the source. The other studies of the run
+are staged as usual. A study that changes while it is being staged is logged as a
+warning and staged again on a later run.
+
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
