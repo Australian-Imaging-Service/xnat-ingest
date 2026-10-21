@@ -2074,6 +2074,14 @@ class ImagingSession:
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
+                if scan.id in session.scans:
+                    # Two directories, one scan ID: a dict entry would silently
+                    # replace the other scan, and its files would never be saved.
+                    raise ImagingSessionParseError(
+                        f"Two scan directories of '{session_dir}' have the scan ID "
+                        f"'{scan.id}' ('{session.scans[scan.id].type}' and "
+                        f"'{scan.type}'). The session needs attention."
+                    )
                 scan.session = session
                 session.scans[scan.id] = scan
             else:
