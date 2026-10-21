@@ -5,7 +5,7 @@ import pytest
 from click.testing import CliRunner
 from fileformats.generic import File
 from fileformats.medimage import DicomImage, DicomSeries
-from fileformats.testing import MyFormat
+from fileformats.testing import MyFormat, MyFormatGz
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -301,3 +301,29 @@ def test_package_cli_accepts_multiple_named_outputs(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     packaged = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(packaged.scans["1"].resources) == {"DICOM", "secondary"}
+
+
+def test_package_passes_a_session_without_source_resources_through(
+    tmp_path: Path,
+) -> None:
+    """A session with nothing to convert still has to reach the upload stage,
+    which reads this stage's output. It is written out unchanged and its
+    input is retired like any other."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _session, source_dir = _staged_session(input_dir)
+
+    errors = package(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        source_datatype=MyFormatGz,
+        output_resources={"DICOM": (MyFormat, {})},
+        unlink_source="all",
+    )
+
+    assert errors == []
+    assert not source_dir.exists()
+    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    assert set(out.scans["1"].resources) == {"SOURCE"}
+    assert set(out.session_resources) == {"REPORT"}
