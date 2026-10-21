@@ -81,10 +81,11 @@ def assign(
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
     unlink_source: str | None
-        If "all", record files present before assign loads the session. After a
-        successful save, remove those files and empty directories. Files at new paths remain. If "keep-metadata", the
-        resource data is removed but the session/scan-level metadata is left behind as a lightweight skeleton. If
-        None, the grouped session directory is left in place.
+        If "all" or "keep-metadata", record files present before assign loads the
+        session. After a successful save, remove those files and empty directories.
+        With "keep-metadata", remove files only inside loaded resource directories;
+        leave session and scan metadata in place. Files at new paths remain.
+        If None, the grouped session directory is left in place.
     raise_errors: bool
         If True, any errors encountered during staging will raise an exception. If False, errors will be logged and the
         staging process will continue for the remaining sessions.
@@ -145,11 +146,16 @@ def assign(
                     for p in session_listing.fspath.rglob("*")
                     if p.is_symlink() or not p.is_dir()
                 ]
-                if unlink_source == "all"
+                if unlink_source in ("all", "keep-metadata")
                 else []
             )
             session = ImagingSession.load(
                 session_listing.cache_path,
+            )
+            resource_dirs = (
+                {resource.fileset.parent for resource in session.resources}
+                if unlink_source == "keep-metadata"
+                else set()
             )
 
             if include and not any(
@@ -272,9 +278,19 @@ def assign(
                     except OSError:
                         pass
             elif unlink_source == "keep-metadata":
-                # remove just the resource data, leaving the session/scan-level
-                # metadata behind as a lightweight skeleton
-                session.unlink(keep_metadata=True)
+                for path in source_files:
+                    if any(path.is_relative_to(root) for root in resource_dirs):
+                        path.unlink(missing_ok=True)
+                for root in resource_dirs:
+                    for path in sorted(
+                        [root, *root.rglob("*")],
+                        key=lambda p: len(p.parts),
+                        reverse=True,
+                    ):
+                        try:
+                            path.rmdir()
+                        except OSError:
+                            pass
     if errors:
         logger.error(
             "Assign completed with %s errors",

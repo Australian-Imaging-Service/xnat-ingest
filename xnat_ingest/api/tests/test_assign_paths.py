@@ -18,6 +18,8 @@ from xnat_ingest.model.session import ImagingSession
 def source(tmp_path):
     seed = tmp_path / "original.txt"
     seed.write_text("original")
+    session_seed = tmp_path / "session.txt"
+    session_seed.write_text("session resource")
     session = ImagingSession(
         uid="paths",
         scans=[
@@ -25,6 +27,7 @@ def source(tmp_path):
                 "1", "scan", resources={"RAW": ImagingResource("RAW", File(seed))}
             )
         ],
+        session_resources={"SESSION": ImagingResource("SESSION", File(session_seed))},
     )
     for key, value in (
         ("StudyID", "PROJECT"),
@@ -50,8 +53,12 @@ def run(grouped, output, mode):
     )
 
 
-def test_file_at_new_path_survives_cleanup(source, tmp_path):
+@pytest.mark.parametrize("mode", ["all", "keep-metadata"])
+@pytest.mark.parametrize("resource", ["scan", "session"])
+def test_file_at_new_path_survives_cleanup(source, tmp_path, mode, resource):
     grouped, root, payload = source
+    if resource == "session":
+        payload = root / "SESSION" / "session.txt"
     late = payload.with_name("late.txt")
     save = ImagingSession.save
 
@@ -61,10 +68,70 @@ def test_file_at_new_path_survives_cleanup(source, tmp_path):
         return result
 
     with patch.object(ImagingSession, "save", save_then_add):
-        assert run(grouped, tmp_path / "assigned", "all") == []
+        assert run(grouped, tmp_path / "assigned", mode) == []
     assert late.read_text() == "late"
     assert not payload.exists()
     assert next((tmp_path / "assigned").rglob("original.txt")).read_text() == "original"
+    if mode == "keep-metadata":
+        assert (root / Metadata.FNAME).is_file()
+        assert (root / "1.scan" / Metadata.FNAME).is_file()
+
+
+@pytest.mark.parametrize("mode", ["all", "keep-metadata"])
+@pytest.mark.parametrize("resource", ["scan", "session"])
+def test_new_resource_directory_survives_cleanup(source, tmp_path, mode, resource):
+    grouped, root, payload = source
+    parent = root / "1.scan" if resource == "scan" else root
+    late = parent / "LATE" / "late.txt"
+    save = ImagingSession.save
+
+    def save_then_add(self, *args, **kwargs):
+        result = save(self, *args, **kwargs)
+        late.parent.mkdir()
+        late.write_text("late resource")
+        return result
+
+    with patch.object(ImagingSession, "save", save_then_add):
+        assert run(grouped, tmp_path / "assigned", mode) == []
+    assert late.read_text() == "late resource"
+    assert not payload.parent.exists()
+    assert not (root / "SESSION").exists()
+    if mode == "keep-metadata":
+        assert (root / Metadata.FNAME).is_file()
+        assert (root / "1.scan" / Metadata.FNAME).is_file()
+
+
+@pytest.mark.parametrize("resource", ["scan", "session"])
+@pytest.mark.parametrize("target_exists", [False, True])
+def test_resource_symlink_cleanup_preserves_late_paths(
+    source, tmp_path, resource, target_exists
+):
+    grouped, root, payload = source
+    resource_dir = payload.parent if resource == "scan" else root / "SESSION"
+    outside = tmp_path / "outside"
+    if target_exists:
+        outside.mkdir()
+        (outside / "data").write_text("outside")
+    recorded = resource_dir / "recorded-link"
+    recorded.symlink_to(outside)
+    empty = resource_dir / "empty" / "nested"
+    empty.mkdir(parents=True)
+    late = resource_dir / "late-link"
+    save = ImagingSession.save
+
+    def save_then_add(self, *args, **kwargs):
+        result = save(self, *args, **kwargs)
+        late.symlink_to(outside)
+        return result
+
+    with patch.object(ImagingSession, "save", save_then_add):
+        assert run(grouped, tmp_path / "assigned", "keep-metadata") == []
+    assert not recorded.is_symlink()
+    assert late.is_symlink()
+    assert not empty.parent.exists()
+    assert not payload.exists()
+    if target_exists:
+        assert (outside / "data").read_text() == "outside"
 
 
 @pytest.mark.parametrize("mode", ["all", "keep-metadata"])
@@ -100,6 +167,7 @@ def test_normal_cleanup_retains_requested_metadata(source, tmp_path, mode, extra
             )
     assert run(grouped, tmp_path / "assigned", mode) == []
     assert not payload.exists()
+    assert not (root / "SESSION").exists()
     if mode == "all":
         assert not root.exists()
     else:
@@ -112,10 +180,11 @@ def test_normal_cleanup_retains_requested_metadata(source, tmp_path, mode, extra
     assert next((tmp_path / "assigned").rglob("original.txt")).read_text() == "original"
 
 
-def test_failed_save_preserves_input(source, tmp_path):
+@pytest.mark.parametrize("mode", ["all", "keep-metadata"])
+def test_failed_save_preserves_input(source, tmp_path, mode):
     grouped, root, payload = source
     with patch.object(ImagingSession, "save", side_effect=RuntimeError("save failed")):
         with pytest.raises(RuntimeError, match="save failed"):
-            run(grouped, tmp_path / "assigned", "all")
+            run(grouped, tmp_path / "assigned", mode)
     assert payload.read_text() == "original"
     ImagingSession.load(root)
