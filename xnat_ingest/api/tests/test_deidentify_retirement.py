@@ -262,13 +262,17 @@ def test_failed_resource_publish_restores_previous_resource(tmp_path, monkeypatc
 def test_retirement_unlinks_symlinks_without_removing_targets(tmp_path, mode):
     source = _stage(tmp_path / "input", SESSION_NAME)
     resource = source / "1.T" / "RES"
+    loaded = ImagingSession.load(source)
     target = tmp_path / "external"
     target.mkdir()
     (target / "keep.dat").write_bytes(b"keep")
     (resource / "file-link").symlink_to(target / "keep.dat")
     (resource / "directory-link").symlink_to(target, target_is_directory=True)
     (resource / "broken-link").symlink_to(target / "missing")
-    with ImagingSession.load_for_processing(source, unlink_source=mode):
-        pass
+    # The loaded resource owns one file. The extra links exercise cleanup,
+    # independently of the single-file format's extra-path validation.
+    with patch.object(ImagingSession, "load", return_value=loaded):
+        with ImagingSession.load_for_processing(source, unlink_source=mode):
+            pass
     assert not resource.exists()
     assert (target / "keep.dat").read_bytes() == b"keep"
