@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
+from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..helpers.xnat_scan_types import xnat_resource_label_from_sop_class
 from ..model.resource import ImagingResource
@@ -143,6 +144,50 @@ def _package_session(
     return packaged
 
 
+FileState = tuple[int, int, int]
+
+
+def _file_states(session_dir: Path) -> dict[Path, FileState]:
+    """The data files of a staged session, as paths inside it, each with its
+    size, mtime and inode. Sidecars and hidden entries are not data."""
+    sidecars = {
+        ImagingResource.MANIFEST_FNAME,
+        ImagingResource.OLD_MANIFEST_FNAME,
+        Metadata.FNAME,
+    }
+    states: dict[Path, FileState] = {}
+    for f in session_dir.rglob("*"):
+        rel = f.relative_to(session_dir)
+        if f.name in sidecars or any(part.startswith(".") for part in rel.parts):
+            continue
+        if not f.is_file():
+            continue
+        st = f.stat()
+        states[rel] = (st.st_size, st.st_mtime_ns, st.st_ino)
+    return states
+
+
+def _session_files(session: ImagingSession, session_dir: Path) -> set[Path]:
+    """The data files a loaded session refers to, as paths inside its directory."""
+    return {
+        Path(path).relative_to(session_dir)
+        for resource in session.resources
+        for path in resource.fileset.all_file_paths()
+    }
+
+
+def _input_drift(
+    session_dir: Path, read_files: set[Path], read_states: dict[Path, FileState]
+) -> tuple[set[Path], set[Path]]:
+    """Files the loaded session did not carry, and files whose size, mtime or
+    inode changed (or that went) since the session was read."""
+    now = _file_states(session_dir)
+    unknown = set(now) - read_files
+    changed = {p for p, st in now.items() if read_states.get(p) != st}
+    changed |= set(read_states) - set(now)
+    return unknown, changed
+
+
 def package(
     input_dir: Path,
     output_dir: Path,
@@ -184,6 +229,11 @@ def package(
                 require_manifest=require_manifest,
                 check_checksums=True,
             )
+            # What this cycle read: the state of every data file in the
+            # directory, and the files the loaded session refers to. The unlink
+            # at the end compares against both.
+            read_states = _file_states(listing.cache_path)
+            read_files = _session_files(session, listing.cache_path)
             if not any(
                 isinstance(resource.fileset, source_datatype)
                 for scan in session.scans.values()
@@ -276,7 +326,31 @@ def package(
             logger.debug(traceback.format_exc())
             errors.append(msg)
         else:
-            if unlink_source == "all":
+            unknown: set[Path] = set()
+            changed: set[Path] = set()
+            if unlink_source:
+                unknown, changed = _input_drift(
+                    listing.cache_path, read_files, read_states
+                )
+            if unknown or changed:
+                # The directory holds data this run did not package: a file the
+                # loaded session did not carry (the deidentify stage merges a
+                # late series into a session it already wrote, and its manifest
+                # can lag behind the files), or a file written again since it
+                # was read. None of it is in the output yet: keep the input, the
+                # next cycle packages it again.
+                logger.warning(
+                    "Not unlinking '%s': %d file(s) it did not carry when it was "
+                    "loaded %s and %d file(s) changed since %s. It is packaged "
+                    "again on a later cycle.",
+                    listing.name,
+                    len(unknown),
+                    sorted(str(p) for p in unknown)[:5],
+                    len(changed),
+                    sorted(str(p) for p in changed)[:5],
+                    extra={"event": "package_input_changed", "session": listing.name},
+                )
+            elif unlink_source == "all":
                 shutil.rmtree(listing.cache_path)
             elif unlink_source == "keep-metadata":
                 session.unlink(keep_metadata=True)
