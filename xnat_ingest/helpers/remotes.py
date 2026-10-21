@@ -15,6 +15,7 @@ import typing as ty
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import attrs
 import boto3.resources.base
@@ -133,6 +134,10 @@ def _study_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
 class UnknownStudyIdentity(SessionIdentityRefused):
     """The subject matches, but remote headers have not established a study UID."""
 
+    def __init__(self, xsi_type: object = None):
+        super().__init__("Cannot verify XNAT study identity before header recovery")
+        self.xsi_type = xsi_type
+
 
 def _assert_session_identity(
     connection: xnat.XNATSession,
@@ -173,8 +178,9 @@ def _assert_session_identity(
         # to creation/upload after an unreadable or malformed identity response.
         raise SessionIdentityRefused("Cannot verify XNAT session identity") from exc
     if study_uid is not None and fields.get("UID") in (None, ""):
+        meta = items[0].get("meta")
         raise UnknownStudyIdentity(
-            "Cannot verify XNAT study identity before header recovery"
+            meta.get("xsi:type") if isinstance(meta, dict) else None
         )
 
 
@@ -1022,7 +1028,7 @@ def get_xnat_session(
                     xproject.id,
                     session.subject_id,
                 )
-            except UnknownStudyIdentity:
+            except UnknownStudyIdentity as unknown:
                 # A previous writer may have died after creating an EMPTY
                 # experiment. Inspect raw listings: malformed rows must never
                 # disappear through XnatRows' compatibility filtering.
@@ -1039,9 +1045,37 @@ def get_xnat_session(
                         raise SessionIdentityRefused(
                             "Cannot verify XNAT session identity: experiment not proven empty"
                         ) from None
-                xproject.xnat_session.put(
-                    xsession.uri, query={"xnat:imageSessionData/UID": study_uid}
+                # XNAT accepts this update through the project-scoped URI with
+                # the concrete type from the fresh document. The global URI can
+                # return 422 even when supplied with that same concrete type.
+                xsi_type = unknown.xsi_type
+                if (
+                    not isinstance(xsi_type, str)
+                    or not re.fullmatch(r"[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*", xsi_type)
+                    or not xsi_type.endswith("SessionData")
+                ):
+                    raise SessionIdentityRefused(
+                        "Cannot verify XNAT session identity: missing or invalid experiment type"
+                    )
+                scoped_uri = (
+                    f"/data/projects/{quote(xproject.id, safe='')}"
+                    f"/subjects/{quote(session.subject_id, safe='')}"
+                    f"/experiments/{quote(session.session_id, safe='')}"
                 )
+                try:
+                    response = xproject.xnat_session.put(
+                        scoped_uri,
+                        query={f"{xsi_type}/UID": study_uid},
+                        accepted_status=tuple(range(200, 300)),
+                    )
+                except Exception as exc:
+                    raise SessionIdentityRefused(
+                        "Cannot verify XNAT session identity: UID update failed"
+                    ) from exc
+                if not 200 <= response.status_code < 300:
+                    raise SessionIdentityRefused(
+                        "Cannot verify XNAT session identity: UID update was not accepted"
+                    )
                 _assert_session_identity(
                     xproject.xnat_session,
                     xsession.uri,

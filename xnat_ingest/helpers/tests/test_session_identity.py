@@ -23,18 +23,36 @@ class IdentityXnat(FakeXnat):
         self.recovered_uid = uid
         self.puts = []
         self.headers = []
+        self.xsi_type = "xnat:mrSessionData"
+        self.put_requests = []
 
-    def put(self, uri, query=None):
+    def put(self, uri, query=None, accepted_status=None):
         self.puts.append(uri)
-        self.fields["UID"] = (
-            query["xnat:imageSessionData/UID"] if query else self.recovered_uid
-        )
+        self.put_requests.append((uri, query, accepted_status))
+        if query:
+            expected = {f"{self.xsi_type}/UID": "1.2.3"}
+            if (
+                uri != "/data/projects/proj/subjects/subj/experiments/sess"
+                or query != expected
+            ):
+                return SimpleNamespace(status_code=422)
+            self.fields["UID"] = query[f"{self.xsi_type}/UID"]
+        else:
+            self.fields["UID"] = self.recovered_uid
+        return SimpleNamespace(status_code=200)
 
     def get_json(self, uri, query=None, headers=None):
         self.headers.append((uri, headers))
         if uri == "/data/experiments/E1":
             self.calls.append(uri)
-            return {"items": [{"data_fields": dict(self.fields)}]}
+            return {
+                "items": [
+                    {
+                        "data_fields": dict(self.fields),
+                        "meta": {"xsi:type": self.xsi_type},
+                    }
+                ]
+            }
         if uri == "/data/projects/proj/subjects":
             return {"ResultSet": {"Result": self.subjects}}
         return super().get_json(uri, query)
@@ -232,16 +250,27 @@ def test_blank_uid_other_subject_is_never_recovered():
     assert connection.puts == []
 
 
-def test_empty_legacy_experiment_can_establish_uid():
+@pytest.mark.parametrize(
+    "xsi_type",
+    ["xnat:mrSessionData", "xnat:ctSessionData", "xnat:otherDicomSessionData"],
+)
+def test_empty_legacy_experiment_can_establish_uid(xsi_type):
     connection = IdentityXnat(uid="")
     connection.scans = []
     connection.session_resources = {}
+    connection.xsi_type = xsi_type
     xproject = project(connection)
+    xproject.experiments["sess"].__xsi_type__ = "stale:wrongSessionData"
     assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
     assert connection.fields["UID"] == "1.2.3"
+    assert connection.put_requests[-1] == (
+        "/data/projects/proj/subjects/subj/experiments/sess",
+        {f"{xsi_type}/UID": "1.2.3"},
+        tuple(range(200, 300)),
+    )
     assert connection.puts == [
         "/data/experiments/E1?pullDataFromHeaders=true",
-        "/data/experiments/E1",
+        "/data/projects/proj/subjects/subj/experiments/sess",
     ]
     assert all(
         headers == {"Cache-Control": "no-cache", "Pragma": "no-cache"}
@@ -272,7 +301,65 @@ def test_uid_write_is_rechecked_and_not_assumed():
     connection = IdentityXnat(uid="")
     connection.scans = []
     connection.session_resources = {}
-    connection.put = lambda uri, **kwargs: connection.puts.append(uri)
+
+    def no_update(uri, **kwargs):
+        connection.puts.append(uri)
+        return SimpleNamespace(status_code=200)
+
+    connection.put = no_update
     with pytest.raises(ValueError, match="identity"):
         get_xnat_session(session(), project(connection))
     assert len(connection.puts) == 2
+
+
+@pytest.mark.parametrize(
+    "xsi_type", [None, "", "xnat:subjectData", "xnat:mrSessionData/UID"]
+)
+def test_empty_recovery_refuses_missing_or_invalid_fresh_type(xsi_type):
+    connection = IdentityXnat(uid="")
+    connection.xsi_type = xsi_type
+    connection.scans = []
+    connection.session_resources = {}
+    with pytest.raises(ValueError, match="experiment type"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+
+
+@pytest.mark.parametrize("status", [200, 201, 204, 302, 422, 500])
+def test_empty_uid_update_requires_successful_http_and_fresh_identity(status):
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.put
+
+    def answer(uri, **kwargs):
+        response = original(uri, **kwargs)
+        if kwargs.get("query"):
+            response.status_code = status
+        return response
+
+    connection.put = answer
+    if 200 <= status < 300:
+        assert get_xnat_session(session(), project(connection)).id == "E1"
+    else:
+        with pytest.raises(ValueError, match="UID update was not accepted"):
+            get_xnat_session(session(), project(connection))
+
+
+def test_empty_uid_transport_failure_is_an_identity_refusal():
+    from xnat_ingest.exceptions import SessionIdentityRefused
+
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.put
+
+    def unavailable(uri, **kwargs):
+        if kwargs.get("query"):
+            raise RuntimeError("synthetic transport failure")
+        return original(uri, **kwargs)
+
+    connection.put = unavailable
+    with pytest.raises(SessionIdentityRefused, match="UID update failed"):
+        get_xnat_session(session(), project(connection))
+    assert connection.fields["UID"] == ""
