@@ -1,0 +1,365 @@
+"""A matching accession is not evidence of matching patient or study."""
+
+import json
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from test_all_uploaded_completeness import LOCAL, RESOURCE_PATH, FakeXnat
+
+from xnat_ingest.helpers.remotes import (
+    LocalSessionListing,
+    S3SessionListing,
+    get_xnat_session,
+)
+from xnat_ingest.model.session import ImagingSession
+
+
+class IdentityXnat(FakeXnat):
+    def __init__(self, subject="S1", uid="1.2.3"):
+        super().__init__([("1", "scan_one", {"DICOM": dict(LOCAL)})])
+        self.fields = {"ID": "E1", "subject_ID": subject, "UID": uid, "project": "proj"}
+        self.subjects = [{"ID": "S1", "label": "subj"}]
+        self.recovered_uid = uid
+        self.puts = []
+        self.headers = []
+        self.xsi_type = "xnat:mrSessionData"
+        self.put_requests = []
+
+    def put(self, uri, query=None, accepted_status=None):
+        self.puts.append(uri)
+        self.put_requests.append((uri, query, accepted_status))
+        if query:
+            expected = {f"{self.xsi_type}/UID": "1.2.3"}
+            if (
+                uri != "/data/projects/proj/subjects/subj/experiments/sess"
+                or query != expected
+            ):
+                return SimpleNamespace(status_code=422)
+            self.fields["UID"] = query[f"{self.xsi_type}/UID"]
+        else:
+            self.fields["UID"] = self.recovered_uid
+        return SimpleNamespace(status_code=200)
+
+    def get_json(self, uri, query=None, headers=None):
+        self.headers.append((uri, headers))
+        if uri == "/data/experiments/E1":
+            self.calls.append(uri)
+            return {
+                "items": [
+                    {
+                        "data_fields": dict(self.fields),
+                        "meta": {"xsi:type": self.xsi_type},
+                    }
+                ]
+            }
+        if uri == "/data/projects/proj/subjects":
+            return {"ResultSet": {"Result": self.subjects}}
+        return super().get_json(uri, query)
+
+
+def staged(tmp_path, uid="1.2.3"):
+    root = tmp_path / "proj.subj.sess"
+    resource = root / RESOURCE_PATH
+    resource.mkdir(parents=True)
+    (resource / "__MANIFEST__.json").write_text(json.dumps({"checksums": LOCAL}))
+    (root / "__METADATA__.json").write_text(json.dumps({"StudyInstanceUID": uid}))
+    return LocalSessionListing(root)
+
+
+def session(uid="1.2.3"):
+    result = ImagingSession(
+        uid="original-grouping-uid",
+        project_id="proj",
+        subject_id="subj",
+        session_id="sess",
+    )
+    result.metadata = {"StudyInstanceUID": uid, "Modality": "MR"}
+    return result
+
+
+def project(connection):
+    existing = SimpleNamespace(uri="/data/experiments/E1", id="E1")
+    connection.classes = SimpleNamespace(SubjectData=Mock(), MrSessionData=Mock())
+    return SimpleNamespace(
+        id="proj", xnat_session=connection, experiments={"sess": existing}
+    )
+
+
+@pytest.mark.parametrize(
+    "subject,uid", [("S2", "1.2.3"), ("S1", "9.8.7"), ("S1", ""), (None, "1.2.3")]
+)
+def test_existing_experiment_identity_mismatch_refused_without_writes(subject, uid):
+    connection = IdentityXnat(subject, uid)
+    xproject = project(connection)
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), xproject)
+    connection.classes.SubjectData.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "subject,uid", [("S2", "1.2.3"), ("S1", "9.8.7"), ("S1", ""), (None, "1.2.3")]
+)
+def test_all_uploaded_cannot_skip_other_subject_or_study(tmp_path, subject, uid):
+    listing = staged(tmp_path)
+    if subject == "S1" and uid == "":
+        assert listing.all_uploaded(IdentityXnat(subject, uid)) is False
+    else:
+        with pytest.raises(ValueError, match="identity"):
+            listing.all_uploaded(IdentityXnat(subject, uid))
+
+
+def test_matching_identity_and_shared_project_are_allowed(tmp_path):
+    connection = IdentityXnat()
+    connection.fields["project"] = "owning-project"  # shared subject's ID still matches
+    listing = staged(tmp_path)
+    assert listing.all_uploaded(connection)
+    xproject = project(connection)
+    assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    connection.classes.SubjectData.assert_not_called()
+
+
+def test_identity_is_fresh_on_every_pass(tmp_path):
+    listing = staged(tmp_path)
+    connection = IdentityXnat()
+    assert listing.all_uploaded(connection)
+    connection.fields["subject_ID"] = "S2"
+    with pytest.raises(ValueError, match="identity"):
+        listing.all_uploaded(connection)
+
+
+@pytest.mark.parametrize("uid", [["1.2.3", "4.5.6"], {"bad": "shape"}])
+def test_ambiguous_local_study_identity_is_refused(tmp_path, uid):
+    with pytest.raises(ValueError, match="identity"):
+        staged(tmp_path, uid).all_uploaded(IdentityXnat())
+
+
+def test_unknown_local_uid_still_checks_subject(tmp_path):
+    assert staged(tmp_path, None).all_uploaded(IdentityXnat(uid=""))
+
+
+def test_s3_metadata_is_checked_without_downloading_data(tmp_path):
+    bucket = Mock()
+    bucket.download_fileobj.side_effect = lambda key, stream, **kw: stream.write(
+        b'{"StudyInstanceUID": "9.8.7"}'
+    )
+    listing = S3SessionListing(
+        "proj.subj.sess",
+        bucket,
+        [
+            (
+                ["__METADATA__.json"],
+                SimpleNamespace(key="staged/proj.subj.sess/__METADATA__.json"),
+            )
+        ],
+        tmp_path,
+    )
+    with pytest.raises(ValueError, match="identity"):
+        listing.all_uploaded(IdentityXnat())
+    assert bucket.download_fileobj.call_count == 1
+    assert not listing._downloaded
+
+
+def test_new_experiment_records_uid_with_creation():
+    connection = IdentityXnat()
+    xproject = project(connection)
+    xproject.experiments = {}
+    get_xnat_session(session(), xproject)
+    assert connection.classes.MrSessionData.call_args.kwargs["UID"] == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{}, {"items": []}, {"items": [{"data_fields": {}}]}, {"items": [{}, {}]}],
+)
+def test_malformed_identity_response_is_not_proof(tmp_path, response):
+    connection = IdentityXnat()
+    original = connection.get_json
+    connection.get_json = lambda uri, query=None, headers=None: (
+        response if uri == "/data/experiments/E1" else original(uri, query)
+    )
+    with pytest.raises(ValueError, match="identity"):
+        staged(tmp_path).all_uploaded(connection)
+
+
+def test_failed_subject_read_never_falls_back_to_upload(tmp_path):
+    connection = IdentityXnat()
+    original = connection.get_json
+
+    def read(uri, query=None, headers=None):
+        if uri.endswith("/subjects"):
+            raise OSError("transport unavailable")
+        return original(uri, query)
+
+    connection.get_json = read
+    with pytest.raises(ValueError, match="identity"):
+        staged(tmp_path).all_uploaded(connection)
+
+
+def test_session_only_mode_checks_uid_when_supplied(tmp_path):
+    from xnat_ingest.helpers.remotes import SessionOnlyListing
+
+    root = tmp_path / "sess"
+    root.mkdir()
+    (root / "__METADATA__.json").write_text('{"StudyInstanceUID": "9.8.7"}')
+    with pytest.raises(ValueError, match="identity"):
+        SessionOnlyListing(root).all_uploaded(IdentityXnat())
+
+
+def test_s3_metadata_download_failure_is_not_unknown_identity(tmp_path):
+    bucket = Mock()
+    bucket.download_fileobj.side_effect = OSError("transport unavailable")
+    listing = S3SessionListing(
+        "proj.subj.sess",
+        bucket,
+        [(["__METADATA__.json"], SimpleNamespace(key="metadata"))],
+        tmp_path,
+    )
+    with pytest.raises(OSError, match="transport unavailable"):
+        listing.all_uploaded(IdentityXnat())
+
+
+@pytest.mark.parametrize("recovered", ["1.2.3", "9.8.7", ""])
+def test_legacy_blank_uid_uses_existing_headers_before_reuse(recovered, caplog):
+    connection = IdentityXnat(uid="")
+    connection.recovered_uid = recovered
+    xproject = project(connection)
+    if recovered == "1.2.3":
+        assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    else:
+        with pytest.raises(ValueError, match="identity"):
+            get_xnat_session(session(), xproject)
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+    connection.classes.SubjectData.assert_not_called()
+    assert (
+        len(
+            [
+                r
+                for r in caplog.records
+                if getattr(r, "event", "") == "xnat_identity_recovery"
+            ]
+        )
+        == 1
+    )
+
+
+def test_blank_uid_other_subject_is_never_recovered():
+    connection = IdentityXnat(subject="S2", uid="")
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == []
+
+
+@pytest.mark.parametrize(
+    "xsi_type",
+    ["xnat:mrSessionData", "xnat:ctSessionData", "xnat:otherDicomSessionData"],
+)
+def test_empty_legacy_experiment_can_establish_uid(xsi_type):
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    connection.xsi_type = xsi_type
+    xproject = project(connection)
+    xproject.experiments["sess"].__xsi_type__ = "stale:wrongSessionData"
+    assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    assert connection.fields["UID"] == "1.2.3"
+    assert connection.put_requests[-1] == (
+        "/data/projects/proj/subjects/subj/experiments/sess",
+        {f"{xsi_type}/UID": "1.2.3"},
+        tuple(range(200, 300)),
+    )
+    assert connection.puts == [
+        "/data/experiments/E1?pullDataFromHeaders=true",
+        "/data/projects/proj/subjects/subj/experiments/sess",
+    ]
+    assert all(
+        headers == {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+        for _, headers in connection.headers
+    )
+
+
+@pytest.mark.parametrize("collection", ["scans", "resources"])
+@pytest.mark.parametrize("rows", [[{"ID": "present"}], None, {}, [{"malformed": True}]])
+def test_empty_recovery_requires_both_raw_listings_to_be_empty(collection, rows):
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.get_json
+
+    def read(uri, **kwargs):
+        if uri == f"/data/experiments/E1/{collection}":
+            return {"ResultSet": {"Result": rows}}
+        return original(uri, **kwargs)
+
+    connection.get_json = read
+    with pytest.raises(ValueError, match="not proven empty"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+
+
+def test_uid_write_is_rechecked_and_not_assumed():
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+
+    def no_update(uri, **kwargs):
+        connection.puts.append(uri)
+        return SimpleNamespace(status_code=200)
+
+    connection.put = no_update
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), project(connection))
+    assert len(connection.puts) == 2
+
+
+@pytest.mark.parametrize(
+    "xsi_type", [None, "", "xnat:subjectData", "xnat:mrSessionData/UID"]
+)
+def test_empty_recovery_refuses_missing_or_invalid_fresh_type(xsi_type):
+    connection = IdentityXnat(uid="")
+    connection.xsi_type = xsi_type
+    connection.scans = []
+    connection.session_resources = {}
+    with pytest.raises(ValueError, match="experiment type"):
+        get_xnat_session(session(), project(connection))
+    assert connection.puts == ["/data/experiments/E1?pullDataFromHeaders=true"]
+
+
+@pytest.mark.parametrize("status", [200, 201, 204, 302, 422, 500])
+def test_empty_uid_update_requires_successful_http_and_fresh_identity(status):
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.put
+
+    def answer(uri, **kwargs):
+        response = original(uri, **kwargs)
+        if kwargs.get("query"):
+            response.status_code = status
+        return response
+
+    connection.put = answer
+    if 200 <= status < 300:
+        assert get_xnat_session(session(), project(connection)).id == "E1"
+    else:
+        with pytest.raises(ValueError, match="UID update was not accepted"):
+            get_xnat_session(session(), project(connection))
+
+
+def test_empty_uid_transport_failure_is_an_identity_refusal():
+    from xnat_ingest.exceptions import SessionIdentityRefused
+
+    connection = IdentityXnat(uid="")
+    connection.scans = []
+    connection.session_resources = {}
+    original = connection.put
+
+    def unavailable(uri, **kwargs):
+        if kwargs.get("query"):
+            raise RuntimeError("synthetic transport failure")
+        return original(uri, **kwargs)
+
+    connection.put = unavailable
+    with pytest.raises(SessionIdentityRefused, match="UID update failed"):
+        get_xnat_session(session(), project(connection))
+    assert connection.fields["UID"] == ""

@@ -134,8 +134,11 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
     )
     connection = remote.xnat_session
 
-    def get_json(uri, query=None):
+    def get_json(uri, query=None, headers=None):
+        if uri == "/data/experiments/E1":
+            return {"items": [{"data_fields": {"subject_ID": "S1", "UID": ""}}]}
         responses = {
+            "/data/projects/proj/subjects": [{"ID": "S1", "label": "subj"}],
             "/data/archive/projects": [{"ID": "proj", "name": "proj"}],
             "/data/projects/proj/experiments": [
                 {"ID": "E1", "label": "sess", "xsiType": "xnat:mrSessionData"}

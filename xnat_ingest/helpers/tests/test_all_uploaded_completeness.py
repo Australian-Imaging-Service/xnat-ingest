@@ -82,11 +82,15 @@ class FakeXnat:
         return resources
 
     def get_json(
-        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None
+        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None, headers=None
     ) -> ty.Any:
         self.calls.append(uri)
         rows: ty.List[ty.Dict[str, str]]
-        if uri == "/data/archive/projects":
+        if uri == "/data/experiments/E1":
+            return {"items": [{"data_fields": {"subject_ID": "S1"}}]}
+        elif uri.startswith("/data/projects/") and uri.endswith("/subjects"):
+            rows = [{"ID": "S1", "label": "subj"}]
+        elif uri == "/data/archive/projects":
             rows = self.projects
         elif uri.startswith("/data/projects/") and uri.endswith("/experiments"):
             rows = self.experiments

@@ -383,6 +383,29 @@ project with the `frametree <https://arcanaframework.github.io/frametree/>`_ too
 only data with a matching column in the dataset definition is uploaded.
 
 
+Session identity on reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An existing accession label must belong to the expected subject. The uploader
+checks the subject's internal XNAT ID through fresh REST responses. If the staged
+DICOM StudyInstanceUID is known, an existing remote UID must match it. A missing
+local UID does not establish study identity; the subject check still applies.
+New experiments include their UID in the creation request.
+
+Older interrupted uploads can have a blank remote UID. The completeness check
+returns incomplete for these sessions. Before it sends any new files, the uploader
+tries header extraction on the data already on XNAT, then checks identity again.
+It reuses the experiment if the recovered UID matches. If the UID remains blank,
+the subject matches, and fresh raw listings prove that both scans and session
+resources are empty, it sets the staged UID and checks identity again. This
+recovers an older writer that stopped immediately after experiment creation.
+A mismatch, failed request, malformed listing, or nonempty experiment whose UID
+remains unknown retains the input for investigation. Identity reads request
+``Cache-Control: no-cache`` and ``Pragma: no-cache``. Run one uploader per experiment:
+the REST API does not make the empty checks and UID write a transaction.
+Subject equality alone does not prove study equality. This recovery works with durable completion
+retries; the completion change is needed to resume unfinished later operations.
+
 4. Check what made it up
 ----------------------------
 
