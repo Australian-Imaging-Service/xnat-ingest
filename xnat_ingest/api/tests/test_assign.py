@@ -13,6 +13,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_api import group
 from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.helpers.remotes import list_session_dirs
 from xnat_ingest.model.session import ImagingSession
 
@@ -290,15 +291,18 @@ def test_assign_leaves_source_dir_when_unlink_source_none(
     assert session_dir.exists()
 
 
-def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
+def test_assign_keep_metadata_preserves_session_without_resources(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
     session_dir = next(grouped_dir.iterdir())
+    metadata = session_dir / Metadata.FNAME
+    metadata.write_text("{}")
 
     mock_session = _mock_session()
     mock_session.assign.return_value = {}
+    mock_session.resources = []
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
             input_dir=grouped_dir,
@@ -310,11 +314,8 @@ def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
         )
 
     assert errors == []
-    # the grouped session directory itself is untouched by 'keep-metadata' mode
-    # (only the loaded session's own resource data would be removed, leaving its
-    # session/scan-level metadata behind)
     assert session_dir.exists()
-    mock_session.unlink.assert_called_once_with(keep_metadata=True)
+    assert metadata.read_text() == "{}"
 
 
 def test_assign_does_not_delete_on_failure_even_if_unlink_source_all(
