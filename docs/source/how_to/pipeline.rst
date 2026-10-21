@@ -283,13 +283,18 @@ Add ``--unlink-source`` to clean up the ``group`` output once a session's been
 assigned. Unlike ``group``, this directory is one that xnat-ingest itself created, so
 there are two meaningfully different modes:
 
-* ``--unlink-source all`` — removes the whole grouped session directory
-* ``--unlink-source keep-metadata`` — removes just the resource data (the actual
-  image files), but leaves the session's and each scan's own metadata file
-  (``__METADATA__.json``) behind, so a lightweight, data-free skeleton of the session
-  survives on disk. See :doc:`associate` for why you'd want that.
+* ``--unlink-source all`` removes files present before assign loads the session, then empty directories.
+* ``--unlink-source keep-metadata`` removes recorded files only inside loaded
+  resource directories, then removes empty directories inside them. It keeps the
+  session and scan metadata files (``__METADATA__.json``).
+  See :doc:`associate` for how to use this metadata.
 
 Leave it unset (the default) to keep the grouped directory untouched.
+With ``all`` and ``keep-metadata``, files at new paths survive cleanup.
+Published files must remain immutable.
+A replacement at a recorded path is outside this contract.
+With ``keep-metadata``, assign records the resource directories when it loads the
+session. A new resource directory that arrives after the load stays in place.
 
 Routing datatypes through separate assignment pathways
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
