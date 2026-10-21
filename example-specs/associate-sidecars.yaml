@@ -1,0 +1,51 @@
+# group -> associate -> assign -> upload: for a report/sidecar file that lands in
+# the input tree without its own sorting metadata (e.g. a PDF report dropped next
+# to a DICOM export after the fact, identifiable only by a session UID embedded
+# in its filename) but should still end up attached to the right session.
+
+name: associate-sidecars
+
+params:
+  input_dir:
+    description: "Root directory of the scanner export to ingest"
+  xnat_server:
+    description: "URL of the XNAT server to upload to"
+  xnat_user:
+    description: "XNAT username"
+  xnat_password:
+    description: "XNAT password"
+    secret: true
+
+stages:
+  - name: group
+    command: group
+    args:
+      input_paths: ["${input_dir}"]
+
+  - name: associate
+    command: associate
+    input: group
+    args:
+      datatype: application/pdf
+      glob: "**/*_report.pdf"
+      # Named group must match an existing session's identifying metadata field
+      # (here, the session UID group() already grouped by) for the file to be
+      # attached to it - files that don't match any known session are skipped.
+      identity_pattern: '(?P<StudyInstanceUID>[\w.-]+)_report\.pdf$'
+      spaces_to_underscores: true
+
+  - name: assign
+    command: assign
+    input: associate
+    args:
+      project: StudyComments
+      subject: PatientID
+      session: AccessionNumber
+
+  - name: upload
+    command: upload
+    input: assign
+    args:
+      server: "${xnat_server}"
+      user: "${xnat_user}"
+      password: "${xnat_password}"
