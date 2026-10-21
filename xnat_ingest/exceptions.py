@@ -22,3 +22,7 @@ class UpdatedFilesException(DifferingCheckumsException): ...
 
 
 class IncompleteCheckumsException(DifferingCheckumsException): ...
+
+
+class SessionIdentityRefused(ValueError):
+    """Fresh evidence cannot establish the intended XNAT subject and study."""

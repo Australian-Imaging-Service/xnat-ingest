@@ -29,7 +29,11 @@ from fileformats.medimage import DicomCollection, DicomImage
 from fileformats.vendor.xnat.medimage import Snapshots
 from tqdm import tqdm
 
-from ..exceptions import IncompleteCheckumsException, UnsupportedModalityError
+from ..exceptions import (
+    IncompleteCheckumsException,
+    SessionIdentityRefused,
+    UnsupportedModalityError,
+)
 from ..model.resource import ImagingResource
 from ..model.scan import ImagingScan
 from ..model.session import ImagingSession
@@ -113,16 +117,20 @@ class XnatRows:
 def _study_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
     """Use the staged DICOM UID, not the possibly pre-deidentification group UID."""
     if not isinstance(metadata, ty.Mapping):
-        raise ValueError("Cannot verify session identity: malformed metadata")
+        raise SessionIdentityRefused(
+            "Cannot verify session identity: malformed metadata"
+        )
     value = metadata.get("StudyInstanceUID")
     if value is None or value == "":
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("Cannot verify session identity: ambiguous StudyInstanceUID")
+        raise SessionIdentityRefused(
+            "Cannot verify session identity: ambiguous StudyInstanceUID"
+        )
     return value
 
 
-class UnknownStudyIdentity(ValueError):
+class UnknownStudyIdentity(SessionIdentityRefused):
     """The subject matches, but remote headers have not established a study UID."""
 
 
@@ -163,7 +171,7 @@ def _assert_session_identity(
     except Exception as exc:
         # Do not disclose patient identifiers in the error or silently fall back
         # to creation/upload after an unreadable or malformed identity response.
-        raise ValueError("Cannot verify XNAT session identity") from exc
+        raise SessionIdentityRefused("Cannot verify XNAT session identity") from exc
     if study_uid is not None and fields.get("UID") in (None, ""):
         raise UnknownStudyIdentity(
             "Cannot verify XNAT study identity before header recovery"
@@ -611,7 +619,9 @@ class S3SessionListing(SessionListing):
         if not metadata_objects:
             return None
         if len(metadata_objects) != 1:
-            raise ValueError("Cannot verify session identity: duplicate metadata")
+            raise SessionIdentityRefused(
+                "Cannot verify session identity: duplicate metadata"
+            )
         with io.BytesIO() as stream:
             self.bucket.download_fileobj(metadata_objects[0].key, stream)
             return _study_uid(json.loads(stream.getvalue()))
@@ -1026,7 +1036,7 @@ def get_xnat_session(
                         if not isinstance(rows, list) or rows:
                             raise ValueError
                     except (KeyError, TypeError, ValueError):
-                        raise ValueError(
+                        raise SessionIdentityRefused(
                             "Cannot verify XNAT session identity: experiment not proven empty"
                         ) from None
                 xproject.xnat_session.put(
