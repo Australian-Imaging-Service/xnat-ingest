@@ -1105,3 +1105,35 @@ def test_an_existing_destination_counts_as_a_failed_study(tmp_path, caplog):
     assert message.startswith(
         "Skipping Orthanc study 'study-ready': destination exists"
     )
+
+
+def test_a_derived_series_of_the_same_scan_becomes_its_own_resource(tmp_path):
+    """A primary and a DERIVED/SECONDARY series with one SeriesNumber and
+    description are two resources of one scan, 'DICOM' and 'secondary'. Orthanc
+    reports ImageType as one backslash-joined string; read as an escaped ID
+    string it never matched the mapping, and both series became 'DICOM'."""
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    for series_id in fake.studies["study-ready"]["series"]:
+        fake.series[series_id]["tags"]["ImageType"] = "ORIGINAL\\PRIMARY\\AXIAL"
+    _add_series(
+        fake,
+        tmp_path,
+        "derived",
+        {
+            "SeriesNumber": "1",
+            "SeriesDescription": "Topogram",
+            "ImageType": "DERIVED\\SECONDARY\\AXIAL",
+        },
+    )
+    output_dir = tmp_path / "staged"
+    errors: ty.List[str] = []
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store), errors=errors
+        )
+
+    assert errors == []
+    [session] = staged
+    assert sorted(session.scans["1"].resources) == ["DICOM", "secondary"]
+    assert ("study-ready", "done") in fake.labelled
