@@ -473,6 +473,14 @@ def _deidentify_or_copy_resource(
     return deid_resource, reid_mdata
 
 
+def _dicom_multi_value(value: ty.Any) -> list[str]:
+    """The components of a multi-valued DICOM tag as Orthanc reports it: one
+    backslash-joined string, or a list when the caller already split it."""
+    if isinstance(value, str):
+        return value.split("\\")
+    return [str(v) for v in value]
+
+
 def _is_timestamp(value: str) -> bool:
     """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
     try:
@@ -1344,8 +1352,11 @@ class ImagingSession:
                 scan_type = IDSpec("SeriesDescription").get_value(all_tags)
 
                 if "ImageType" in all_tags:
+                    # Orthanc gives a multi-valued tag as one backslash-joined
+                    # string. The mapping wants the components; an escaped ID
+                    # string ("DERIVED_SECONDARY") never matched any of them.
                     resource_label = dicom_image_type_to_resource_label(
-                        IDSpec("ImageType").get_value(all_tags)
+                        _dicom_multi_value(all_tags["ImageType"])
                     )
                 else:
                     resource_label = "DICOM"
