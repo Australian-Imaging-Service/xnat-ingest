@@ -1061,9 +1061,14 @@ class ImagingSession:
         if scan_field is not None:
             for scan in self.scans.values():
                 try:
-                    scan.type = IDSpec(scan_field).get_value(
-                        scan.metadata, escape=False, missing_ids=missing_ids
+                    description = IDSpec(scan_field).get_value(
+                        scan.metadata, escape=False
                     )
+                    if not description.strip():
+                        raise ImagingSessionParseError(
+                            "Empty optional scan description"
+                        )
+                    scan.type = description
                 except ImagingSessionParseError:
                     logger.debug(
                         "Could not resolve a description for scan '%s' from field "
@@ -1071,7 +1076,7 @@ class ImagingSession:
                         scan.id,
                         scan_field,
                     )
-                    scan.type = scan.id
+                    scan.type = scan.type or "Series_" + scan.id
         return missing_ids
 
     @classmethod
@@ -1220,8 +1225,42 @@ class ImagingSession:
                 if modality := series["MainDicomTags"].get("Modality"):
                     modalities.add(modality)
                 all_tags = {**study_tags, **series["MainDicomTags"]}
-                scan_id = IDSpec("SeriesNumber").get_value(all_tags)
-                scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                fallback_fields = []
+                number = all_tags.get("SeriesNumber")
+                if number is None or not str(number).strip():
+                    # Series identity is stable across retries and late instances.
+                    # Prefer the DICOM UID; Orthanc's series ID is the fallback
+                    # when its indexed tags do not include that UID. Never use
+                    # iteration order or a shared "unknown" scan number.
+                    series_uid = all_tags.get("SeriesInstanceUID")
+                    if series_uid and str(series_uid).strip():
+                        # Match XNAT's header importer, otherwise it creates a
+                        # second scan for the same unnumbered DICOM series.
+                        scan_id = IDSpec("SeriesInstanceUID").get_value(all_tags)
+                    else:
+                        scan_id = (
+                            "series_" + hashlib.sha256(series_id.encode()).hexdigest()
+                        )
+                    fallback_fields.append("SeriesNumber")
+                else:
+                    scan_id = IDSpec("SeriesNumber").get_value(
+                        {**all_tags, "SeriesNumber": str(number)}
+                    )
+                description = all_tags.get("SeriesDescription")
+                if description is None or not str(description).strip():
+                    scan_type = "Series_" + scan_id
+                    fallback_fields.append("SeriesDescription")
+                else:
+                    scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                if fallback_fields:
+                    logger.warning(
+                        "Using a stable series fallback for missing %s",
+                        ", ".join(fallback_fields),
+                        extra={
+                            "event": "series_metadata_fallback",
+                            "orthanc_series_id": series_id,
+                        },
+                    )
 
                 if "ImageType" in all_tags:
                     resource_label = dicom_image_type_to_resource_label(
