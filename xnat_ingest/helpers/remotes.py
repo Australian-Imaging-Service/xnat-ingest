@@ -40,6 +40,10 @@ from .xnat_scan_types import (
 
 DEFAULT_MAX_WORKERS = 10
 
+# An upload loop keeps this first-listing result across sessions and passes.
+_xnat_has_checksums: bool | None = None
+_xnat_checksum_warning_lock = threading.Lock()
+
 
 @attrs.define
 class XnatRows:
@@ -909,30 +913,37 @@ def compare_resource_with_xnat(
     )
 
 
-def warn_if_compared_by_name_only(
-    comparison: ResourceComparison,
-    resource: str,
-    session: str,
-    warned_resources: ty.Optional[ty.Set[str]] = None,
+def log_name_only_comparison(
+    comparison: ResourceComparison, resource: str, session: str
 ) -> None:
-    """Report files compared without digests, including partially digested resources.
-
-    The uploader shares a set across the pre/post checks of one session attempt.
-    A later attempt can warn again; no state is retained across polling passes.
-    """
-    if comparison.without_checksums and (
-        warned_resources is None or resource not in warned_resources
-    ):
-        if warned_resources is not None:
-            warned_resources.add(resource)
-        logger.warning(
-            # Keep this phrase stable: external log alerts may match it.
+    """Keep per-resource detail at DEBUG; checksum support is reported once."""
+    if comparison.without_checksums:
+        logger.debug(
             "'%s' in '%s' has %d file(s) compared by file name only: XNAT lists them "
-            "without checksums (site checksums off, or not computed yet)",
+            "without checksums",
             resource,
             session,
             len(comparison.without_checksums),
         )
+
+
+def _report_xnat_checksum_support(checksums: ty.Mapping[str, str]) -> None:
+    """Use the first nonempty resource listing for this process's warning.
+
+    This is an observation of returned digests, not a request for site settings.
+    Empty resources do not decide support. Later partial catalogs still use the
+    same per-file comparisons, but do not add more warnings.
+    """
+    global _xnat_has_checksums
+    if not checksums:
+        return
+    with _xnat_checksum_warning_lock:
+        if _xnat_has_checksums is None:
+            _xnat_has_checksums = any(checksums.values())
+            if not _xnat_has_checksums:
+                logger.warning(
+                    "XNAT returns no file checksums; files are compared by name only"
+                )
 
 
 def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
@@ -1001,10 +1012,7 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
 
 
 def get_xnat_resource(
-    resource: ImagingResource,
-    xsession: ty.Any,
-    *,
-    warned_resources: ty.Optional[ty.Set[str]] = None,
+    resource: ImagingResource, xsession: ty.Any
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
 
@@ -1048,9 +1056,7 @@ def get_xnat_resource(
             comparison = compare_resource_with_xnat(
                 resource.checksums, get_xnat_checksums(xresource)
             )
-            warn_if_compared_by_name_only(
-                comparison, resource.path, xsession.label, warned_resources
-            )
+            log_name_only_comparison(comparison, resource.path, xsession.label)
             if comparison.repairable:
                 logger.warning(
                     "'%s' session resource exists on XNAT but is missing %d of "
@@ -1167,9 +1173,7 @@ def get_xnat_resource(
     else:
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
-        warn_if_compared_by_name_only(
-            comparison, resource.path, resource.scan.path, warned_resources
-        )
+        log_name_only_comparison(comparison, resource.path, resource.scan.path)
         if comparison.repairable:
             # We hold files XNAT does not and nothing else is wrong, so hand
             # back the shortfall. Not the whole resource: XNAT would reject or
@@ -1325,6 +1329,7 @@ def get_xnat_checksums_at(
                 f"XNAT file listing repeats resource-relative path {path!r}"
             )
         checksums[path] = row["digest"]
+    _report_xnat_checksum_support(checksums)
     return checksums
 
 
