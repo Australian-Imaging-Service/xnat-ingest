@@ -2,14 +2,17 @@ import os
 import shutil
 import traceback
 import typing as ty
+import zipfile
 from pathlib import Path
 
+from fileformats.application import Zip
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
+from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..helpers.xnat_scan_types import xnat_resource_label_from_sop_class
 from ..model.resource import ImagingResource
@@ -143,6 +146,80 @@ def _package_session(
     return packaged
 
 
+FileState = tuple[int, int, int]
+
+
+def _refuse_member_loss(
+    existing: ImagingSession, packaged: ImagingSession, shared: set[tuple[str, str]]
+) -> None:
+    """A zip about to replace a packaged one must hold every member of it.
+
+    A session staged with only part of a series (a file drop that brings more
+    images of a series already packaged) gives a zip with fewer members. Writing
+    it over the packaged one would lose the images that are not in this input,
+    and the upload stage cannot merge zips. The session fails instead, its
+    input and output both stay, and the error says why."""
+    for scan_id, label in sorted(shared):
+        old = existing.scans[scan_id].resources[label].fileset
+        new = packaged.scans[scan_id].resources[label].fileset
+        if not (isinstance(old, Zip) and isinstance(new, Zip)):
+            continue
+        with zipfile.ZipFile(old.fspath) as z:
+            old_members = set(z.namelist())
+        with zipfile.ZipFile(new.fspath) as z:
+            new_members = set(z.namelist())
+        missing = old_members - new_members
+        if missing:
+            raise ValueError(
+                f"The new {label!r} of scan {scan_id!r} lacks {len(missing)} "
+                f"member(s) of the packaged copy, for example "
+                f"{sorted(missing)[:3]}: this input holds only part of the "
+                "series, and a packaged zip cannot be merged. Both copies are "
+                "kept."
+            )
+
+
+def _file_states(session_dir: Path) -> dict[Path, FileState]:
+    """The data files of a staged session, as paths inside it, each with its
+    size, mtime and inode. Sidecars and hidden entries are not data."""
+    sidecars = {
+        ImagingResource.MANIFEST_FNAME,
+        ImagingResource.OLD_MANIFEST_FNAME,
+        Metadata.FNAME,
+    }
+    states: dict[Path, FileState] = {}
+    for f in session_dir.rglob("*"):
+        rel = f.relative_to(session_dir)
+        if f.name in sidecars or any(part.startswith(".") for part in rel.parts):
+            continue
+        if not f.is_file():
+            continue
+        st = f.stat()
+        states[rel] = (st.st_size, st.st_mtime_ns, st.st_ino)
+    return states
+
+
+def _session_files(session: ImagingSession, session_dir: Path) -> set[Path]:
+    """The data files a loaded session refers to, as paths inside its directory."""
+    return {
+        Path(path).relative_to(session_dir)
+        for resource in session.resources
+        for path in resource.fileset.all_file_paths()
+    }
+
+
+def _input_drift(
+    session_dir: Path, read_files: set[Path], read_states: dict[Path, FileState]
+) -> tuple[set[Path], set[Path]]:
+    """Files the loaded session did not carry, and files whose size, mtime or
+    inode changed (or that went) since the session was read."""
+    now = _file_states(session_dir)
+    unknown = set(now) - read_files
+    changed = {p for p, st in now.items() if read_states.get(p) != st}
+    changed |= set(read_states) - set(now)
+    return unknown, changed
+
+
 def package(
     input_dir: Path,
     output_dir: Path,
@@ -184,6 +261,11 @@ def package(
                 require_manifest=require_manifest,
                 check_checksums=True,
             )
+            # What this cycle read: the state of every data file in the
+            # directory, and the files the loaded session refers to. The unlink
+            # at the end compares against both.
+            read_states = _file_states(listing.cache_path)
+            read_files = _session_files(session, listing.cache_path)
             if not any(
                 isinstance(resource.fileset, source_datatype)
                 for scan in session.scans.values()
@@ -228,13 +310,38 @@ def package(
                         for scan in existing.scans.values()
                         for resource in scan.resources.values()
                     }
-                    stale_paths = existing_paths - expected_paths
+                    # A scan the input does not carry was packaged by an
+                    # earlier run (a series that arrived late is staged as a
+                    # session of its own): it stays. A scan the input carries
+                    # must have exactly the expected resources, or the layout
+                    # changed and the old output must go first.
+                    earlier_scans = {
+                        scan_id
+                        for scan_id, _ in existing_paths
+                        if scan_id not in packaged.scans
+                    }
+                    if earlier_scans:
+                        logger.info(
+                            "Keeping the %d earlier packaged scan(s) %s of '%s' "
+                            "beside the new ones",
+                            len(earlier_scans),
+                            sorted(earlier_scans),
+                            listing.name,
+                        )
+                    stale_paths = {
+                        p
+                        for p in existing_paths - expected_paths
+                        if p[0] not in earlier_scans
+                    }
                     if stale_paths:
                         raise ValueError(
                             f"Existing packaged session {final_dir} contains "
                             f"obsolete scan resources {sorted(stale_paths)}; "
                             "write the new layout to a fresh output directory"
                         )
+                    _refuse_member_loss(
+                        existing, packaged, expected_paths & existing_paths
+                    )
                     packaged.save(output_dir, copy_mode=copy_mode)
                 else:
                     work_dir.mkdir(parents=True)
@@ -254,7 +361,31 @@ def package(
             logger.debug(traceback.format_exc())
             errors.append(msg)
         else:
-            if unlink_source == "all":
+            unknown: set[Path] = set()
+            changed: set[Path] = set()
+            if unlink_source:
+                unknown, changed = _input_drift(
+                    listing.cache_path, read_files, read_states
+                )
+            if unknown or changed:
+                # The directory holds data this run did not package: a file the
+                # loaded session did not carry (the deidentify stage merges a
+                # late series into a session it already wrote, and its manifest
+                # can lag behind the files), or a file written again since it
+                # was read. None of it is in the output yet: keep the input, the
+                # next cycle packages it again.
+                logger.warning(
+                    "Not unlinking '%s': %d file(s) it did not carry when it was "
+                    "loaded %s and %d file(s) changed since %s. It is packaged "
+                    "again on a later cycle.",
+                    listing.name,
+                    len(unknown),
+                    sorted(str(p) for p in unknown)[:5],
+                    len(changed),
+                    sorted(str(p) for p in changed)[:5],
+                    extra={"event": "package_input_changed", "session": listing.name},
+                )
+            elif unlink_source == "all":
                 shutil.rmtree(listing.cache_path)
             elif unlink_source == "keep-metadata":
                 session.unlink(keep_metadata=True)
