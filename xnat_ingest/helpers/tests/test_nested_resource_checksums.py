@@ -130,7 +130,10 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
     ]
     remote = _resource(rows)
     xsession = SimpleNamespace(
-        scans={}, resources={"DATA": remote}, xnat_session=remote.xnat_session
+        label="sess",
+        scans={},
+        resources={"DATA": remote},
+        xnat_session=remote.xnat_session,
     )
     connection = remote.xnat_session
 
