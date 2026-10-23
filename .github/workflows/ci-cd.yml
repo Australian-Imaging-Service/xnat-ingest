@@ -22,7 +22,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v6
       with:
         python-version: "3.13"
     - name: Set up uv
@@ -68,7 +68,7 @@ jobs:
       run:  echo "NO_ET=TRUE" >> $GITHUB_ENV
 
     - name: Set up Python ${{ matrix.python-version }} on ${{ matrix.os }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -132,7 +132,7 @@ jobs:
       # because the Github action bot is not a collaborator on the repo
       run: git config --local --unset http.https://github.com/.extraheader
     - name: Set up Python
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v6
       with:
         python-version: '3.12'
     - name: Install build tools
@@ -153,9 +153,9 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     - name: Setup Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v6
       with:
-        python-version: 3.x
+        python-version: '3.14'
     - name: Install dependencies
       run: |
         python3 -m pip install --break-system-packages --upgrade pip

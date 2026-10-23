@@ -83,3 +83,7 @@ Rather than writing these manifests from scratch, `ais-edge
 <https://github.com/Australian-Imaging-Service/ais-edge>`_ provides ready-made Helm
 charts for deploying *XNAT Ingest* (alongside other edge-node components) to
 Kubernetes, and is a good starting point for a production setup.
+
+Orthanc grouping builds each study below ``__build__`` before an atomic rename.
+Use one group-orthanc producer per output directory. A retry removes its stale
+build; converter children that outlive their parent are outside this contract.

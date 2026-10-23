@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -9,6 +10,7 @@ from pathlib import Path
 import attrs
 from fileformats.application import Json
 from fileformats.core import FileSet
+from fileformats.core.exceptions import FormatMismatchError
 from fileformats.generic import Directory
 from typing_extensions import Self
 
@@ -130,7 +132,9 @@ class ImagingResource:
             Whether to overwrite the resource if it already exists, if None then the files
             are overwritten if they are newer than the ones saved, otherwise a warning is
             issued, if False an exception will be raised, if True then the resource is
-            saved regardless of the files being newer
+            saved regardless of the files being newer. An existing resource that is
+            incomplete (no manifest, a manifest that cannot be read, or files that do
+            not match the manifest) is always replaced
 
         build_dir: Path, optional
             Directory for complete resource builds on the destination filesystem.
@@ -145,14 +149,32 @@ class ImagingResource:
         Raises
         ------
         FileExistsError
-            If the resource already exists and overwrite is False or None and the files
-            are not newer
+            If a complete resource already exists and overwrite is False or None and
+            the files are not newer
         """
         fileset = self.fileset
         resource_dir = dest_dir / self.name
         checksums = (
             self.calculate_checksums() if calculate_checksums else self.checksums
         )
+        if resource_dir.exists() and not self.manifest_fpath(resource_dir).exists():
+            # A producer stopped after it wrote data files and before it published
+            # the manifest. It can leave the temporary manifest. This save cannot
+            # verify these files and it holds the complete resource, so it
+            # replaces the directory. It does not compare file times. The files
+            # left behind can be newer than an input that did not change, and
+            # then that check refused every later save.
+            tmp_fpath = resource_dir / self.MANIFEST_TMP_FNAME
+            detail = (
+                f" (a save stopped before it moved '{tmp_fpath.name}' into place)"
+                if tmp_fpath.exists()
+                else ""
+            )
+            logger.warning(
+                f"Resource '{self.name}' already exists in '{dest_dir}', but it has "
+                f"no manifest{detail}, so it is incomplete, overwriting"
+            )
+            shutil.rmtree(resource_dir)
         if resource_dir.exists():
             try:
                 loaded = self.load(resource_dir, require_manifest=False)
@@ -177,6 +199,19 @@ class ImagingResource:
                 logger.warning(
                     f"Resource '{self.name}' already exists in '{dest_dir}', but it is "
                     "incomplete, overwriting"
+                )
+            except FormatMismatchError as exc:
+                # The manifest cannot be read, or the files do not match the
+                # format it names. A producer killed while it wrote the manifest
+                # left this behind (before the manifest was published in one
+                # step). Nothing in the directory can be verified and this save
+                # holds the complete resource, so replace the directory. Stages
+                # that only load (package, upload) still refuse such a resource.
+                # The publish below moves the old directory aside, so no
+                # removal is needed here.
+                logger.warning(
+                    f"Resource '{self.name}' already exists in '{dest_dir}', but it "
+                    f"cannot be loaded ({exc}), overwriting"
                 )
         collation = FileSet.CopyCollation.any
         if collation_map:
@@ -217,7 +252,7 @@ class ImagingResource:
                 crypto=hashlib.md5, relative_to=built
             )
             manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
-            Json.new(built / self.MANIFEST_FNAME, manifest)
+            self.write_manifest(built, manifest)
             self.metadata.save(built)
             relative_paths = [p.relative_to(built) for p in saved_fileset.fspaths]
             backup = temporary / "previous"
@@ -237,6 +272,25 @@ class ImagingResource:
         )
 
     @classmethod
+    def write_manifest(cls, resource_dir: Path, manifest: dict[str, ty.Any]) -> None:
+        """Publish the manifest in one step. The file is written beside its final
+        name and moved into place with os.replace, which is atomic on one file
+        system, so a reader never finds a truncated manifest when this process
+        dies mid-write. A process that dies before the move leaves the data files
+        and ``MANIFEST_TMP_FNAME``, but no manifest. A load that requires a
+        manifest refuses that directory. Readers ignore this publication file,
+        including when a staging copy contains both it and a valid manifest.
+        The producer's next save replaces a directory without a manifest,
+        whatever the file times."""
+        fspath = resource_dir / cls.MANIFEST_FNAME
+        tmp = resource_dir / cls.MANIFEST_TMP_FNAME
+        with open(tmp, "w") as f:
+            json.dump(manifest, f)
+            f.flush()
+            os.fsync(f.fileno())  # on disk before it gets the final name
+        os.replace(tmp, fspath)
+
+    @classmethod
     def load(
         cls,
         resource_dir: Path,
@@ -253,6 +307,10 @@ class ImagingResource:
             p
             for p in resource_dir.rglob("*")
             if p.is_file()
+            # Only the publisher's temporary file at the resource root is
+            # metadata. Other .tmp names, and this name inside a data directory,
+            # still participate in the checksum checks.
+            and p != resource_dir / cls.MANIFEST_TMP_FNAME
             and p.name
             not in (cls.MANIFEST_FNAME, cls.OLD_MANIFEST_FNAME, Metadata.FNAME)
         ]
@@ -362,4 +420,5 @@ class ImagingResource:
         return manifest_file
 
     MANIFEST_FNAME = "__MANIFEST__.json"
+    MANIFEST_TMP_FNAME = MANIFEST_FNAME + ".tmp"
     OLD_MANIFEST_FNAME = "MANIFEST.json"

@@ -21,6 +21,8 @@ these don't need a running XNAT server (unlike test_cli.py's
 test_stage_and_upload).
 """
 
+import os
+import signal
 import tempfile
 import typing as ty
 from pathlib import Path
@@ -238,6 +240,38 @@ def test_runs_that_share_a_temp_dir_use_their_own_cache_dir(
     assert all(d.parent.parent == tmp_path for d in cache_dirs)
     assert not any(d.exists() for d in cache_dirs)
     assert callers_file.exists()
+
+
+def test_sigterm_during_a_pass_removes_the_run_dir(
+    cli_runner: ty.Any, tmp_path: Path, monkeypatch: ty.Any
+) -> None:
+    """A stop sends SIGTERM. Python ended on it before the finally block ran,
+    so every stop left the run directory behind. The command must exit with
+    143 and the directory must be gone."""
+    monkeypatch.setattr(tempfile, "tempdir", None)  # the CLI sets it
+    previous = signal.getsignal(signal.SIGTERM)
+    cache_dirs: ty.List[Path] = []
+
+    def stop_during_the_pass(**kwargs: ty.Any) -> ty.List[str]:
+        cache_dirs.append(Path(kwargs["s3_cache_dir"]))
+        os.kill(os.getpid(), signal.SIGTERM)
+        return []
+
+    try:
+        result, _, mock_upload = _run_loop(
+            cli_runner,
+            upload_side_effect=stop_during_the_pass,
+            sleep_side_effect=[_StopLoop()],
+            extra_args=["--temp-dir", str(tmp_path)],
+        )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert result.exit_code == 143, show_cli_trace(result)
+    assert mock_upload.call_count == 1
+    assert cache_dirs[0].parent.name.startswith("xnat-ingest-upload-")
+    assert not cache_dirs[0].parent.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_reconnects_reuse_one_xnat_cache_dir_and_remove_it_on_exit(
