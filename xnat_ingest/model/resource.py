@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 import typing as ty
 from pathlib import Path
 
@@ -108,6 +109,7 @@ class ImagingResource:
         ) = None,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
+        build_dir: Path | None = None,
     ) -> Self:
         """Save the resource to a directory
 
@@ -133,6 +135,11 @@ class ImagingResource:
             saved regardless of the files being newer. An existing resource that is
             incomplete (no manifest, a manifest that cannot be read, or files that do
             not match the manifest) is always replaced
+
+        build_dir: Path, optional
+            Directory for complete resource builds on the destination filesystem.
+            Session.save supplies a directory outside the visible session.
+            Standalone saves use a hidden directory inside dest_dir.
 
         Returns
         -------
@@ -179,7 +186,6 @@ class ImagingResource:
                     logger.warning(
                         f"Resource '{self.name}' already exists in '{dest_dir}', overwriting"
                     )
-                    shutil.rmtree(resource_dir)
                 else:
                     if overwrite is None:
                         msg = "and the files are not older than the ones to be be saved"
@@ -194,7 +200,6 @@ class ImagingResource:
                     f"Resource '{self.name}' already exists in '{dest_dir}', but it is "
                     "incomplete, overwriting"
                 )
-                shutil.rmtree(resource_dir)
             except FormatMismatchError as exc:
                 # The manifest cannot be read, or the files do not match the
                 # format it names. A producer killed while it wrote the manifest
@@ -202,11 +207,12 @@ class ImagingResource:
                 # step). Nothing in the directory can be verified and this save
                 # holds the complete resource, so replace the directory. Stages
                 # that only load (package, upload) still refuse such a resource.
+                # The publish below moves the old directory aside, so no
+                # removal is needed here.
                 logger.warning(
                     f"Resource '{self.name}' already exists in '{dest_dir}', but it "
                     f"cannot be loaded ({exc}), overwriting"
                 )
-                shutil.rmtree(resource_dir)
         collation = FileSet.CopyCollation.any
         if collation_map:
             for dtype, coll_level in collation_map.items():
@@ -227,15 +233,40 @@ class ImagingResource:
                     # The convert implementation is expected to return a FileSet for the converted data.
                     fileset = tgt_type.convert(fileset, **options)
                     break
-        saved_fileset = fileset.copy(
-            resource_dir, mode=copy_mode, trim=True, collation=collation
-        )
-        saved_checksums = saved_fileset.hash_files(
-            crypto=hashlib.md5, relative_to=resource_dir
-        )
-        manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
-        self.write_manifest(resource_dir, manifest)
-        self.metadata.save(resource_dir)
+        # Keep the previous resource readable while the replacement is built.
+        # Publish files, manifest and metadata together. Replacement of an
+        # existing directory has a brief absence window, but never exposes a
+        # partly copied file. This is not a transaction across resources.
+        build_dir = build_dir if build_dir is not None else dest_dir
+        build_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if build_dir.stat().st_dev != dest_dir.stat().st_dev:
+            raise ValueError("Resource build and destination must share a filesystem")
+        with tempfile.TemporaryDirectory(prefix=".resource-", dir=build_dir) as tmp:
+            temporary = Path(tmp)
+            built = temporary / "new"
+            saved_fileset = fileset.copy(
+                built, mode=copy_mode, trim=True, collation=collation
+            )
+            saved_checksums = saved_fileset.hash_files(
+                crypto=hashlib.md5, relative_to=built
+            )
+            manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
+            self.write_manifest(built, manifest)
+            self.metadata.save(built)
+            relative_paths = [p.relative_to(built) for p in saved_fileset.fspaths]
+            backup = temporary / "previous"
+            if resource_dir.exists():
+                os.replace(resource_dir, backup)
+            try:
+                os.replace(built, resource_dir)
+            except OSError:
+                if backup.exists():
+                    os.replace(backup, resource_dir)
+                raise
+            saved_fileset = type(saved_fileset)(
+                resource_dir / p for p in relative_paths
+            )
         return type(self)(
             name=self.name, fileset=saved_fileset, checksums=saved_checksums
         )
