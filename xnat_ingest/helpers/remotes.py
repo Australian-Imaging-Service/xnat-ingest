@@ -19,6 +19,7 @@ import paramiko
 import xnat
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
+from dateutil import parser as dateutil_parser
 from fileformats.application import Json
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
@@ -549,7 +550,60 @@ def remove_old_files_on_ssh(remote_store: str, threshold: int) -> None:
     ssh_client.close()
 
 
-def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
+def _session_date_from_metadata(session: ImagingSession, field: str) -> str:
+    """Resolve a metadata field to one ISO-formatted calendar date."""
+
+    try:
+        value = session.metadata[field]
+    except KeyError:
+        raise ValueError(
+            f"Could not set the XNAT session date for '{session.name}': metadata "
+            f"field '{field}' was not found. Available metadata fields: "
+            f"{sorted(session.metadata.keys())}"
+        ) from None
+
+    def iter_values(item: ty.Any) -> ty.Iterator[ty.Any]:
+        if isinstance(item, (list, tuple, set)):
+            for child in item:
+                yield from iter_values(child)
+        elif item is not None and item != "":
+            yield item
+
+    dates: set[datetime.date] = set()
+    for item in iter_values(value):
+        if isinstance(item, datetime.datetime):
+            parsed = item.date()
+        elif isinstance(item, datetime.date):
+            parsed = item
+        else:
+            try:
+                parsed = dateutil_parser.parse(str(item)).date()
+            except (ValueError, OverflowError) as e:
+                raise ValueError(
+                    f"Could not set the XNAT session date for '{session.name}': "
+                    f"value {item!r} from metadata field '{field}' is not a valid date"
+                ) from e
+        dates.add(parsed)
+
+    if not dates:
+        raise ValueError(
+            f"Could not set the XNAT session date for '{session.name}': metadata "
+            f"field '{field}' has no date value"
+        )
+    if len(dates) > 1:
+        raise ValueError(
+            f"Could not set the XNAT session date for '{session.name}': metadata "
+            f"field '{field}' resolves to multiple dates: "
+            f"{sorted(date.isoformat() for date in dates)}"
+        )
+    return next(iter(dates)).isoformat()
+
+
+def get_xnat_session(
+    session: ImagingSession,
+    xproject: ty.Any,
+    date_field: str | None = None,
+) -> ty.Any:
     """Get the XNAT session object for the given session
 
     Parameters
@@ -558,6 +612,9 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
         the session to upload
     xnat_repo : Xnat
         the XNAT repository to upload to
+    date_field : str, optional
+        Session metadata field to use as the date when creating a new XNAT
+        session. Existing sessions are returned unchanged.
 
     Returns
     -------
@@ -566,10 +623,14 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
     """
     xclasses = xproject.xnat_session.classes
 
-    xsubject = xclasses.SubjectData(label=session.subject_id, parent=xproject)
     try:
         xsession = xproject.experiments[session.session_id]
     except KeyError:
+        session_date = (
+            _session_date_from_metadata(session, date_field)
+            if date_field is not None
+            else None
+        )
         if "MR" in session.modalities:
             SessionClass = xclasses.MrSessionData
         elif "PT" in session.modalities:
@@ -581,7 +642,14 @@ def get_xnat_session(session: ImagingSession, xproject: ty.Any) -> ty.Any:
                 "Found the following unsupported modalities in "
                 f"{session.name}: {session.modalities}"
             )
-        xsession = SessionClass(label=session.session_id, parent=xsubject)
+        xsubject = xclasses.SubjectData(label=session.subject_id, parent=xproject)
+        session_kwargs: dict[str, ty.Any] = {
+            "label": session.session_id,
+            "parent": xsubject,
+        }
+        if session_date is not None:
+            session_kwargs["date"] = session_date
+        xsession = SessionClass(**session_kwargs)
     return xsession
 
 

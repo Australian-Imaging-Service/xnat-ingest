@@ -80,6 +80,7 @@ def upload(
     dry_run: bool = False,
     s3_max_workers: int = DEFAULT_MAX_WORKERS,
     xnat_max_workers: int = DEFAULT_MAX_WORKERS,
+    date_field: str | None = None,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -115,6 +116,9 @@ def upload(
         The maximum number of concurrent S3 object downloads. Defaults to 10.
     xnat_max_workers: int, optional
         The maximum number of concurrent XNAT resource uploads. Defaults to 10.
+    date_field: str, optional
+        Session metadata field to use as the XNAT session date when creating a
+        session. Existing XNAT sessions are not modified.
     """
 
     errors = []
@@ -312,7 +316,7 @@ def upload(
                     framesets[session.project_id] = frameset
 
                 # Get the XNAT session object (creates it if it does not exist)
-                xsession = get_xnat_session(session, xproject)
+                xsession = get_xnat_session(session, xproject, date_field=date_field)
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:

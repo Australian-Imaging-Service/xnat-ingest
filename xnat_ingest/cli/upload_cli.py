@@ -93,6 +93,18 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     ),
 )
 @click.option(
+    "--date",
+    "date_field",
+    type=str,
+    default=None,
+    envvar="XINGEST_DATE",
+    help=(
+        "Session metadata field to use as the XNAT session date when creating a "
+        "session. The value must resolve to one calendar date "
+        "(XINGEST_DATE env. var)."
+    ),
+)
+@click.option(
     "--raise-errors/--dont-raise-errors",
     default=False,
     type=bool,
@@ -232,6 +244,7 @@ def upload_cmd(
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
     always_include: ty.Sequence[str],
+    date_field: str | None,
     raise_errors: bool,
     store_credentials: StoreCredentials,
     temp_dir: ty.Optional[Path],
@@ -364,6 +377,7 @@ def upload_cmd(
                     ),
                     s3_max_workers=s3_max_workers,
                     xnat_max_workers=xnat_max_workers,
+                    date_field=date_field,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has

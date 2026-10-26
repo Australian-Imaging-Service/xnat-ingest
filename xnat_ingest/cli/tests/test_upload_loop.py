@@ -43,6 +43,7 @@ CLEAN_ENV = {
     "XINGEST_PASS": None,
     "XINGEST_STAGED": None,
     "XINGEST_LOOP": None,
+    "XINGEST_DATE": None,
 }
 
 
@@ -204,3 +205,20 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
     )
     assert mock_xnat_cls.call_count == 1
     assert mock_upload.call_count == 1
+
+
+def test_date_field_is_passed_to_upload(cli_runner: ty.Any) -> None:
+    with (
+        patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("xnat_ingest.cli.upload_cli.upload", return_value=[]) as mock_upload,
+    ):
+        mock_xnat_cls.return_value = MagicMock()
+
+        result = cli_runner(
+            upload_cmd,
+            COMMON_ARGS + ["--date", "CaptureDate"],
+            env=CLEAN_ENV,
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert mock_upload.call_args.kwargs["date_field"] == "CaptureDate"

@@ -370,6 +370,9 @@ projects/subjects/sessions/scans/resources as needed.
   (``XINGEST_STAGED``)
 * ``SERVER`` — the XNAT server address (``XINGEST_HOST``)
 * ``--user``/``--password`` — XNAT credentials (``XINGEST_USER``/``XINGEST_PASS``)
+* ``--date <field>`` — when creating a session, set its date from the named
+  session metadata field (``XINGEST_DATE``). Repeated values must all resolve to
+  the same calendar date; existing XNAT sessions are not changed.
 
 Credentials are read from the environment if the flags are omitted, so on a shared
 node you'd typically set ``XINGEST_HOST``, ``XINGEST_USER`` and ``XINGEST_PASS`` once
