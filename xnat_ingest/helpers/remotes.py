@@ -154,6 +154,10 @@ class SessionListing(metaclass=abc.ABCMeta):
     def session_id(self) -> str:
         return self.ids[2]
 
+    @property
+    def is_session_only(self) -> bool:
+        return False
+
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
         """Resolve this listing to the XNAT session it belongs to, or None.
 
@@ -359,6 +363,39 @@ class LocalSessionListing(SessionListing):
         return self.ids[2]
 
 
+def _find_xnat_session_by_label(
+    connection: xnat.XNATSession, session_id: str
+) -> ty.Any:
+    matches = [
+        experiment
+        for experiment in connection.experiments.values()
+        if experiment.label == session_id
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple XNAT sessions found with label '{session_id}'. "
+            "Session labels must be globally unique for session-only uploads."
+        )
+    return matches[0] if matches else None
+
+
+def _find_xnat_session_uri_by_label(
+    connection: xnat.XNATSession, session_id: str
+) -> ty.Optional[str]:
+    experiments = XnatRows.read(connection, "/data/experiments", "label")
+    matches = [
+        experiment
+        for experiment in experiments.by_id().values()
+        if experiment.get("label") == session_id
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple XNAT sessions found with label '{session_id}'. "
+            "Session labels must be globally unique for session-only uploads."
+        )
+    return f"/data/experiments/{matches[0]['ID']}" if matches else None
+
+
 @attrs.define
 class SessionOnlyListing(SessionListing):
     """A staging directory named by session label only (no project.subject.visit structure).
@@ -383,6 +420,10 @@ class SessionOnlyListing(SessionListing):
         return self.fspath.name
 
     @property
+    def is_session_only(self) -> bool:
+        return True
+
+    @property
     def resource_paths(self) -> set[str]:
         # FIXME: This doesn't look right. It looks like it is picking out the
         # scan level not the session level.
@@ -397,31 +438,14 @@ class SessionOnlyListing(SessionListing):
 
         Returns None if not found, raises RuntimeError if multiple sessions match.
         """
-        matches = [
-            e for e in connection.experiments.values() if e.label == self.session_id
-        ]
-        if len(matches) > 1:
-            raise RuntimeError(
-                f"Multiple XNAT sessions found with label '{self.session_id}'. "
-                "Session labels must be globally unique for session-only uploads."
-            )
-        return matches[0] if matches else None
+        return _find_xnat_session_by_label(connection, self.session_id)
 
     def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
         """Like find_xnat_session(), but returns the session's REST URI, or None.
 
         It reads XNAT directly and builds no xnatpy objects (see XnatRows).
         """
-        experiments = XnatRows.read(connection, "/data/experiments", "label")
-        matches = [
-            e for e in experiments.by_id().values() if e.get("label") == self.session_id
-        ]
-        if len(matches) > 1:
-            raise RuntimeError(
-                f"Multiple XNAT sessions found with label '{self.session_id}'. "
-                "Session labels must be globally unique for session-only uploads."
-            )
-        return f"/data/experiments/{matches[0]['ID']}" if matches else None
+        return _find_xnat_session_uri_by_label(connection, self.session_id)
 
     # all_uploaded is deliberately NOT defined here. Only the session lookup
     # (find_xnat_session and find_xnat_session_uri) differs between the modes;
@@ -536,6 +560,25 @@ class S3SessionListing(SessionListing):
         return manifests
 
 
+@attrs.define
+class S3SessionOnlyListing(S3SessionListing):
+    """An S3 staging folder named only by its existing XNAT session label."""
+
+    @property
+    def session_id(self) -> str:
+        return self.name
+
+    @property
+    def is_session_only(self) -> bool:
+        return True
+
+    def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
+        return _find_xnat_session_by_label(connection, self.session_id)
+
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        return _find_xnat_session_uri_by_label(connection, self.session_id)
+
+
 def iterate_s3_sessions(
     bucket_path: str,
     store_credentials: StoreCredentials,
@@ -612,7 +655,10 @@ def iterate_s3_sessions(
             if (
                 datetime.datetime.now(datetime.timezone.utc) - last_modified
             ) >= datetime.timedelta(seconds=wait_period):
-                yield S3SessionListing(
+                Listing = (
+                    S3SessionListing if "." in session_name else S3SessionOnlyListing
+                )
+                yield Listing(
                     name=session_name,
                     objects=session_objs[session_name],
                     bucket=bucket,

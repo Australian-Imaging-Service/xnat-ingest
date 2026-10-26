@@ -375,6 +375,15 @@ Credentials are read from the environment if the flags are omitted, so on a shar
 node you'd typically set ``XINGEST_HOST``, ``XINGEST_USER`` and ``XINGEST_PASS`` once
 in the environment rather than passing them on every invocation.
 
+To attach session-level resources to an existing XNAT session, the staging directory
+may be named with the session label alone. This works for local and S3 staging. The
+label must match exactly one session accessible to the upload account; no match or
+multiple matches is an error. For example,
+``000077/radiology-doc-report/report.pdf`` uploads into the
+``radiology-doc-report`` resource of session ``000077``. Assigned
+``PROJECT.SUBJECT.SESSION`` directories continue to use their project, subject and
+session IDs.
+
 At the upload stage you are able to filter which resources get uploaded based on their
 file types. This can be specified by the "always-include" flag, e.g. ``--always-include medimage/dicom-series``
 (defaults to all file types ``--always-include all``) uploads every file found in the session
