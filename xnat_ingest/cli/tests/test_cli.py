@@ -1372,9 +1372,6 @@ def test_check_upload_missing_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
-@pytest.mark.xfail(
-    reason="Requires https://gitlab.com/radiology/infrastructure/xnatpy/-/merge_requests/68 to be merged and released"
-)
 @mock_aws
 def test_check_upload_empty_scan(
     xnat_server: str,
@@ -1514,9 +1511,6 @@ def test_check_upload_empty_scan(
     assert "CHECKSUM FAIL" not in logs
 
 
-@pytest.mark.xfail(
-    reason="Requires https://gitlab.com/radiology/infrastructure/xnatpy/-/merge_requests/68 to be merged and released"
-)
 @mock_aws
 def test_check_upload_missing_resource(
     xnat_server: str,
