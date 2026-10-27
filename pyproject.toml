@@ -72,8 +72,8 @@ test = [
     # them), so they are not runtime dependencies; the tests need them at
     # import time. Both are on PyPI.
     "fileformats-vendor-canfield-extras",
-    "fileformats-vendor-xnat >=0.1.1",
-    "fileformats-vendor-xnat-extras >=0.1.1",
+    "fileformats-vendor-xnat >=0.3.0",
+    "fileformats-vendor-xnat-extras >=0.3.0",
 ]
 docs = [
     "packaging",
