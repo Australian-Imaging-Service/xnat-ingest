@@ -1,14 +1,18 @@
+import shutil
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from fileformats.application import Zip
 from fileformats.generic import File
 from fileformats.medimage import DicomImage, DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+import xnat_ingest.api.package_api as package_api
 from xnat_ingest.api.package_api import _package_session, package
 from xnat_ingest.cli.package_cli import package_cmd
 from xnat_ingest.model.scan import ImagingScan
@@ -327,3 +331,204 @@ def test_package_passes_a_session_without_source_resources_through(
     out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(out.scans["1"].resources) == {"SOURCE"}
     assert set(out.session_resources) == {"REPORT"}
+
+
+def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
+    tmp_path: Path,
+) -> None:
+    """A series that arrives late is staged as a session with only the new
+    scan. Its packaged output goes beside the scans packaged earlier instead of
+    being refused as an obsolete layout."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+    assert (
+        package(
+            input_dir,
+            output_dir,
+            MyFormat,
+            {"DICOM": (MyFormat, {})},
+            unlink_source="all",
+        )
+        == []
+    )
+
+    late_path = tmp_path / "late.my"
+    late_path.write_text("late series")
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(id="2", type="CT", resources={"SOURCE": MyFormat(late_path)})
+        ],
+    ).save(input_dir)
+
+    errors = package(
+        input_dir, output_dir, MyFormat, {"DICOM": (MyFormat, {})}, unlink_source="all"
+    )
+
+    assert errors == []
+    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    assert sorted(out.scans) == ["1", "2"]
+    assert set(out.scans["1"].resources) == {"DICOM"}
+    assert set(out.scans["2"].resources) == {"DICOM"}
+    assert not list(input_dir.iterdir())
+
+
+def test_package_keeps_an_input_that_changed_while_it_was_packaged(
+    tmp_path: Path,
+) -> None:
+    """A file that lands in the input during the run is in no output yet.
+    The input is kept for the next cycle instead of being removed with it."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _session, source_dir = _staged_session(input_dir)
+    original = package_api._package_session
+
+    def package_while_a_file_arrives(*args, **kwargs):
+        late = source_dir / "2.CT" / "SOURCE"
+        late.mkdir(parents=True)
+        (late / "late.my").write_text("late series")
+        return original(*args, **kwargs)
+
+    with patch.object(package_api, "_package_session", package_while_a_file_arrives):
+        errors = package(
+            input_dir,
+            output_dir,
+            MyFormat,
+            {"DICOM": (MyFormat, {})},
+            unlink_source="all",
+        )
+
+    assert errors == [], "the run itself was complete for what it read"
+    assert (source_dir / "2.CT" / "SOURCE" / "late.my").exists(), "input kept"
+
+
+def test_package_keeps_an_input_whose_file_was_written_again_while_it_was_packaged(
+    tmp_path: Path,
+) -> None:
+    """A file written again under the same name after it was read is not what
+    the output holds. The input is kept for the next cycle."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _session, source_dir = _staged_session(input_dir)
+    original = package_api._package_session
+    target = next((source_dir / "1.CT" / "SOURCE").glob("*.my"))
+
+    def package_while_a_file_is_written_again(*args, **kwargs):
+        result = original(*args, **kwargs)
+        target.write_text(target.read_text() + " and more")
+        return result
+
+    with patch.object(
+        package_api, "_package_session", package_while_a_file_is_written_again
+    ):
+        errors = package(
+            input_dir,
+            output_dir,
+            MyFormat,
+            {"DICOM": (MyFormat, {})},
+            unlink_source="all",
+        )
+
+    assert errors == []
+    assert target.exists(), "input kept"
+
+
+def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
+    tmp_path: Path,
+) -> None:
+    """A data file the loaded session did not carry (the stage before writes
+    the files first and the manifest after) is in no output. The input is
+    kept, whenever the file landed."""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _session, source_dir = _staged_session(input_dir)
+    original_load = ImagingSession.load
+    late = source_dir / "2.CT" / "SOURCE" / "late.my"
+
+    def load_then_a_file_lands(*args, **kwargs):
+        session = original_load(*args, **kwargs)
+        late.parent.mkdir(parents=True, exist_ok=True)
+        late.write_text("late series")
+        return session
+
+    with patch.object(package_api.ImagingSession, "load", load_then_a_file_lands):
+        errors = package(
+            input_dir,
+            output_dir,
+            MyFormat,
+            {"DICOM": (MyFormat, {})},
+            unlink_source="all",
+        )
+
+    assert errors == []
+    assert late.exists(), "input kept"
+    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    assert sorted(out.scans) == ["1"]
+
+
+def _dicom_series_session(root: Path, seed: Path) -> Path:
+    root.mkdir(parents=True)
+    paths = []
+    for name in ("a.dcm", "b.dcm"):
+        shutil.copy(seed / name, root / name)
+        paths.append(root / name)
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[ImagingScan(id="1", type="MR", resources={"DICOM": DicomSeries(paths)})],
+    ).save(root / "staged")
+    return root / "staged"
+
+
+def test_package_refuses_a_zip_that_would_lose_members(tmp_path: Path) -> None:
+    """A session staged with part of a series already packaged gives a smaller
+    zip. It must not replace the packaged one: the images not in this input
+    would be lost, and the upload stage cannot merge zips."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    study_uid = generate_uid()
+    for name in ("a.dcm", "b.dcm"):
+        _dicom(seed / name, "1.2.840.10008.5.1.4.1.1.4", study_uid)
+    output_dir = tmp_path / "out"
+    outputs = {"DICOM-zip": (Zip[DicomSeries], {"compression": "ZIP_STORED"})}
+    input_dir = _dicom_series_session(tmp_path / "full", seed)
+    assert (
+        package(input_dir, output_dir, DicomSeries, outputs, unlink_source="all") == []
+    )
+
+    part = tmp_path / "part"
+    part.mkdir()
+    shutil.copy(seed / "a.dcm", part / "a.dcm")
+    ImagingSession(
+        uid="uid",
+        project_id="PROJECT",
+        subject_id="SUBJECT",
+        session_id="SESSION",
+        scans=[
+            ImagingScan(
+                id="1", type="MR", resources={"DICOM": DicomSeries([part / "a.dcm"])}
+            )
+        ],
+    ).save(part / "staged")
+
+    errors = package(
+        part / "staged", output_dir, DicomSeries, outputs, unlink_source="all"
+    )
+
+    assert len(errors) == 1 and "lacks 1 member(s)" in errors[0]
+    out = ImagingSession.load(
+        output_dir / "PROJECT.SUBJECT.SESSION", check_checksums=True
+    )
+    with zipfile.ZipFile(out.scans["1"].resources["DICOM-zip"].fileset.fspath) as z:
+        assert sorted(z.namelist()) == ["a.dcm", "b.dcm"]
+    assert (part / "staged" / "PROJECT.SUBJECT.SESSION").exists(), "input kept"
