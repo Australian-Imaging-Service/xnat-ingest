@@ -502,10 +502,49 @@ class IDSpec(MultiCliTyped):
                 value = self._missing_field_placeholder(
                     base_name, metadata, missing_ids
                 )
+            elif isinstance(value, list):
+                formatted_items: list[tuple[ty.Any, str]] = []
+                for item in value:
+                    if item is None or item == "":
+                        continue
+                    formatted_item = item
+                    if (
+                        isinstance(formatted_item, str)
+                        and format_spec
+                        and "%" in format_spec
+                    ):
+                        try:
+                            formatted_item = dateutil_parser.parse(formatted_item)
+                        except (
+                            dateutil_parser.ParserError,
+                            ValueError,
+                            OverflowError,
+                        ):
+                            pass
+                    formatted_items.append(
+                        (formatted_item, format(formatted_item, format_spec))
+                    )
+                if not formatted_items:
+                    value = self._missing_field_placeholder(
+                        base_name, metadata, missing_ids
+                    )
+                else:
+                    distinct = sorted({formatted for _, formatted in formatted_items})
+                    if len(distinct) > 1:
+                        raise ImagingSessionParseError(
+                            f"Field '{base_name}' in specifier '{self.specifier}' "
+                            "resolves to multiple values after formatting: "
+                            f"{distinct}"
+                        )
+                    value = formatted_items[0][0]
             elif isinstance(value, str) and format_spec and "%" in format_spec:
                 try:
                     value = dateutil_parser.parse(value)
-                except (dateutil_parser.ParserError, ValueError, OverflowError):
+                except (
+                    dateutil_parser.ParserError,
+                    ValueError,
+                    OverflowError,
+                ):
                     pass
             values[base_name] = value
         try:

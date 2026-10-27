@@ -83,6 +83,56 @@ def test_date_format_spec_against_json_roundtripped_string() -> None:
     assert value == "subj01_20260304"
 
 
+def test_date_format_spec_collapses_list_to_single_formatted_value() -> None:
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    value = spec.get_value(
+        {
+            "PatientID": "subj01",
+            "AcquisitionDate": [
+                "2026-03-04T09:15:00",
+                None,
+                "2026-03-04T14:30:00",
+            ],
+        }
+    )
+    assert value == "subj01_20260304"
+
+
+def test_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    with pytest.raises(
+        ImagingSessionParseError,
+        match=(
+            r"Field 'AcquisitionDate'.*resolves to multiple values "
+            r"after formatting: \['20260304', '20260305'\]"
+        ),
+    ):
+        spec.get_value(
+            {
+                "PatientID": "subj01",
+                "AcquisitionDate": ["2026-03-04", "2026-03-05"],
+            }
+        )
+
+
+def test_non_date_format_spec_collapses_list_to_single_formatted_value() -> None:
+    spec = IDSpec("{PatientID}_{VisitNumber:02d}")
+    value = spec.get_value({"PatientID": "subj01", "VisitNumber": [3, None, 3]})
+    assert value == "subj01_03"
+
+
+def test_non_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
+    spec = IDSpec("{PatientID}_{VisitNumber:02d}")
+    with pytest.raises(
+        ImagingSessionParseError,
+        match=(
+            r"Field 'VisitNumber'.*resolves to multiple values after formatting: "
+            r"\['03', '04'\]"
+        ),
+    ):
+        spec.get_value({"PatientID": "subj01", "VisitNumber": [3, 4]})
+
+
 def test_non_date_string_with_percent_spec_raises() -> None:
     """A field that genuinely isn't date-like shouldn't silently produce garbage"""
     spec = IDSpec("{SeriesDescription:%Y%m%d}")

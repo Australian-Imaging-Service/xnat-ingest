@@ -217,6 +217,30 @@ eligible for re-staging. Note that ``--unlink-source`` is not yet implemented fo
 ``group-orthanc`` — the source studies always stay in Orthanc, and the processed
 label is what stops them being staged again.
 
+Missing series display tags
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``group-orthanc`` does not refuse a study solely because ``SeriesDescription`` or
+``SeriesNumber`` is missing, empty or whitespace. A missing number becomes
+``SeriesInstanceUID`` with dots replaced by underscores, matching XNAT's header
+importer so it updates the same scan. If that UID is not in Orthanc's indexed tags,
+it uses ``series_`` plus the full SHA-256 of Orthanc's series ID. The latter case
+has not been verified against XNAT's header importer. Both fallbacks are stable
+across retries on the same source. A missing description becomes
+``Series_<scan-id>``: FrameTree resource selection keys entries by scan type and
+resource name, so two types named ``unknown`` would collide. The following
+``assign`` stage retains this fallback when the description is missing or empty,
+without treating an optional display tag as a missing patient routing field.
+A numeric zero remains a valid number. Each fallback emits
+``series_metadata_fallback`` with ``orthanc_series_id``. Normal series keep their
+current labels. These labels do not repair missing study or patient identity.
+
+The generic DICOM-files ``group`` path still requires its configured ``--scan``
+expression to resolve. Its default ``SeriesNumber`` therefore needs an explicit
+``--scan SeriesInstanceUID,medimage/dicom-collection`` for sources without numbers.
+Automatic number fallback on that configurable path is a separate follow-up;
+missing optional descriptions in the shared ``assign`` path are handled above.
+
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -283,13 +307,18 @@ Add ``--unlink-source`` to clean up the ``group`` output once a session's been
 assigned. Unlike ``group``, this directory is one that xnat-ingest itself created, so
 there are two meaningfully different modes:
 
-* ``--unlink-source all`` — removes the whole grouped session directory
-* ``--unlink-source keep-metadata`` — removes just the resource data (the actual
-  image files), but leaves the session's and each scan's own metadata file
-  (``__METADATA__.json``) behind, so a lightweight, data-free skeleton of the session
-  survives on disk. See :doc:`associate` for why you'd want that.
+* ``--unlink-source all`` removes files present before assign loads the session, then empty directories.
+* ``--unlink-source keep-metadata`` removes recorded files only inside loaded
+  resource directories, then removes empty directories inside them. It keeps the
+  session and scan metadata files (``__METADATA__.json``).
+  See :doc:`associate` for how to use this metadata.
 
 Leave it unset (the default) to keep the grouped directory untouched.
+With ``all`` and ``keep-metadata``, files at new paths survive cleanup.
+Published files must remain immutable.
+A replacement at a recorded path is outside this contract.
+With ``keep-metadata``, assign records the resource directories when it loads the
+session. A new resource directory that arrives after the load stays in place.
 
 Routing datatypes through separate assignment pathways
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -377,6 +406,15 @@ projects/subjects/sessions/scans/resources as needed.
 Credentials are read from the environment if the flags are omitted, so on a shared
 node you'd typically set ``XINGEST_HOST``, ``XINGEST_USER`` and ``XINGEST_PASS`` once
 in the environment rather than passing them on every invocation.
+
+To attach session-level resources to an existing XNAT session, the staging directory
+may be named with the session label alone. This works for local and S3 staging. The
+label must match exactly one session accessible to the upload account; no match or
+multiple matches is an error. For example,
+``000077/radiology-doc-report/report.pdf`` uploads into the
+``radiology-doc-report`` resource of session ``000077``. Assigned
+``PROJECT.SUBJECT.SESSION`` directories continue to use their project, subject and
+session IDs.
 
 At the upload stage you are able to filter which resources get uploaded based on their
 file types. This can be specified by the "always-include" flag, e.g. ``--always-include medimage/dicom-series``

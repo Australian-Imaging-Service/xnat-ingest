@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import os
 import pprint
+import re
 import shutil
 import tempfile
 import threading
@@ -25,7 +26,7 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
-from ..exceptions import IncompleteCheckumsException
+from ..exceptions import IncompleteCheckumsException, UnsupportedModalityError
 from ..model.resource import ImagingResource
 from ..model.scan import ImagingScan
 from ..model.session import ImagingSession
@@ -39,6 +40,67 @@ from .xnat_scan_types import (
 )
 
 DEFAULT_MAX_WORKERS = 10
+
+# An upload loop keeps this first-listing result across sessions and passes.
+_xnat_has_checksums: bool | None = None
+_xnat_checksum_warning_lock = threading.Lock()
+
+
+@attrs.define
+class XnatRows:
+    """One XNAT REST listing as plain rows, without xnatpy objects.
+
+    xnatpy 0.7.2 retains listing objects in a class-level registry. In 0.8.1,
+    the registry instead accumulates weak references during repeated reads.
+    Code that runs on every pass of `upload --loop` reads XNAT through this
+    class without adding registry entries. It sends the request that
+    xnatpy's XNATListing sends and applies the same rules to the result.
+    """
+
+    rows: list[dict[str, ty.Any]]
+
+    @classmethod
+    def read(
+        cls,
+        connection: xnat.XNATSession,
+        uri: str,
+        lookup_field: str,
+        xsi_type: str | None = None,
+    ) -> "XnatRows":
+        columns = f"ID,URI,{lookup_field}"
+        if xsi_type is None:
+            columns += ",xsiType"
+        result = connection.get_json(uri, query={"columns": columns})
+        rows = []
+        for row in result["ResultSet"]["Result"]:
+            if "URI" not in row and "ID" not in row:
+                # A resource row has no ID column (as in xnatpy)
+                row["ID"] = row.get("xnat_abstractresource_id", row.get("label"))
+            row_type = row.get("xsiType", row.get("element_name", xsi_type)) or ""
+            if not str(row.get("ID") or "").strip() or not row_type.strip():
+                continue  # xnatpy skips these as empty objects
+            rows.append(row)
+        return cls(rows)
+
+    def by_id(self) -> dict[str, dict[str, ty.Any]]:
+        """The rows by ID, as XNATListing.values() sees them."""
+        return {row["ID"]: row for row in self.rows}
+
+    def lookup(self, key: str, lookup_field: str) -> dict[str, ty.Any]:
+        """Find a row by ID, then by `lookup_field`, as XNATListing does.
+
+        Raises
+        ------
+        KeyError
+            if no row matches, or more than one row has `key` in `lookup_field`
+        """
+        by_id = self.by_id()
+        if key in by_id:
+            return by_id[key]
+        matches = [row for row in self.rows if row.get(lookup_field) == key]
+        if len(matches) != 1:
+            raise KeyError(key)
+        return matches[0]
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -97,6 +159,10 @@ class SessionListing(metaclass=abc.ABCMeta):
     def session_id(self) -> str:
         return self.ids[2]
 
+    @property
+    def is_session_only(self) -> bool:
+        return False
+
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
         """Resolve this listing to the XNAT session it belongs to, or None.
 
@@ -121,33 +187,73 @@ class SessionListing(metaclass=abc.ABCMeta):
         except KeyError:
             return None
 
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        """Like find_xnat_session(), but returns the session's REST URI, or None.
+
+        It reads XNAT directly and builds no xnatpy objects (see XnatRows).
+        """
+        projects = XnatRows.read(
+            connection, "/data/archive/projects", "name", xsi_type="xnat:projectData"
+        )
+        try:
+            project = projects.lookup(self.project_id, "name")
+        except KeyError:
+            raise KeyError(
+                "Project '{}' does not exist on XNAT".format(self.project_id)
+            ) from None
+        experiments = XnatRows.read(
+            connection, f"/data/projects/{project['ID']}/experiments", "label"
+        )
+        try:
+            experiment = experiments.lookup(self.session_id, "label")
+        except KeyError:
+            return None
+        # The session's own URI, not one under the project. XNAT does not list
+        # scans under /data/projects/<P>/experiments/<E>/scans (it returns the
+        # session document), and /data/experiments/<E> works for a session
+        # that is shared into this project.
+        return f"/data/experiments/{experiment['ID']}"
+
     def all_uploaded(self, connection: xnat.XNATSession) -> bool:
         """Checks whether all the resources in this session have been uploaded to XNAT
 
+        It reads XNAT directly on every call and builds no xnatpy objects. So
+        the answer never comes from a cache, and `upload --loop` does not leave
+        objects behind on each pass.
+
         Parameters
         ----------
-        session : ImagingSession
-            the session to upload
-        xnat_repo : Xnat
-            the XNAT repository to upload to
+        connection : xnat.XNATSession
+            the XNAT connection to read from
 
         Returns
         -------
-        xsession : xnat.classes.ExperimentData | None
-            the XNAT session object
+        bool
+            whether every staged resource is complete on XNAT
         """
-        xsession = self.find_xnat_session(connection)
-        if xsession is None:
+        session_uri = self.find_xnat_session_uri(connection)
+        if session_uri is None:
             return False
 
-        xresources = {}
-        xresources_by_scan_id: dict[str, list[ty.Any]] = defaultdict(list)
-        for xscan in xsession.scans.values():
-            for xresource in xscan.resources.values():
-                xresources[f"{xscan.id}.{xscan.type}/{xresource.label}"] = xresource
-                xresources_by_scan_id[str(xscan.id)].append(xresource)
-        for xresource in xsession.resources.values():
-            xresources[xresource.label] = xresource
+        # Resource path -> URI of the resource's file listing
+        xresources: dict[str, str] = {}
+        xresources_by_scan_id: dict[str, list[str]] = defaultdict(list)
+        scans = XnatRows.read(connection, f"{session_uri}/scans", "type")
+        for scan in scans.by_id().values():
+            scan_uri = f"{session_uri}/scans/{scan['ID']}"
+            resources = XnatRows.read(connection, f"{scan_uri}/resources", "label")
+            for resource in resources.by_id().values():
+                files_uri = f"{scan_uri}/resources/{resource['ID']}/files"
+                path = f"{scan['ID']}.{scan.get('type')}/{resource.get('label')}"
+                xresources[path] = files_uri
+                xresources_by_scan_id[str(scan["ID"])].append(files_uri)
+        session_resources = XnatRows.read(
+            connection, f"{session_uri}/resources", "label"
+        )
+        for resource in session_resources.by_id().values():
+            xresources[resource.get("label")] = (
+                f"{session_uri}/resources/{resource['ID']}/files"
+            )
 
         # A resource that EXISTS is not necessarily a resource that is
         # COMPLETE: one holding 5 of 8 files carries the same label as one
@@ -173,13 +279,14 @@ class SessionListing(metaclass=abc.ABCMeta):
             )
             return False
 
-        xnat_checksums_cache: dict[int, dict[str, str]] = {}
+        xnat_checksums_cache: dict[str, dict[str, str]] = {}
 
-        def xnat_checksums(xresource: ty.Any) -> dict[str, str]:
-            key = id(xresource)
-            if key not in xnat_checksums_cache:
-                xnat_checksums_cache[key] = get_xnat_checksums(xresource)
-            return xnat_checksums_cache[key]
+        def xnat_checksums(files_uri: str) -> dict[str, str]:
+            if files_uri not in xnat_checksums_cache:
+                xnat_checksums_cache[files_uri] = get_xnat_checksums_at(
+                    connection, files_uri
+                )
+            return xnat_checksums_cache[files_uri]
 
         for resource_path in sorted(self.resource_paths):
             manifest = manifests.get(resource_path)
@@ -238,7 +345,13 @@ class LocalSessionListing(SessionListing):
 
     @property
     def resource_paths(self) -> set[str]:
-        paths = {str(p.relative_to(self.fspath)) for p in self.fspath.glob("*/*")}
+        # Hidden entries are not resources, as the loaders treat them: an upload
+        # batch folder (".<resource>-upload-*") that a killed uploader left.
+        paths = {
+            str(p.relative_to(self.fspath))
+            for p in self.fspath.glob("*/*")
+            if not p.name.startswith(".") and not p.parent.name.startswith(".")
+        }
         # session resources: top-level dirs with no "." in name
         for item in self.fspath.iterdir():
             if item.is_dir() and "." not in item.name:
@@ -253,6 +366,39 @@ class LocalSessionListing(SessionListing):
     @property
     def session_id(self) -> str:
         return self.ids[2]
+
+
+def _find_xnat_session_by_label(
+    connection: xnat.XNATSession, session_id: str
+) -> ty.Any:
+    matches = [
+        experiment
+        for experiment in connection.experiments.values()
+        if experiment.label == session_id
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple XNAT sessions found with label '{session_id}'. "
+            "Session labels must be globally unique for session-only uploads."
+        )
+    return matches[0] if matches else None
+
+
+def _find_xnat_session_uri_by_label(
+    connection: xnat.XNATSession, session_id: str
+) -> ty.Optional[str]:
+    experiments = XnatRows.read(connection, "/data/experiments", "label")
+    matches = [
+        experiment
+        for experiment in experiments.by_id().values()
+        if experiment.get("label") == session_id
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple XNAT sessions found with label '{session_id}'. "
+            "Session labels must be globally unique for session-only uploads."
+        )
+    return f"/data/experiments/{matches[0]['ID']}" if matches else None
 
 
 @attrs.define
@@ -279,6 +425,10 @@ class SessionOnlyListing(SessionListing):
         return self.fspath.name
 
     @property
+    def is_session_only(self) -> bool:
+        return True
+
+    @property
     def resource_paths(self) -> set[str]:
         # FIXME: This doesn't look right. It looks like it is picking out the
         # scan level not the session level.
@@ -293,18 +443,18 @@ class SessionOnlyListing(SessionListing):
 
         Returns None if not found, raises RuntimeError if multiple sessions match.
         """
-        matches = [
-            e for e in connection.experiments.values() if e.label == self.session_id
-        ]
-        if len(matches) > 1:
-            raise RuntimeError(
-                f"Multiple XNAT sessions found with label '{self.session_id}'. "
-                "Session labels must be globally unique for session-only uploads."
-            )
-        return matches[0] if matches else None
+        return _find_xnat_session_by_label(connection, self.session_id)
 
-    # all_uploaded is deliberately NOT defined here. Only find_xnat_session
-    # differs between the modes; a second copy of the completeness rule is how
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        """Like find_xnat_session(), but returns the session's REST URI, or None.
+
+        It reads XNAT directly and builds no xnatpy objects (see XnatRows).
+        """
+        return _find_xnat_session_uri_by_label(connection, self.session_id)
+
+    # all_uploaded is deliberately NOT defined here. Only the session lookup
+    # (find_xnat_session and find_xnat_session_uri) differs between the modes;
+    # a second copy of the completeness rule is how
     # this class kept a label comparison after the base class stopped using one.
 
 
@@ -368,6 +518,10 @@ class S3SessionListing(SessionListing):
             if not path_parts:
                 continue
             first = path_parts[0]
+            if first.startswith(".") or (
+                len(path_parts) >= 2 and path_parts[1].startswith(".")
+            ):
+                continue  # hidden: an upload batch folder copied with the session
             if "." in first:
                 # scan resource: <scan_id>.<scan_type>/<resource_name>
                 if len(path_parts) >= 2:
@@ -409,6 +563,25 @@ class S3SessionListing(SessionListing):
                 self.bucket.download_fileobj(obj.key, f)
             manifests[relpath] = Json(manifest_path).contents
         return manifests
+
+
+@attrs.define
+class S3SessionOnlyListing(S3SessionListing):
+    """An S3 staging folder named only by its existing XNAT session label."""
+
+    @property
+    def session_id(self) -> str:
+        return self.name
+
+    @property
+    def is_session_only(self) -> bool:
+        return True
+
+    def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
+        return _find_xnat_session_by_label(connection, self.session_id)
+
+    def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
+        return _find_xnat_session_uri_by_label(connection, self.session_id)
 
 
 def iterate_s3_sessions(
@@ -477,30 +650,37 @@ def iterate_s3_sessions(
         # we recreate the project/subject/session directory structure
         session_tmp_dir = tmp_download_dir / session_name
         session_tmp_dir.mkdir(parents=True, exist_ok=True)
-        # Check to see if the session is still being updated
-        last_modified = None
-        for _, obj in objs:
-            if last_modified is None or obj.last_modified > last_modified:
-                last_modified = obj.last_modified
-        assert last_modified is not None
-        if (
-            datetime.datetime.now(datetime.timezone.utc) - last_modified
-        ) >= datetime.timedelta(seconds=wait_period):
-            yield S3SessionListing(
-                name=session_name,
-                objects=session_objs[session_name],
-                bucket=bucket,
-                cache_path=session_tmp_dir,
-                max_workers=max_workers,
-            )
-        else:
-            logger.info(
-                "Skipping session '%s' as it was last modified less than %d seconds ago "
-                "and waiting until it is complete",
-                session_name,
-                wait_period,
-            )
-        shutil.rmtree(session_tmp_dir)  # Delete the tmp session after the upload
+        try:
+            # Check to see if the session is still being updated
+            last_modified = None
+            for _, obj in objs:
+                if last_modified is None or obj.last_modified > last_modified:
+                    last_modified = obj.last_modified
+            assert last_modified is not None
+            if (
+                datetime.datetime.now(datetime.timezone.utc) - last_modified
+            ) >= datetime.timedelta(seconds=wait_period):
+                Listing = (
+                    S3SessionListing if "." in session_name else S3SessionOnlyListing
+                )
+                yield Listing(
+                    name=session_name,
+                    objects=session_objs[session_name],
+                    bucket=bucket,
+                    cache_path=session_tmp_dir,
+                    max_workers=max_workers,
+                )
+            else:
+                logger.info(
+                    "Skipping session '%s' as it was last modified less than %d "
+                    "seconds ago and waiting until it is complete",
+                    session_name,
+                    wait_period,
+                )
+        finally:
+            # Delete the tmp session after the upload, also when the caller
+            # stops early (e.g. on an error).
+            shutil.rmtree(session_tmp_dir, ignore_errors=True)
 
     logger.info("Found %d sessions in S3 bucket '%s'", num_sessions, bucket_path)
     logger.debug("Created sessions iterator")
@@ -602,6 +782,7 @@ def _session_date_from_metadata(session: ImagingSession, field: str) -> str:
 def get_xnat_session(
     session: ImagingSession,
     xproject: ty.Any,
+    modality: str | None = None,
     date_field: str | None = None,
 ) -> ty.Any:
     """Get the XNAT session object for the given session
@@ -610,8 +791,15 @@ def get_xnat_session(
     ----------
     session : ImagingSession
         the session to upload
-    xnat_repo : Xnat
-        the XNAT repository to upload to
+    xproject : ty.Any
+        the XNAT project to upload to
+    modality : str, optional
+        the DICOM modality code (e.g. 'MR', 'PT', 'CT') that determines the XNAT
+        session type when the session needs to be created. Defaults to the modality
+        in the session's metadata, ignoring non-image modalities such as structured
+        reports and preferring MR, then PT, then CT if it has several. Sessions whose
+        modalities have no session type on the server are created as
+        'xnat:otherDicomSessionData' unless the modality is given explicitly
     date_field : str, optional
         Session metadata field to use as the date when creating a new XNAT
         session. Existing sessions are returned unchanged.
@@ -631,17 +819,57 @@ def get_xnat_session(
             if date_field is not None
             else None
         )
-        if "MR" in session.modalities:
-            SessionClass = xclasses.MrSessionData
-        elif "PT" in session.modalities:
-            SessionClass = xclasses.PetSessionData
-        elif "CT" in session.modalities:
-            SessionClass = xclasses.CtSessionData
+        if modality is not None:
+            SessionClass = _xnat_session_class(xclasses, modality)
+            if SessionClass is None:
+                raise UnsupportedModalityError(
+                    f"XNAT server has no 'xnat:{xnat_session_type(modality)}' session "
+                    f"type for the '{modality}' modality given for {session.name}"
+                )
         else:
-            raise RuntimeError(
-                "Found the following unsupported modalities in "
-                f"{session.name}: {session.modalities}"
+            if session.modalities is None:
+                raise RuntimeError(
+                    f"Cannot determine modality for session {session.name} because it "
+                    "has no modalities metadata. Please provide the modality explicitly "
+                    "via the 'modality' parameter."
+                )
+            # Use the session type of the first image modality the server has one
+            # for, trying the preferred modalities first
+            image_modalities = sorted(
+                (m for m in session.modalities if m not in NON_IMAGE_MODALITIES),
+                key=lambda m: (
+                    PREFERRED_SESSION_MODALITIES.index(m)
+                    if m in PREFERRED_SESSION_MODALITIES
+                    else len(PREFERRED_SESSION_MODALITIES)
+                ),
             )
+            SessionClass = next(
+                (
+                    c
+                    for c in (
+                        _xnat_session_class(xclasses, m) for m in image_modalities
+                    )
+                    if c is not None
+                ),
+                None,
+            )
+            if SessionClass is None:
+                # The session type XNAT itself uses for DICOMs of modalities
+                # without a session type of their own
+                logger.warning(
+                    "No XNAT session type for the modalities of %s (%s), creating "
+                    "it as 'xnat:otherDicomSessionData'",
+                    session.name,
+                    ", ".join(session.modalities),
+                )
+                try:
+                    SessionClass = xclasses.OtherDicomSessionData
+                except AttributeError:
+                    raise UnsupportedModalityError(
+                        f"XNAT server has no session type for the modalities of "
+                        f"{session.name} ({', '.join(session.modalities)}), and no "
+                        "'xnat:otherDicomSessionData' type to fall back to"
+                    ) from None
         xsubject = xclasses.SubjectData(label=session.subject_id, parent=xproject)
         session_kwargs: dict[str, ty.Any] = {
             "label": session.session_id,
@@ -651,6 +879,66 @@ def get_xnat_session(
             session_kwargs["date"] = session_date
         xsession = SessionClass(**session_kwargs)
     return xsession
+
+
+# The modality used to pick the session type when a session contains more than one,
+# e.g. a PET/CT session is stored as a PET session
+PREFERRED_SESSION_MODALITIES = ("MR", "PT", "CT")
+
+# DICOM modalities of objects that annotate or are derived from the images in a
+# session rather than being acquisitions in their own right, so they shouldn't
+# determine its session type (e.g. an MR session with a structured dose report)
+NON_IMAGE_MODALITIES = frozenset(
+    (
+        "SR",  # Structured report
+        "PR",  # Presentation state
+        "KO",  # Key object selection
+        "REG",  # Registration
+        "SEG",  # Segmentation
+        "FID",  # Fiducials
+        "RWV",  # Real world value map
+        "DOC",  # Encapsulated document
+        "PLAN",  # Plan
+        "RTSTRUCT",  # Radiotherapy structure set
+        "RTPLAN",  # Radiotherapy plan
+        "RTRECORD",  # Radiotherapy treatment record
+        "RTDOSE",  # Radiotherapy dose
+    )
+)
+
+# DICOM modalities whose XNAT session type isn't named after the lower-cased modality
+# code (e.g. 'MR' -> 'mrSessionData', 'OPT' -> 'optSessionData'), see the
+# 'xnat:*SessionData' types in XNAT's xnat.xsd schema
+XNAT_SESSION_TYPE_EXCEPTIONS = {"PT": "petSessionData"}
+
+
+def xnat_session_type(modality: str) -> str:
+    """The XSI type (without the 'xnat:' prefix) of the XNAT session that DICOMs of
+    the given modality are stored in, e.g. 'MR' -> 'mrSessionData'"""
+    modality = modality.upper()
+    return XNAT_SESSION_TYPE_EXCEPTIONS.get(modality, f"{modality.lower()}SessionData")
+
+
+def _xnat_session_class(xclasses: ty.Any, modality: str) -> ty.Any:
+    """The xnatpy class for the session type of the given modality, or None if the
+    server has no such type"""
+    xsi_type = xnat_session_type(modality)
+    # xnatpy names the classes after the XSI type with the first letter capitalised
+    return getattr(xclasses, xsi_type[0].upper() + xsi_type[1:], None)
+
+
+def _xnat_scan_class_from_session(xsession: ty.Any) -> ty.Any:
+    """The xnatpy class for the scan type matching the session's type (e.g.
+    'xnat:petSessionData' -> 'xnat:petScanData'), or 'xnat:otherDicomScanData' if
+    the server has no such type"""
+    xclasses = xsession.xnat_session.classes
+    session_type = getattr(xsession, "__xsi_type__", None)
+    if isinstance(session_type, str) and session_type.endswith("SessionData"):
+        scan_type = session_type[: -len("SessionData")] + "ScanData"
+        ScanClass = xclasses.XNAT_CLASS_LOOKUP.get(scan_type)
+        if ScanClass is not None:
+            return ScanClass
+    return xclasses.OtherDicomScanData
 
 
 def _files_held_in(
@@ -686,6 +974,7 @@ class ResourceComparison:
     extra: ty.Set[str] = attrs.field(factory=set)
     differing: ty.Set[str] = attrs.field(factory=set)
     comparable: bool = True
+    without_checksums: ty.Set[str] = attrs.field(factory=set)
 
     @property
     def complete(self) -> bool:
@@ -712,7 +1001,8 @@ def compare_resource_with_xnat(
     XNAT leaves `digest` empty until a catalog refresh populates it, so files
     uploaded but not yet refreshed report ''. Comparing content in that state
     would call a healthy resource corrupt, so a file with no digest is compared
-    by NAME only and the result is marked not `comparable`.
+    by NAME only and recorded in `without_checksums`. `comparable` means at
+    least one remote digest exists, not that every file was verified by content.
     api/check_upload_api.py guards the same way.
     """
     local_names = set(local_checksums)
@@ -730,7 +1020,43 @@ def compare_resource_with_xnat(
         extra=xnat_names - local_names,
         differing=differing,
         comparable=comparable,
+        without_checksums={
+            n for n in local_names & xnat_names if not xnat_checksums[n]
+        },
     )
+
+
+def log_name_only_comparison(
+    comparison: ResourceComparison, resource: str, session: str
+) -> None:
+    """Keep per-resource detail at DEBUG; checksum support is reported once."""
+    if comparison.without_checksums:
+        logger.debug(
+            "'%s' in '%s' has %d file(s) compared by file name only: XNAT lists them "
+            "without checksums",
+            resource,
+            session,
+            len(comparison.without_checksums),
+        )
+
+
+def _report_xnat_checksum_support(checksums: ty.Mapping[str, str]) -> None:
+    """Use the first nonempty resource listing for this process's warning.
+
+    This is an observation of returned digests, not a request for site settings.
+    Empty resources do not decide support. Later partial catalogs still use the
+    same per-file comparisons, but do not add more warnings.
+    """
+    global _xnat_has_checksums
+    if not checksums:
+        return
+    with _xnat_checksum_warning_lock:
+        if _xnat_has_checksums is None:
+            _xnat_has_checksums = any(checksums.values())
+            if not _xnat_has_checksums:
+                logger.warning(
+                    "XNAT returns no file checksums; files are compared by name only"
+                )
 
 
 def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
@@ -843,6 +1169,7 @@ def get_xnat_resource(
             comparison = compare_resource_with_xnat(
                 resource.checksums, get_xnat_checksums(xresource)
             )
+            log_name_only_comparison(comparison, resource.path, xsession.label)
             if comparison.repairable:
                 logger.warning(
                     "'%s' session resource exists on XNAT but is missing %d of "
@@ -924,12 +1251,12 @@ def get_xnat_resource(
             scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
-            # No SOP class to decide from -- not DICOM, or DICOM whose header didn't
-            # carry one. XNAT's schema has no generic scan type outside the
-            # DICOM-derived ones (every xnat:*ScanData is modality-specific), so this
-            # falls back to the same catch-all XNAT itself uses for an unrecognised
-            # SOP class rather than guessing a modality from ImageType/session type.
-            ScanClass = xclasses.OtherDicomScanData
+            # No SOP class to decide from -- not DICOM (e.g. vendor raw data), or
+            # DICOM whose header didn't carry one -- so the scan takes the modality
+            # of its session, whose types are named in parallel with the scan ones
+            # (e.g. 'xnat:petSessionData' -> 'xnat:petScanData'). Falls back to the
+            # catch-all XNAT itself uses for an unrecognised SOP class.
+            ScanClass = _xnat_scan_class_from_session(xsession)
         logger.debug(
             "Creating scan %s in %s", resource.scan.id, resource.scan.session.path
         )
@@ -959,6 +1286,7 @@ def get_xnat_resource(
     else:
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
+        log_name_only_comparison(comparison, resource.path, resource.scan.path)
         if comparison.repairable:
             # We hold files XNAT does not and nothing else is wrong, so hand
             # back the shortfall. Not the whole resource: XNAT would reject or
@@ -1056,13 +1384,66 @@ def get_xnat_checksums(xresource: ty.Any) -> dict[str, str]:
     dict[str, str]
         the checksums calculated by XNAT
     """
-    result = xresource.xnat_session.get(xresource.uri + "/files")
+    return get_xnat_checksums_at(
+        xresource.xnat_session, xresource.uri + "/files", xresource.id
+    )
+
+
+def get_xnat_checksums_at(
+    connection: xnat.XNATSession, files_uri: str, resource_id: ty.Any = None
+) -> dict[str, str]:
+    """get_xnat_checksums() for a resource given by the URI of its file listing.
+
+    Parameters
+    ----------
+    connection : xnat.XNATSession
+        the XNAT connection to read from
+    files_uri : str
+        the URI of the resource's file listing ("<resource URI>/files")
+    resource_id : Any, optional
+        the resource ID to name in an error, by default the URI
+
+    Returns
+    -------
+    dict[str, str]
+        the checksums calculated by XNAT
+    """
+    result = connection.get(files_uri)
     if result.status_code != 200:
         raise RuntimeError(
             "Could not download metadata for resource {}. Files "
-            "may have been uploaded but cannot check checksums".format(xresource.id)
+            "may have been uploaded but cannot check checksums".format(
+                files_uri if resource_id is None else resource_id
+            )
         )
-    return dict((r["Name"], r["digest"]) for r in result.json()["ResultSet"]["Result"])
+    checksums: dict[str, str] = {}
+    for row in result.json()["ResultSet"]["Result"]:
+        # Name is only the basename. URI retains the path inside the resource,
+        # and its resource identifier may be numeric even when we queried by label.
+        # The observed XNAT listing and xnatpy treat this suffix as raw text.
+        # URL parsing or decoding would change filenames with literal ?, # or %.
+        uri = row.get("URI")
+        match = (
+            re.fullmatch(r".*?/resources/[^/]+/files/(.+)", uri, flags=re.DOTALL)
+            if isinstance(uri, str)
+            else None
+        )
+        if match is None:
+            raise ValueError(
+                f"XNAT file listing has no resource-relative path: {uri!r}"
+            )
+        path = match.group(1)
+        if row["Name"] not in (path, path.rsplit("/", 1)[-1]):
+            raise ValueError(
+                f"XNAT file URI {uri!r} does not match its Name {row['Name']!r}"
+            )
+        if path in checksums:
+            raise ValueError(
+                f"XNAT file listing repeats resource-relative path {path!r}"
+            )
+        checksums[path] = row["digest"]
+    _report_xnat_checksum_support(checksums)
+    return checksums
 
 
 def calculate_checksums(
@@ -1085,19 +1466,12 @@ def calculate_checksums(
         the calculated checksums
     """
 
-    def _hash(fspath: Path) -> ty.Tuple[str, str]:
-        try:
-            hsh = hashlib.md5()
-            with open(fspath, "rb") as f:
-                for chunk in iter(lambda: f.read(HASH_CHUNK_SIZE), b""):
-                    hsh.update(chunk)
-            checksum = hsh.hexdigest()
-        except OSError:
-            raise RuntimeError(f"Could not create digest of '{fspath}' ")
-        return str(fspath.relative_to(scan.parent)), checksum
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return dict(executor.map(_hash, scan.fspaths))
+    return scan.hash_files(
+        crypto=hashlib.md5,
+        chunk_len=HASH_CHUNK_SIZE,
+        relative_to=scan.parent,
+        max_workers=max_workers,
+    )
 
 
 HASH_CHUNK_SIZE = 2**20

@@ -113,3 +113,14 @@ def test_existing_session_date_is_not_changed() -> None:
     )
     assert _MrSessionData.calls == []
     assert _SubjectData.calls == []
+
+
+def test_session_date_with_explicit_modality() -> None:
+    session = _session()
+    del session.metadata._dct["Modality"]
+
+    get_xnat_session(session, _Project(), modality="MR", date_field="CaptureDate")
+
+    assert _MrSessionData.calls == [
+        {"label": "SESSION", "parent": ANY, "date": "2026-08-05"}
+    ]

@@ -61,7 +61,7 @@ class FakeExperiment:
 
 
 class FakeProject:
-    experiments: dict[str, ty.Any] = {}  # session not on XNAT: all_uploaded() is False
+    experiments: dict[str, ty.Any] = {}
 
 
 class FakeConnection:
@@ -76,6 +76,17 @@ class FakeConnection:
 
     def clearcache(self) -> None:
         pass
+
+    def get_json(self, uri: str, query: ty.Any = None) -> dict[str, ty.Any]:
+        # The completeness check reads REST rows; the upload steps still use
+        # the object tree. Both views describe the same absent session.
+        if uri == "/data/archive/projects":
+            rows = [{"ID": "proj", "name": "proj"}]
+        elif uri == "/data/projects/proj/experiments":
+            rows = []
+        else:
+            raise AssertionError(f"Unexpected REST read: {uri}")
+        return {"ResultSet": {"Result": rows}}
 
     def put(self, uri: str) -> None:  # triggerPipelines
         pass
@@ -135,14 +146,19 @@ def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]
     """Drive the real upload() with each scan's re-send outcome, keyed by scan id."""
     observed_date_fields = kwargs.pop("_observed_date_fields", None)
 
-    def fake_get_xnat_resource(resource: ty.Any, xsession: ty.Any) -> ty.Any:
+    def fake_get_xnat_resource(
+        resource: ty.Any, xsession: ty.Any, **kwargs: ty.Any
+    ) -> ty.Any:
         outcome = outcomes[resource.scan.id]
         if outcome == "incomplete":  # short on XNAT and NOT repairable
             raise IncompleteCheckumsException(f"{resource.path} is short")
         return FakeXResource({"a.dat"}, outcome), {"b.dat"}
 
     def fake_get_xnat_session(
-        session: ty.Any, xproject: ty.Any, date_field: str | None = None
+        session: ty.Any,
+        xproject: ty.Any,
+        modality: str | None = None,
+        date_field: str | None = None,
     ) -> FakeExperiment:
         if observed_date_fields is not None:
             observed_date_fields.append(date_field)

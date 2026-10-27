@@ -1,7 +1,11 @@
 import datetime
 import logging
+import shutil
+import signal
 import subprocess as sp
+import sys
 import tempfile
+import threading
 import time
 import typing as ty
 from pathlib import Path
@@ -147,9 +151,14 @@ by setting the "XNAT_INGEST_HOST" environment variable.
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
-    default=None,
+    # True, as in upload(). None was read as "not required", so a resource
+    # without its manifest was uploaded as it was.
+    default=True,
     envvar="XINGEST_REQUIRE_MANIFEST",
-    help=("Whether to require manifest files in the staged resources or not"),
+    help=(
+        "Whether to require manifest files in the staged resources or not "
+        "(default: required)"
+    ),
     type=bool,
 )
 @click.option(
@@ -236,6 +245,15 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "List the sessions that will be uploaded instead of the actually uploading them"
     ),
 )
+@click.option(
+    "--modality",
+    type=str,
+    default=None,
+    envvar="XINGEST_MODALITY",
+    help=(
+        "Specify the modality of the sessions to upload (XINGEST_MODALITY env. var)."
+    ),
+)
 def upload_cmd(
     staged: str,
     server: str,
@@ -259,6 +277,7 @@ def upload_cmd(
     num_files_per_batch: int,
     check_checksums: bool,
     dry_run: bool,
+    modality: ty.Optional[str],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -275,6 +294,24 @@ def upload_cmd(
     # Set the directory to create temporary files/directories in away from system default
     if temp_dir:
         tempfile.tempdir = str(temp_dir)
+
+    # A stop sends SIGTERM. Python ends on it at once and the finally block
+    # below does not run, so every stop left the run directory behind. Raise
+    # SystemExit instead: the block then closes the connection and removes
+    # the directory. signal.signal() works in the main thread only.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+
+    # The run's temporary files go in one directory, which is removed on exit.
+    # A new directory for each pass and each connection was never removed. The
+    # directory is unique to this run (inside --temp-dir when given), so two
+    # runs that share a --temp-dir cannot remove each other's files. The prefix
+    # tells a directory of this version from one an older version left behind.
+    run_tmp_dir = Path(tempfile.mkdtemp(prefix="xnat-ingest-upload-"))
+    xnat_cache_dir = run_tmp_dir / "xnat_cache"
+    xnat_cache_dir.mkdir()
+    s3_cache_dir = run_tmp_dir / "s3_cache"
+    s3_cache_dir.mkdir()
 
     # Open ONE XNAT connection for the whole `--loop` lifetime.
     #
@@ -294,7 +331,7 @@ def upload_cmd(
             server=server,
             user=user,
             password=password,
-            cache_dir=Path(tempfile.mkdtemp()),
+            cache_dir=xnat_cache_dir,
             verify_ssl=verify_ssl,
         )
         if use_curl_jsession:
@@ -337,8 +374,9 @@ def upload_cmd(
         signatures = ("status 401", "status 403", "Unauthorized", "Forbidden")
         return any(any(sig in msg for sig in signatures) for msg in error_messages)
 
-    xnat_repo = _open_repo()
+    xnat_repo = None
     try:
+        xnat_repo = _open_repo()
         # Loop the upload process if loop is set to a positive value, otherwise just run it once
         while True:
             start_time = datetime.datetime.now()
@@ -370,14 +408,11 @@ def upload_cmd(
                     num_files_per_batch=num_files_per_batch,
                     check_checksums=check_checksums,
                     dry_run=dry_run,
-                    s3_cache_dir=(
-                        Path(temp_dir) / "s3_cache"
-                        if temp_dir is not None
-                        else tempfile.mkdtemp()
-                    ),
+                    s3_cache_dir=s3_cache_dir,
                     s3_max_workers=s3_max_workers,
                     xnat_max_workers=xnat_max_workers,
                     date_field=date_field,
+                    modality=modality,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has
@@ -423,7 +458,15 @@ def upload_cmd(
                     e,
                 )
                 _close_repo(xnat_repo)
-                xnat_repo = _open_repo()
+                try:
+                    xnat_repo = _open_repo()
+                except Exception as reconnect_err:  # noqa: BLE001
+                    logger.error(
+                        "Failed to re-establish XNAT connection: %s. "
+                        "Will retry on the next loop iteration.",
+                        reconnect_err,
+                    )
+                    xnat_repo = None
             if loop < 0:
                 break
             end_time = datetime.datetime.now()
@@ -439,3 +482,4 @@ def upload_cmd(
             time.sleep(loop)
     finally:
         _close_repo(xnat_repo)
+        shutil.rmtree(run_tmp_dir, ignore_errors=True)

@@ -448,3 +448,147 @@ def test_from_orthanc_does_not_label_study_when_conversion_fails(
 
     assert ("study-ready", "done") not in fake.labelled
     assert not list(output_dir.glob("__convert_*"))
+
+
+def _add_initial_series(fake, tmp_path):
+    dcm_dir = tmp_path / "second-series"
+    get_topogram_image(
+        dcm_dir,
+        StudyInstanceUID="1.2.3.0",
+        SeriesInstanceUID="1.2.3.0.2",
+        AccessionNumber="ACC-READY",
+        PatientID="subject1",
+    )
+    fake.add_study(
+        "second",
+        next(dcm_dir.iterdir()),
+        study_tags={"StudyInstanceUID": "1.2.3.0"},
+        patient_tags={},
+        series_tags={"SeriesNumber": "2", "SeriesDescription": "Second"},
+    )
+    fake.studies["study-ready"]["series"].extend(fake.studies.pop("second")["series"])
+
+
+def _publication_kwargs(output_dir, store_dir):
+    return dict(
+        url=ORTHANC_URL,
+        output_dir=output_dir,
+        store_dir=store_dir,
+        user=ORTHANC_USER,
+        password=ORTHANC_PASSWORD,
+        to_process_label="ready",
+        processed_label="done",
+    )
+
+
+def test_initial_build_is_hidden_from_assign(tmp_path):
+    from xnat_ingest.api.assign_api import assign
+    from xnat_ingest.helpers.remotes import list_session_dirs
+
+    fake, store = _make_fake_orthanc(tmp_path)
+    _add_initial_series(fake, tmp_path)
+    output = tmp_path / "staged"
+    original_get = fake.get
+    observations = []
+
+    def get(path):
+        if path.startswith("/instances/"):
+            assert list(list_session_dirs(output)) == []
+            assert (
+                assign(
+                    output,
+                    tmp_path / "assigned",
+                    "StudyID",
+                    "PatientID",
+                    "AccessionNumber",
+                    unlink_source="all",
+                    raise_errors=True,
+                )
+                == []
+            )
+            observations.append(path)
+        return original_get(path)
+
+    fake.get = get
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_publication_kwargs(output, store))
+    assert len(observations) == 2 and len(staged) == 1
+    assert len(staged[0].scans) == 2
+    for resource in staged[0].resources:
+        assert all(
+            path.exists() and "__build__" not in path.parts
+            for path in resource.fileset.fspaths
+        )
+        resource.check_checksums()
+    assert fake.labelled == [("study-ready", "done")]
+
+
+def _pause_complete_build(fake, kwargs, writer, label_marker):
+    import threading
+
+    def pause(path):
+        writer.send(str(path))
+        threading.Event().wait(30)
+        raise RuntimeError("test must terminate the paused producer")
+
+    fake.label = lambda *args: label_marker.write_text("label applied")
+    with _patch_requests(fake), patch.object(ImagingSession, "load", side_effect=pause):
+        ImagingSession.from_orthanc(**kwargs)
+
+
+def test_stopped_initial_build_is_hidden_and_retry_publishes_all_series(tmp_path):
+    import multiprocessing
+
+    from xnat_ingest.helpers.remotes import list_session_dirs
+
+    fake, store = _make_fake_orthanc(tmp_path)
+    _add_initial_series(fake, tmp_path)
+    output, marker = tmp_path / "staged", tmp_path / "label-marker"
+    kwargs = _publication_kwargs(output, store)
+    context = multiprocessing.get_context("spawn")
+    reader, writer = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_pause_complete_build, args=(fake, kwargs, writer, marker)
+    )
+    child.start()
+    try:
+        assert reader.poll(30), "producer did not reach the complete-build boundary"
+        build = Path(reader.recv())
+        child.kill()
+        child.join(10)
+        assert child.exitcode is not None and child.exitcode != 0
+        assert list(list_session_dirs(output)) == [] and not marker.exists()
+        assert len(list(build.rglob("*.dcm"))) == 2
+        with _patch_requests(fake):
+            staged = ImagingSession.from_orthanc(**kwargs)
+        assert len(staged) == 1 and len(staged[0].scans) == 2
+        assert not build.exists() and len(list(output.glob("_.*"))) == 1
+        for resource in staged[0].resources:
+            resource.check_checksums()
+        assert fake.labelled == [("study-ready", "done")]
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join(10)
+        reader.close()
+        writer.close()
+
+
+def test_existing_group_destination_is_preserved_and_next_study_runs(tmp_path, caplog):
+    fake, store = _make_fake_orthanc(tmp_path)
+    _add_initial_series(fake, tmp_path)
+    output = tmp_path / "staged"
+    refused = output / "_.1_2_3_2"
+    refused.mkdir(parents=True)
+    sentinel = refused / "preserve.txt"
+    sentinel.write_bytes(b"existing generation")
+    kwargs = _publication_kwargs(output, store)
+    kwargs["to_process_label"] = None
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**kwargs)
+    assert [session.metadata["AccessionNumber"] for session in staged] == ["ACC-READY"]
+    assert len(staged[0].scans) == 2
+    assert list(refused.iterdir()) == [sentinel]
+    assert sentinel.read_bytes() == b"existing generation"
+    assert fake.labelled == [("study-ready", "done")]
+    assert "study-plain" in caplog.text and str(refused) in caplog.text

@@ -189,19 +189,22 @@ def package(
                 for scan in session.scans.values()
                 for resource in scan.resources.values()
             ):
+                # Nothing to convert. The session still has to reach the
+                # upload stage, which reads this stage's output: it passes
+                # through as it is.
                 logger.info(
-                    "Skipping '%s' because it has no %s scan resources",
+                    "Passing '%s' through unchanged: it has no %s scan resources",
                     listing.name,
                     source_datatype.mime_like,
                 )
-                continue
-
-            packaged = _package_session(
-                session,
-                source_datatype=source_datatype,
-                output_resources=output_resources,
-                on_resource_clash=on_resource_clash,
-            )
+                packaged = session
+            else:
+                packaged = _package_session(
+                    session,
+                    source_datatype=source_datatype,
+                    output_resources=output_resources,
+                    on_resource_clash=on_resource_clash,
+                )
 
             final_dir = output_dir / packaged.staging_dirname()
             build_dir = output_dir / BUILD_NAME_DEFAULT

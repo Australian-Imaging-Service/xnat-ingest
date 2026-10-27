@@ -552,14 +552,16 @@ class ImagingSession:
         return [self.name]
 
     @cached_property
-    def modalities(self) -> str | tuple[str, ...]:
-        try:
-            modalities_metadata = self.metadata["Modality"]
-        except KeyError as e:
-            e.add_note(f"Available metadata: {list(self.metadata)}")
-            raise e
+    def modalities(self) -> tuple[str, ...] | None:
+        """The distinct modalities in the "Modality" metadata field, which holds a
+        single string if all the session's files share one modality and a (possibly
+        nested) list of them otherwise, as a sorted tuple"""
+        modalities_metadata = self.metadata.get("Modality")
+        if modalities_metadata is None:
+            logger.debug("Modality metadata is not available in session metadata")
+            return None
         if isinstance(modalities_metadata, str):
-            return modalities_metadata
+            return (modalities_metadata,)
         modalities: set[str] = set()
         for modality in modalities_metadata:
             if isinstance(modality, str):
@@ -567,7 +569,7 @@ class ImagingSession:
             else:
                 assert isinstance(modality, ty.Iterable)
                 modalities.update(modality)
-        return tuple(modalities)
+        return tuple(sorted(modalities))
 
     @property
     def primary_parents(self) -> set[Path]:
@@ -1059,9 +1061,14 @@ class ImagingSession:
         if scan_field is not None:
             for scan in self.scans.values():
                 try:
-                    scan.type = IDSpec(scan_field).get_value(
-                        scan.metadata, escape=False, missing_ids=missing_ids
+                    description = IDSpec(scan_field).get_value(
+                        scan.metadata, escape=False
                     )
+                    if not description.strip():
+                        raise ImagingSessionParseError(
+                            "Empty optional scan description"
+                        )
+                    scan.type = description
                 except ImagingSessionParseError:
                     logger.debug(
                         "Could not resolve a description for scan '%s' from field "
@@ -1069,7 +1076,7 @@ class ImagingSession:
                         scan.id,
                         scan_field,
                     )
-                    scan.type = scan.id
+                    scan.type = scan.type or "Series_" + scan.id
         return missing_ids
 
     @classmethod
@@ -1125,6 +1132,7 @@ class ImagingSession:
         list[ImagingSession]
             Staged sessions loaded from output_dir.
         """
+        output_dir = Path(output_dir).resolve()
         auth = (user, password) if user else None
 
         def get_json(path: str) -> ty.Any:
@@ -1201,8 +1209,14 @@ class ImagingSession:
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
-            session_dir = output_dir / f"_.{session_uid}"
-            session_dir.mkdir(parents=True, exist_ok=True)
+            final_dir = output_dir / f"_.{session_uid}"
+            # One group-orthanc producer must own this output directory. A
+            # converter child that outlives its parent is outside this contract.
+            work_dir = output_dir / "__build__" / f"orthanc_{session_uid}"
+            if work_dir.exists():
+                shutil.rmtree(work_dir)
+            session_dir = work_dir / final_dir.name
+            session_dir.mkdir(parents=True)
 
             modalities: set[str] = set()
             staged_instance_ids: dict[str, set[str]] = {}
@@ -1211,8 +1225,42 @@ class ImagingSession:
                 if modality := series["MainDicomTags"].get("Modality"):
                     modalities.add(modality)
                 all_tags = {**study_tags, **series["MainDicomTags"]}
-                scan_id = IDSpec("SeriesNumber").get_value(all_tags)
-                scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                fallback_fields = []
+                number = all_tags.get("SeriesNumber")
+                if number is None or not str(number).strip():
+                    # Series identity is stable across retries and late instances.
+                    # Prefer the DICOM UID; Orthanc's series ID is the fallback
+                    # when its indexed tags do not include that UID. Never use
+                    # iteration order or a shared "unknown" scan number.
+                    series_uid = all_tags.get("SeriesInstanceUID")
+                    if series_uid and str(series_uid).strip():
+                        # Match XNAT's header importer, otherwise it creates a
+                        # second scan for the same unnumbered DICOM series.
+                        scan_id = IDSpec("SeriesInstanceUID").get_value(all_tags)
+                    else:
+                        scan_id = (
+                            "series_" + hashlib.sha256(series_id.encode()).hexdigest()
+                        )
+                    fallback_fields.append("SeriesNumber")
+                else:
+                    scan_id = IDSpec("SeriesNumber").get_value(
+                        {**all_tags, "SeriesNumber": str(number)}
+                    )
+                description = all_tags.get("SeriesDescription")
+                if description is None or not str(description).strip():
+                    scan_type = "Series_" + scan_id
+                    fallback_fields.append("SeriesDescription")
+                else:
+                    scan_type = IDSpec("SeriesDescription").get_value(all_tags)
+                if fallback_fields:
+                    logger.warning(
+                        "Using a stable series fallback for missing %s",
+                        ", ".join(fallback_fields),
+                        extra={
+                            "event": "series_metadata_fallback",
+                            "orthanc_series_id": series_id,
+                        },
+                    )
 
                 if "ImageType" in all_tags:
                     resource_label = dicom_image_type_to_resource_label(
@@ -1266,8 +1314,7 @@ class ImagingSession:
                 checksums: dict[str, str] = dict(linked)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
-                with open(resource_dir / ImagingResource.MANIFEST_FNAME, "w") as f:
-                    json.dump(manifest, f, indent=4)
+                ImagingResource.write_manifest(resource_dir, manifest)
 
                 if convert_series:
                     try:
@@ -1311,12 +1358,28 @@ class ImagingSession:
                         raise RuntimeError(
                             f"Orthanc study '{study_id}' changed while it was being staged"
                         )
+            if os.path.lexists(final_dir):
+                logger.error(
+                    "Skipping Orthanc study '%s': destination exists at '%s'",
+                    study_id,
+                    final_dir,
+                )
+                shutil.rmtree(work_dir)
+                continue
+            session_dir.rename(final_dir)
+            for resource in staged_session.resources:
+                resource.fileset.fspaths = frozenset(
+                    final_dir / path.relative_to(session_dir)
+                    for path in resource.fileset.fspaths
+                )
+            work_dir.rmdir()
+            if processed_label:
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
 
             logger.info(
-                "Staged and labelled study '%s' -> '%s'", study_id, session_dir.name
+                "Staged and labelled study '%s' -> '%s'", study_id, final_dir.name
             )
             staged.append(staged_session)
 
@@ -1856,7 +1919,9 @@ class ImagingSession:
                 run_uid=run_uid,
             )
         for item in session_dir.iterdir():
-            if not item.is_dir():
+            if not item.is_dir() or item.name.startswith("."):
+                # Hidden: an upload batch folder of a session resource that a
+                # killed uploader left behind, or an editor file. Not a scan.
                 continue
             if "." in item.name:
                 # scan directory: <scan_id>.<scan_type>

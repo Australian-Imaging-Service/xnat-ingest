@@ -1,4 +1,6 @@
+import os
 import shutil
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +15,10 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
 from xnat_ingest.api.group_api import group
 from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.helpers.metadata import Metadata
 from xnat_ingest.helpers.remotes import list_session_dirs
+from xnat_ingest.model.resource import ImagingResource
+from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
 
 PROJECT_FIELD = "StudyID"
@@ -138,6 +143,55 @@ def test_assign_leaves_no_partial_session_under_its_real_name_when_save_dies(
         f"a partial session was left where upload would collect it: {collectable}"
     )
     assert not list(output_dir.rglob("inst.dcm")), "the partial data survived"
+
+
+def test_assign_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> None:
+    """A pass that saves over an existing output and dies before it moves the
+    temporary manifest into place leaves a resource without a manifest. The input
+    did not change, so it is older than the files left behind. The next pass
+    replaces the resource. It does not fail on every pass with FileExistsError"""
+    src = tmp_path / "src" / "a-file.txt"
+    src.parent.mkdir()
+    src.write_text("content")
+    session = ImagingSession(
+        uid="some-uid",
+        scans=[ImagingScan(id="1", type="T", resources={"RES": File(src)})],
+    )
+    session.metadata.update(
+        {PROJECT_FIELD: "PROJ", SUBJECT_FIELD: "SUBJ", SESSION_FIELD: "SESS"}
+    )
+    grouped_dir = tmp_path / "grouped"
+    _, grouped_session_dir = session.save(grouped_dir)
+    an_hour_ago = time.time() - 3600
+    for path in grouped_session_dir.rglob("*"):
+        os.utime(path, (an_hour_ago, an_hour_ago))
+    output_dir = tmp_path / "assigned"
+
+    def assign_pass() -> list[str]:
+        return assign(
+            input_dir=grouped_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert assign_pass() == []
+    resource_dir = output_dir / "PROJ.SUBJ.SESS" / "1.T" / "RES"
+    manifest = resource_dir / ImagingResource.MANIFEST_FNAME
+    tmp_manifest = resource_dir / (ImagingResource.MANIFEST_FNAME + ".tmp")
+    # What the dead pass leaves: data files and the temporary manifest only
+    manifest.rename(tmp_manifest)
+    (resource_dir / Metadata.FNAME).unlink()
+
+    assert assign_pass() == []
+
+    assert manifest.exists()
+    assert not tmp_manifest.exists()
+    assigned = ImagingSession.load(output_dir / "PROJ.SUBJ.SESS")
+    expected = ImagingResource(name="RES", fileset=File(src)).checksums
+    assert assigned.scans["1"].resources["RES"].checksums == expected
+    assert assign_pass() == []
 
 
 def test_assign_routes_invalid_ids_to_invalid_subdir(
@@ -290,15 +344,18 @@ def test_assign_leaves_source_dir_when_unlink_source_none(
     assert session_dir.exists()
 
 
-def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
+def test_assign_keep_metadata_preserves_session_without_resources(
     grouped_dir: Path, tmp_path: Path
 ) -> None:
     output_dir = tmp_path / "assigned"
     output_dir.mkdir()
     session_dir = next(grouped_dir.iterdir())
+    metadata = session_dir / Metadata.FNAME
+    metadata.write_text("{}")
 
     mock_session = _mock_session()
     mock_session.assign.return_value = {}
+    mock_session.resources = []
     with patch.object(ImagingSession, "load", return_value=mock_session):
         errors = assign(
             input_dir=grouped_dir,
@@ -310,11 +367,8 @@ def test_assign_unlink_source_keep_metadata_keeps_metadata_skeleton(
         )
 
     assert errors == []
-    # the grouped session directory itself is untouched by 'keep-metadata' mode
-    # (only the loaded session's own resource data would be removed, leaving its
-    # session/scan-level metadata behind)
     assert session_dir.exists()
-    mock_session.unlink.assert_called_once_with(keep_metadata=True)
+    assert metadata.read_text() == "{}"
 
 
 def test_assign_does_not_delete_on_failure_even_if_unlink_source_all(

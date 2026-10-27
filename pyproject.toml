@@ -15,9 +15,10 @@ dependencies = [
     # dependency that was only ever arriving transitively. And 0.18.1 replaced the
     # `_explicit_metadata` attribute with a writable `metadata` overlay; on 0.18.0
     # the new API does not exist.
-    "fileformats >=0.19.3",
-    "fileformats-medimage >=0.15.0",
-    "fileformats-medimage-extras >=0.15.0",
+    "fileformats >=0.22.1",
+    "fileformats-extras >=0.22.1",
+    "fileformats-medimage >=0.15.4",
+    "fileformats-medimage-extras >=0.15.4",
     "fileformats-vendor-siemens >=0.2.5",
     "fileformats-vendor-siemens-extras >=0.2.5",
     "fileformats-vendor-mrtrix3 >=3.1.0a8",
@@ -66,6 +67,12 @@ test = [
     "medimages4tests >=0.5.7",
     "moto >=5.0",
     "PyYAML",
+    # test_package.py imports the vendor DICOM sample datatype and its
+    # converter. The package stage resolves these at run time (a site installs
+    # them), so they are not runtime dependencies; the tests need them at
+    # import time. Both are on PyPI.
+    "fileformats-vendor-australianimagingservice >=0.1.1",
+    "fileformats-vendor-australianimagingservice-extras >=0.1.1",
 ]
 docs = [
     "packaging",

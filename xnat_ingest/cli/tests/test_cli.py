@@ -7,6 +7,7 @@ import typing as ty
 import zlib
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import click
@@ -692,6 +693,7 @@ def test_stage_wait_period(
     cli_runner: ty.Any,
     tmp_path: Path,
     capsys: ty.Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Get test image data
 
@@ -707,6 +709,14 @@ def test_stage_wait_period(
 
     # Generate a test DICOM image
     get_pet_image(dicoms_path)
+
+    # Fix the age-check clock so loading this large fixture cannot consume the
+    # waiting period. Other modules keep their real clocks.
+    checked_at = time.time_ns()
+    monkeypatch.setattr(
+        "xnat_ingest.api.group_api.time",
+        SimpleNamespace(time_ns=lambda: checked_at),
+    )
 
     result = cli_runner(
         group_cmd,
@@ -733,7 +743,7 @@ def test_stage_wait_period(
 
     # Backdate the modification times of the files past the wait period, rather than
     # sleeping until it has elapsed
-    backdated = time.time() - 60
+    backdated = checked_at / 1e9 - 60
     for fspath in dicoms_path.rglob("*"):
         os.utime(fspath, (backdated, backdated))
 
