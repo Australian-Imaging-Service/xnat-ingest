@@ -144,6 +144,7 @@ def json_log() -> ty.Iterator[JsonCapture]:
 
 def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]:
     """Drive the real upload() with each scan's re-send outcome, keyed by scan id."""
+    observed_date_fields = kwargs.pop("_observed_date_fields", None)
 
     def fake_get_xnat_resource(
         resource: ty.Any, xsession: ty.Any, **kwargs: ty.Any
@@ -153,10 +154,20 @@ def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]
             raise IncompleteCheckumsException(f"{resource.path} is short")
         return FakeXResource({"a.dat"}, outcome), {"b.dat"}
 
+    def fake_get_xnat_session(
+        session: ty.Any,
+        xproject: ty.Any,
+        modality: str | None = None,
+        date_field: str | None = None,
+    ) -> FakeExperiment:
+        if observed_date_fields is not None:
+            observed_date_fields.append(date_field)
+        return FakeExperiment()
+
     with (
         mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
-            upload_api, "get_xnat_session", return_value=FakeExperiment()
+            upload_api, "get_xnat_session", side_effect=fake_get_xnat_session
         ),
         mock.patch.object(upload_api, "get_xnat_resource", fake_get_xnat_resource),
         mock.patch.object(
@@ -175,6 +186,23 @@ def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]
 
 
 # -------------------------------------------------------------------- tests
+
+
+def test_upload_passes_date_field_to_xnat_session_creation(tmp_path: Path) -> None:
+    staging = tmp_path / "staged"
+    _stage(staging, "proj.subj.sess", ["1.t1"])
+    observed: list[str | None] = []
+
+    assert (
+        _run(
+            staging,
+            {"1": "lands"},
+            date_field="StudyDate",
+            _observed_date_fields=observed,
+        )
+        == []
+    )
+    assert observed == ["StudyDate"]
 
 
 @pytest.mark.parametrize("outcome", ["raises", "lost"])

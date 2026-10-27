@@ -97,6 +97,7 @@ def upload(
     s3_max_workers: int = DEFAULT_MAX_WORKERS,
     xnat_max_workers: int = DEFAULT_MAX_WORKERS,
     modality: ty.Optional[str] = None,
+    date_field: str | None = None,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -135,6 +136,9 @@ def upload(
     modality: str, optional
         The modality of the sessions to upload (e.g. 'MR', 'CT'). Defaults to the "Modality" metadata field if present
         otherwise an error is raised.
+    date_field: str, optional
+        Session metadata field to use as the XNAT session date when creating a
+        session. Existing XNAT sessions are not modified.
     """
 
     errors = []
@@ -324,7 +328,9 @@ def upload(
                     framesets[session.project_id] = frameset
 
                 # Get the XNAT session object (creates it if it does not exist)
-                xsession = get_xnat_session(session, xproject, modality=modality)
+                xsession = get_xnat_session(
+                    session, xproject, modality=modality, date_field=date_field
+                )
 
                 # Anonymise DICOMs and save to directory prior to upload
                 if always_include:
