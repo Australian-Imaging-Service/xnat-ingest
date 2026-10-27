@@ -40,6 +40,10 @@ from .xnat_scan_types import (
 
 DEFAULT_MAX_WORKERS = 10
 
+# An upload loop keeps this first-listing result across sessions and passes.
+_xnat_has_checksums: bool | None = None
+_xnat_checksum_warning_lock = threading.Lock()
+
 
 @attrs.define
 class XnatRows:
@@ -857,6 +861,7 @@ class ResourceComparison:
     extra: ty.Set[str] = attrs.field(factory=set)
     differing: ty.Set[str] = attrs.field(factory=set)
     comparable: bool = True
+    without_checksums: ty.Set[str] = attrs.field(factory=set)
 
     @property
     def complete(self) -> bool:
@@ -883,7 +888,8 @@ def compare_resource_with_xnat(
     XNAT leaves `digest` empty until a catalog refresh populates it, so files
     uploaded but not yet refreshed report ''. Comparing content in that state
     would call a healthy resource corrupt, so a file with no digest is compared
-    by NAME only and the result is marked not `comparable`.
+    by NAME only and recorded in `without_checksums`. `comparable` means at
+    least one remote digest exists, not that every file was verified by content.
     api/check_upload_api.py guards the same way.
     """
     local_names = set(local_checksums)
@@ -901,7 +907,43 @@ def compare_resource_with_xnat(
         extra=xnat_names - local_names,
         differing=differing,
         comparable=comparable,
+        without_checksums={
+            n for n in local_names & xnat_names if not xnat_checksums[n]
+        },
     )
+
+
+def log_name_only_comparison(
+    comparison: ResourceComparison, resource: str, session: str
+) -> None:
+    """Keep per-resource detail at DEBUG; checksum support is reported once."""
+    if comparison.without_checksums:
+        logger.debug(
+            "'%s' in '%s' has %d file(s) compared by file name only: XNAT lists them "
+            "without checksums",
+            resource,
+            session,
+            len(comparison.without_checksums),
+        )
+
+
+def _report_xnat_checksum_support(checksums: ty.Mapping[str, str]) -> None:
+    """Use the first nonempty resource listing for this process's warning.
+
+    This is an observation of returned digests, not a request for site settings.
+    Empty resources do not decide support. Later partial catalogs still use the
+    same per-file comparisons, but do not add more warnings.
+    """
+    global _xnat_has_checksums
+    if not checksums:
+        return
+    with _xnat_checksum_warning_lock:
+        if _xnat_has_checksums is None:
+            _xnat_has_checksums = any(checksums.values())
+            if not _xnat_has_checksums:
+                logger.warning(
+                    "XNAT returns no file checksums; files are compared by name only"
+                )
 
 
 def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
@@ -1014,6 +1056,7 @@ def get_xnat_resource(
             comparison = compare_resource_with_xnat(
                 resource.checksums, get_xnat_checksums(xresource)
             )
+            log_name_only_comparison(comparison, resource.path, xsession.label)
             if comparison.repairable:
                 logger.warning(
                     "'%s' session resource exists on XNAT but is missing %d of "
@@ -1130,6 +1173,7 @@ def get_xnat_resource(
     else:
         xnat_checksums = get_xnat_checksums(xresource)
         comparison = compare_resource_with_xnat(resource.checksums, xnat_checksums)
+        log_name_only_comparison(comparison, resource.path, resource.scan.path)
         if comparison.repairable:
             # We hold files XNAT does not and nothing else is wrong, so hand
             # back the shortfall. Not the whole resource: XNAT would reject or
@@ -1285,6 +1329,7 @@ def get_xnat_checksums_at(
                 f"XNAT file listing repeats resource-relative path {path!r}"
             )
         checksums[path] = row["digest"]
+    _report_xnat_checksum_support(checksums)
     return checksums
 
 
