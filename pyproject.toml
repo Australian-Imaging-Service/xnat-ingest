@@ -71,8 +71,9 @@ test = [
     # converter. The package stage resolves these at run time (a site installs
     # them), so they are not runtime dependencies; the tests need them at
     # import time. Both are on PyPI.
-    "fileformats-vendor-australianimagingservice >=0.1.1",
-    "fileformats-vendor-australianimagingservice-extras >=0.1.1",
+    "fileformats-vendor-canfield-extras",
+    "fileformats-vendor-xnat >=0.1.1",
+    "fileformats-vendor-xnat-extras >=0.1.1",
 ]
 docs = [
     "packaging",
