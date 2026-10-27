@@ -38,6 +38,7 @@ from fileformats.core.identification import to_mime_format_name
 from fileformats.core.utils import collate_metadata_series
 from fileformats.generic import Directory, SetOf
 from fileformats.medimage import DicomCollection, DicomSeries, MedicalImagingData
+from fileformats.vendor.xnat.medimage import Snapshots
 from filelock import SoftFileLock
 from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
@@ -944,6 +945,8 @@ class ImagingSession:
                     resource_label = "DICOM"
                 else:
                     resource_label = dicom_image_type_to_resource_label(image_type)
+            elif isinstance(fileset, Snapshots):
+                resource_label = "SNAPSHOTS"
             elif not resource_field:
                 # No --resource spec given: label the resource with the mime-like
                 # rendering of the fileset's type name, e.g. 'vectra-export'
