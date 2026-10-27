@@ -227,7 +227,7 @@ def upload(
                 # so that they see XNAT as it is now.
                 xnat_repo.connection.clearcache()
 
-                if isinstance(session_listing, SessionOnlyListing):
+                if session_listing.is_session_only:
                     xsession = session_listing.find_xnat_session(xnat_repo.connection)
                     if xsession is None:
                         raise RuntimeError(
