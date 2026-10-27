@@ -217,6 +217,30 @@ eligible for re-staging. Note that ``--unlink-source`` is not yet implemented fo
 ``group-orthanc`` — the source studies always stay in Orthanc, and the processed
 label is what stops them being staged again.
 
+Missing series display tags
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``group-orthanc`` does not refuse a study solely because ``SeriesDescription`` or
+``SeriesNumber`` is missing, empty or whitespace. A missing number becomes
+``SeriesInstanceUID`` with dots replaced by underscores, matching XNAT's header
+importer so it updates the same scan. If that UID is not in Orthanc's indexed tags,
+it uses ``series_`` plus the full SHA-256 of Orthanc's series ID. The latter case
+has not been verified against XNAT's header importer. Both fallbacks are stable
+across retries on the same source. A missing description becomes
+``Series_<scan-id>``: FrameTree resource selection keys entries by scan type and
+resource name, so two types named ``unknown`` would collide. The following
+``assign`` stage retains this fallback when the description is missing or empty,
+without treating an optional display tag as a missing patient routing field.
+A numeric zero remains a valid number. Each fallback emits
+``series_metadata_fallback`` with ``orthanc_series_id``. Normal series keep their
+current labels. These labels do not repair missing study or patient identity.
+
+The generic DICOM-files ``group`` path still requires its configured ``--scan``
+expression to resolve. Its default ``SeriesNumber`` therefore needs an explicit
+``--scan SeriesInstanceUID,medimage/dicom-collection`` for sources without numbers.
+Automatic number fallback on that configurable path is a separate follow-up;
+missing optional descriptions in the shared ``assign`` path are handled above.
+
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
