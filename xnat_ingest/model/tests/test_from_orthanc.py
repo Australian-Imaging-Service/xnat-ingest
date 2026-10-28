@@ -19,6 +19,7 @@ bytes are copied into the fake store_dir so checksums are genuine).
 
 import hashlib
 import json
+import logging
 import typing as ty
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +51,7 @@ class FakeOrthanc:
         self.series: ty.Dict[str, ty.Dict[str, ty.Any]] = {}
         self.instances: ty.Dict[str, ty.Dict[str, ty.Any]] = {}
         self.labelled: ty.List[ty.Tuple[str, str]] = []
+        self.unlabelled: ty.List[ty.Tuple[str, str]] = []
 
     def add_study(
         self,
@@ -82,18 +84,22 @@ class FakeOrthanc:
             "labels": set(labels),
         }
 
-    def find(self, body: ty.Dict[str, ty.Any]) -> ty.List[str]:
+    def find(self, body: ty.Dict[str, ty.Any]) -> ty.List[ty.Any]:
         assert body["Level"] == "Study"
         labels = body.get("Labels") or []
         if not labels:
-            return sorted(self.studies)
-        if body.get("LabelsConstraint") == "None":
-            return sorted(
+            found = sorted(self.studies)
+        elif body.get("LabelsConstraint") == "None":
+            found = sorted(
                 sid for sid, s in self.studies.items() if not s["labels"] & set(labels)
             )
-        return sorted(
-            sid for sid, s in self.studies.items() if set(labels) <= s["labels"]
-        )
+        else:
+            found = sorted(
+                sid for sid, s in self.studies.items() if set(labels) <= s["labels"]
+            )
+        if body.get("Expand"):
+            return [{"ID": sid, **self.get(f"/studies/{sid}")} for sid in found]
+        return found
 
     def get(self, path: str) -> ty.Any:
         parts = path.strip("/").split("/")
@@ -103,6 +109,7 @@ class FakeOrthanc:
                 "MainDicomTags": s["tags"],
                 "PatientMainDicomTags": s["patient_tags"],
                 "Series": s["series"],
+                "Labels": sorted(s["labels"]),
                 "LastUpdate": s.get("last_update", "20000101T000000"),
             }
         if parts[0] == "series" and len(parts) == 3 and parts[2] == "instances":
@@ -129,6 +136,10 @@ class FakeOrthanc:
         self.studies[study_id]["labels"].add(label)
         self.labelled.append((study_id, label))
 
+    def unlabel(self, study_id: str, label: str) -> None:
+        self.studies[study_id]["labels"].discard(label)
+        self.unlabelled.append((study_id, label))
+
 
 def _mock_response(payload: ty.Any) -> MagicMock:
     response = MagicMock()
@@ -152,12 +163,25 @@ def _patch_requests(fake: FakeOrthanc) -> ty.Any:
         fake.label(study_id, label)
         return _mock_response(None)
 
+    def fake_delete(url: str, auth: ty.Any = None) -> MagicMock:
+        assert url.startswith(f"{ORTHANC_URL}/studies/")
+        _, study_id, _, label = url[len(ORTHANC_URL) :].strip("/").split("/")
+        fake.unlabel(study_id, label)
+        return _mock_response(None)
+
     return patch.multiple(
         "xnat_ingest.model.session.requests",
         post=MagicMock(side_effect=fake_post),
         get=MagicMock(side_effect=fake_get),
         put=MagicMock(side_effect=fake_put),
+        delete=MagicMock(side_effect=fake_delete),
     )
+
+
+def _processed(fake: FakeOrthanc) -> ty.List[ty.Tuple[str, str]]:
+    """The (study, label) pairs that mark a study as processed, without the
+    snapshot labels that are written beside them."""
+    return [(sid, lb) for sid, lb in fake.labelled if not lb.startswith("done-")]
 
 
 def _make_fake_orthanc(tmp_path: Path) -> ty.Tuple[FakeOrthanc, Path]:
@@ -177,7 +201,12 @@ def _make_fake_orthanc(tmp_path: Path) -> ty.Tuple[FakeOrthanc, Path]:
     for i, (study_id, accession, labels) in enumerate(
         [
             ("study-ready", "ACC-READY", ["ready"]),
-            ("study-done", "ACC-DONE", ["ready", "done"]),
+            # Processed by this version: the snapshot label names its LastUpdate.
+            (
+                "study-done",
+                "ACC-DONE",
+                ["ready", "done", "done-20000101T000000-0123456789abcdef01234567"],
+            ),
             ("study-plain", "ACC-PLAIN", []),
         ]
     ):
@@ -275,7 +304,7 @@ def test_from_orthanc_stages_nothing_when_no_study_has_the_label(
         )
 
     assert staged == []
-    assert fake.labelled == []
+    assert _processed(fake) == []
 
 
 def test_from_orthanc_waits_for_recent_studies(tmp_path: Path) -> None:
@@ -520,7 +549,7 @@ def test_initial_build_is_hidden_from_assign(tmp_path):
             for path in resource.fileset.fspaths
         )
         resource.check_checksums()
-    assert fake.labelled == [("study-ready", "done")]
+    assert _processed(fake) == [("study-ready", "done")]
 
 
 def _pause_complete_build(fake, kwargs, writer, label_marker):
@@ -565,7 +594,7 @@ def test_stopped_initial_build_is_hidden_and_retry_publishes_all_series(tmp_path
         assert not build.exists() and len(list(output.glob("_.*"))) == 1
         for resource in staged[0].resources:
             resource.check_checksums()
-        assert fake.labelled == [("study-ready", "done")]
+        assert _processed(fake) == [("study-ready", "done")]
     finally:
         if child.is_alive():
             child.kill()
@@ -590,5 +619,213 @@ def test_existing_group_destination_is_preserved_and_next_study_runs(tmp_path, c
     assert len(staged[0].scans) == 2
     assert list(refused.iterdir()) == [sentinel]
     assert sentinel.read_bytes() == b"existing generation"
-    assert fake.labelled == [("study-ready", "done")]
+    assert _processed(fake) == [("study-ready", "done")]
     assert "study-plain" in caplog.text and str(refused) in caplog.text
+
+
+def _snapshot_kwargs(output: Path, store: Path) -> ty.Dict[str, ty.Any]:
+    kwargs = _publication_kwargs(output, store)
+    kwargs.update(to_process_label="ready", processed_label="done")
+    return kwargs
+
+
+def test_staging_writes_the_snapshot_label(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies["study-ready"]["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert len(staged) == 1
+    # Snapshot first, processed last: a processed study always has a snapshot.
+    # The snapshot names the LastUpdate and a digest of the staged instance ids.
+    import hashlib
+
+    ids = sorted(
+        fake.series[s]["instances"][0] for s in fake.studies["study-ready"]["series"]
+    )
+    digest = hashlib.sha256(("\n".join(ids) + "\n").encode()).hexdigest()[:24]
+    assert fake.labelled[-2:] == [
+        ("study-ready", f"done-20261019T011324-{digest}"),
+        ("study-ready", "done"),
+    ]
+
+
+def test_processed_study_with_matching_snapshot_is_left_alone(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567"}
+    done["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert [s.name for s in staged] != ["study-done"]
+    assert not any(sid == "study-done" for sid, _ in fake.labelled)
+    assert fake.unlabelled == []
+
+
+def test_processed_study_changed_after_staging_is_staged_again(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"ready", "done", "done-20261019T011324-0123456789abcdef01234567"}
+    done["last_update"] = "20261019T014500"  # a series arrived after the staging
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert any(sid == "study-done" for sid, _ in fake.labelled)
+    assert ("study-done", "done") in fake.unlabelled
+    assert (
+        "study-done",
+        "done-20261019T011324-0123456789abcdef01234567",
+    ) in fake.unlabelled
+    mine = [lb for sid, lb in fake.labelled if sid == "study-done"]
+    assert mine[0].startswith("done-20261019T014500-") and mine[1] == "done"
+    assert (
+        "done" in done["labels"]
+        and len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
+    )
+    assert "done-20261019T011324-0123456789abcdef01234567" not in done["labels"]
+    assert len(staged) == 2
+
+
+def test_processed_study_without_snapshot_is_staged_again(tmp_path):
+    # Labelled by a version that wrote no snapshot label: export state unknown.
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies["study-done"]["labels"] = {"ready", "done"}
+    fake.studies["study-done"]["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert ("study-done", "done") in fake.unlabelled
+    assert any(
+        sid == "study-done" and lb.startswith("done-20261019T011324-")
+        for sid, lb in fake.labelled
+    )
+    assert len(staged) == 2
+
+
+def test_changed_processed_study_without_ready_label_is_not_staged(tmp_path):
+    # Under an engine that gates on the ready label, a changed study without it
+    # waits for the hook: nothing identifiable may leave Orthanc early.
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"done", "done-20261019T011324-0123456789abcdef01234567"}
+    done["last_update"] = "20261019T014500"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert not any(sid == "study-done" for sid, _ in fake.labelled + fake.unlabelled)
+    assert len(staged) == 1
+
+
+def test_processed_study_with_a_malformed_snapshot_is_staged_again(tmp_path):
+    # A timestamp without a digest is not a receipt this version wrote.
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {"ready", "done", "done-20261019T011324"}
+    done["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert ("study-done", "done-20261019T011324") in fake.unlabelled
+    assert len(staged) == 2
+
+
+def test_processed_study_with_two_snapshots_is_staged_again(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    done = fake.studies["study-done"]
+    done["labels"] = {
+        "ready",
+        "done",
+        "done-20261019T011324-0123456789abcdef01234567",
+        "done-20261019T011300-0123456789abcdef01234567",
+    }
+    done["last_update"] = "20261019T011324"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(tmp_path / "staged", store)
+        )
+    assert len(staged) == 2
+    assert len([lb for lb in done["labels"] if lb.startswith("done-")]) == 1
+
+
+def test_malformed_expanded_find_reply_is_an_error(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    real_find = fake.find
+
+    def bad_find(body):
+        return {} if body.get("Expand") else real_find(body)
+
+    fake.find = bad_find
+    with _patch_requests(fake), pytest.raises(ValueError, match="expanded study query"):
+        ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert fake.labelled == [] and fake.unlabelled == []
+
+
+def test_processed_label_forces_a_one_second_wait(tmp_path, caplog):
+    # Without a wait a late instance can share the staged LastUpdate's second.
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies["study-ready"]["last_update"] = datetime.now(UTC).strftime(
+        "%Y%m%dT%H%M%S"
+    )
+    kwargs = _snapshot_kwargs(tmp_path / "staged", store)
+    kwargs["wait_period"] = 0
+    with _patch_requests(fake), caplog.at_level(logging.INFO):
+        staged = ImagingSession.from_orthanc(**kwargs)
+    assert [s.name for s in staged] == []
+    assert "wait period of 1 second" in caplog.text
+
+
+def test_too_long_processed_label_is_refused_before_staging(tmp_path):
+    fake, store = _make_fake_orthanc(tmp_path)
+    kwargs = _snapshot_kwargs(tmp_path / "staged", store)
+    kwargs["processed_label"] = "p" * 45
+    with _patch_requests(fake), pytest.raises(ValueError, match="too long"):
+        ImagingSession.from_orthanc(**kwargs)
+    assert fake.labelled == []
+
+
+_ABSENT = object()
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("Labels", "ready"),
+        ("Labels", [1, 2]),
+        ("Labels", _ABSENT),
+        ("LastUpdate", None),
+        ("LastUpdate", "yesterday"),
+        ("LastUpdate", _ABSENT),
+        ("LastUpdate", "20260230T000000"),  # no such day
+        ("LastUpdate", "20261019T250000"),  # no such hour
+    ],
+)
+def test_malformed_study_fields_in_the_expanded_reply_are_an_error(
+    tmp_path, field, value
+):
+    fake, store = _make_fake_orthanc(tmp_path)
+    real_find = fake.find
+
+    def bad_find(body):
+        result = real_find(body)
+        if body.get("Expand"):
+            for entry in result:
+                if value is _ABSENT:
+                    del entry[field]
+                else:
+                    entry[field] = value
+        return result
+
+    fake.find = bad_find
+    with (
+        _patch_requests(fake),
+        pytest.raises(ValueError, match="Unexpected Labels or LastUpdate"),
+    ):
+        ImagingSession.from_orthanc(**_snapshot_kwargs(tmp_path / "staged", store))
+    assert fake.labelled == [] and fake.unlabelled == []

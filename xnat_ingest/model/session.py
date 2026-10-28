@@ -469,6 +469,15 @@ def _deidentify_or_copy_resource(
     return deid_resource, reid_mdata
 
 
+def _is_timestamp(value: str) -> bool:
+    """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
+    try:
+        datetime.strptime(value, "%Y%m%dT%H%M%S")
+    except ValueError:
+        return False
+    return True
+
+
 @attrs.define(slots=False)
 class ImagingSession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
@@ -1169,7 +1178,95 @@ class ImagingSession:
             candidates = _find_studies([], "All")
 
         if processed_label:
+            # The snapshot label below is "<processed>-<LastUpdate>-<digest>" in
+            # at most 64 characters (Orthanc's label limit), with a digest of
+            # at least 8 hex digits. Checked here, before any study is staged.
+            snapshot_prefix = f"{processed_label}-"
+            digest_len = min(24, 64 - len(snapshot_prefix) - len("YYYYMMDDTHHMMSS-"))
+            if digest_len < 8:
+                raise ValueError(
+                    f"processed label {processed_label!r} is too long for a "
+                    "snapshot label (64 characters at most)"
+                )
+            receipt_re = re.compile(
+                re.escape(snapshot_prefix)
+                + r"(\d{8}T\d{6})-([0-9a-f]{%d})$" % digest_len
+            )
+            # LastUpdate has one-second resolution. The change check relies on
+            # a late instance getting a LastUpdate in a later second than the
+            # one staged, so the study must have been quiet for a second.
+            if not wait_period or wait_period < 1:
+                logger.info(
+                    "Using a wait period of 1 second with the processed label "
+                    "%r (requested: %r)",
+                    processed_label,
+                    wait_period,
+                )
+                wait_period = 1
             candidates -= _find_studies([processed_label], "All")
+            # A processed study can change after it was staged: a series that
+            # arrives late. The staging run records the LastUpdate it staged
+            # as a second label, "<processed_label>-<LastUpdate>". A processed
+            # study whose current LastUpdate has no such label (or none at
+            # all, from an older version) has instances this stage never
+            # saw: its labels are removed and it is staged again in full.
+            resp = requests.post(
+                f"{url}/tools/find",
+                auth=auth,
+                json={
+                    "Level": "Study",
+                    "Query": {},
+                    "Labels": [processed_label],
+                    "LabelsConstraint": "All",
+                    "Expand": True,
+                },
+            )
+            resp.raise_for_status()
+            expanded = resp.json()
+            if not isinstance(expanded, list) or not all(
+                isinstance(e, dict) and isinstance(e.get("ID"), str) for e in expanded
+            ):
+                raise ValueError(
+                    f"Unexpected reply to the expanded study query at '{url}'"
+                )
+            for entry in expanded:
+                # Both keys must be present. A study document without Labels
+                # comes from an Orthanc without label support, which this
+                # mode cannot work with.
+                labels = entry.get("Labels")
+                last_update = entry.get("LastUpdate")
+                if (
+                    not isinstance(labels, list)
+                    or not all(isinstance(lb, str) for lb in labels)
+                    or not isinstance(last_update, str)
+                    or not re.fullmatch(r"\d{8}T\d{6}", last_update)
+                    or not _is_timestamp(last_update)
+                ):
+                    raise ValueError(
+                        f"Unexpected Labels or LastUpdate for Orthanc study "
+                        f"'{entry['ID']}' at '{url}'"
+                    )
+                if to_process_label and to_process_label not in labels:
+                    continue
+                snapshots = [lb for lb in labels if lb.startswith(snapshot_prefix)]
+                # Exactly one well-formed snapshot label naming the current
+                # LastUpdate: the cheap check. The digest is for the reclaimer,
+                # which holds the instance list anyway.
+                match = receipt_re.match(snapshots[0]) if len(snapshots) == 1 else None
+                if match and match.group(1) == last_update:
+                    continue
+                logger.info(
+                    "Orthanc study '%s' changed after it was staged "
+                    "(LastUpdate %s, snapshot labels %s): staging it again",
+                    entry["ID"],
+                    last_update,
+                    snapshots,
+                )
+                for label in [processed_label, *snapshots]:
+                    requests.delete(
+                        f"{url}/studies/{entry['ID']}/labels/{label}", auth=auth
+                    ).raise_for_status()
+                candidates.add(entry["ID"])
 
         study_ids = sorted(candidates)
         logger.info(
@@ -1374,6 +1471,25 @@ class ImagingSession:
                 )
             work_dir.rmdir()
             if processed_label:
+                # The snapshot label names the LastUpdate the final check
+                # verified. A stale one from an earlier staging goes first,
+                # and the processed label last, so a processed study always
+                # carries exactly one snapshot label.
+                exported = sorted(
+                    iid for ids in staged_instance_ids.values() for iid in ids
+                )
+                digest = hashlib.sha256(
+                    ("\n".join(exported) + "\n").encode()
+                ).hexdigest()[:digest_len]
+                snapshot = f"{snapshot_prefix}{study['LastUpdate']}-{digest}"
+                for stale in current_study.get("Labels") or []:
+                    if stale.startswith(f"{processed_label}-") and stale != snapshot:
+                        requests.delete(
+                            f"{url}/studies/{study_id}/labels/{stale}", auth=auth
+                        ).raise_for_status()
+                requests.put(
+                    f"{url}/studies/{study_id}/labels/{snapshot}", auth=auth
+                ).raise_for_status()
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
