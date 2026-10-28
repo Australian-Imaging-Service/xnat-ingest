@@ -481,6 +481,23 @@ def _dicom_multi_value(value: ty.Any) -> list[str]:
     return [str(v) for v in value]
 
 
+def _remove_scratch_dir(path: Path) -> None:
+    """Remove a scratch directory of a study that failed to stage.
+
+    A failure to remove it, for example a permission error, is logged and not
+    raised, so the next study is still staged. The remaining files are then
+    removed where possible.
+    """
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        # The directory, or a file in it, is already gone. Remove the rest.
+        shutil.rmtree(path, ignore_errors=True)
+    except OSError as e:
+        logger.warning("Could not remove the scratch directory '%s': %s", path, e)
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _is_timestamp(value: str) -> bool:
     """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
     try:
@@ -1306,9 +1323,9 @@ class ImagingSession:
         def _discard_work_dir() -> None:
             work_dir = current_work_dir.pop("path", None)
             if work_dir is not None and work_dir.exists():
-                shutil.rmtree(work_dir, ignore_errors=True)
+                _remove_scratch_dir(work_dir)
             for convert_dir in current_work_dir.pop("convert", []):
-                shutil.rmtree(convert_dir, ignore_errors=True)
+                _remove_scratch_dir(convert_dir)
 
         def _stage_study(study_id: str) -> ImagingSession | None:
             study = get_json(f"/studies/{study_id}")

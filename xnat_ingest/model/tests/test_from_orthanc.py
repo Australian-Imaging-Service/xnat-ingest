@@ -36,6 +36,7 @@ from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b impo
 )
 
 from xnat_ingest.exceptions import DifferingCheckumsException
+from xnat_ingest.model import session as session_module
 from xnat_ingest.model.session import ImagingSession
 
 ORTHANC_URL = "http://orthanc-test:8042"
@@ -1137,3 +1138,123 @@ def test_a_derived_series_of_the_same_scan_becomes_its_own_resource(tmp_path):
     [session] = staged
     assert sorted(session.scans["1"].resources) == ["DICOM", "secondary"]
     assert ("study-ready", "done") in fake.labelled
+
+
+def test_a_build_directory_that_cannot_be_removed_is_logged_and_the_stage_goes_on(
+    tmp_path, caplog, monkeypatch
+):
+    """A refused study's build directory that cannot be removed (here a
+    permission error) is one WARNING with the path and the error. The files
+    are then removed where possible, and the pass goes on to the next study."""
+    fake, store = _make_fake_orthanc(tmp_path)
+    # Same SeriesNumber and SeriesDescription as the first series of
+    # study-ready, so that study is refused after its build directory exists.
+    _add_series(
+        fake, tmp_path, "twin", {"SeriesNumber": "1", "SeriesDescription": "Topogram"}
+    )
+    # A healthy study that sorts AFTER study-ready, so it is only staged if the
+    # pass goes on after the failed cleanup.
+    later_dir = tmp_path / "study-z-later"
+    get_topogram_image(
+        later_dir,
+        StudyInstanceUID="1.2.3.9",
+        SeriesInstanceUID="1.2.3.9.1",
+        AccessionNumber="ACC-LATER",
+        PatientID="subject1",
+    )
+    fake.add_study(
+        "study-z-later",
+        next(later_dir.iterdir()),
+        study_tags={"StudyInstanceUID": "1.2.3.9", "AccessionNumber": "ACC-LATER"},
+        patient_tags={"PatientID": "subject1"},
+        series_tags={"SeriesNumber": "1", "SeriesDescription": "Topogram"},
+        labels=["ready"],
+    )
+    output_dir = tmp_path / "staged"
+    build_dir = output_dir / "__build__" / "orthanc_1_2_3_0"
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if Path(path) == build_dir and not kwargs.get("ignore_errors"):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(session_module.shutil, "rmtree", rmtree)
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_snapshot_kwargs(output_dir, store))
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].startswith(
+        f"Could not remove the scratch directory '{build_dir}': "
+    )
+    assert "Permission denied" in warnings[0]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].startswith("Skipping Orthanc study 'study-ready': ")
+    assert not build_dir.exists()
+    assert [s.metadata["AccessionNumber"] for s in staged] == ["ACC-LATER"]
+    assert ("study-z-later", "done") in fake.labelled
+
+
+def test_a_file_that_disappears_during_the_removal_does_not_stop_it(
+    tmp_path, caplog, monkeypatch
+):
+    """A file that is already gone when the removal reaches it (another process
+    removed it) is not an error and does not stop the removal of the rest."""
+    fake, store = _make_fake_orthanc(tmp_path)
+    _add_series(
+        fake, tmp_path, "twin", {"SeriesNumber": "1", "SeriesDescription": "Topogram"}
+    )
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+    build_dir = output_dir / "__build__" / "orthanc_1_2_3_0"
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if Path(path) == build_dir and not kwargs.get("ignore_errors"):
+            # The walk stops at a missing child; everything else is still there.
+            raise FileNotFoundError(2, "No such file or directory", str(path / "x"))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(session_module.shutil, "rmtree", rmtree)
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with _patch_requests(fake):
+        ImagingSession.from_orthanc(**_snapshot_kwargs(output_dir, store))
+
+    assert not build_dir.exists()
+    assert not [
+        r for r in caplog.records if r.getMessage().startswith("Could not remove")
+    ]
+
+
+def test_a_converted_study_that_fails_later_logs_no_removal_warning(tmp_path, caplog):
+    """A successful conversion removes its scratch directory at once. When the
+    study then fails, that directory is already gone, which is not an error."""
+    fake, store = _make_fake_orthanc(tmp_path)
+    fake.studies = {"study-ready": fake.studies["study-ready"]}
+    output_dir = tmp_path / "staged"
+
+    def fail_load(session_dir: Path) -> ImagingSession:
+        raise DifferingCheckumsException("Checksum file paths don't match")
+
+    caplog.set_level(logging.WARNING, logger="xnat-ingest")
+    with (
+        _patch_requests(fake),
+        patch.object(Zip, "convert", side_effect=_fake_zip_converter(tmp_path)),
+        patch.object(ImagingSession, "load", side_effect=fail_load),
+    ):
+        staged = ImagingSession.from_orthanc(
+            **_snapshot_kwargs(output_dir, store),
+            conversion_map={DicomSeries: (Zip, {"compression": ZIP_STORED})},
+        )
+
+    assert staged == []
+    messages = [r.getMessage() for r in caplog.records]
+    assert "Skipping Orthanc study 'study-ready': Checksum file paths don't match" in (
+        messages
+    )
+    assert not [m for m in messages if m.startswith("Could not remove the scratch")]
+    assert not list(output_dir.glob("__convert_*"))
+    assert not list((output_dir / "__build__").glob("orthanc_*"))
