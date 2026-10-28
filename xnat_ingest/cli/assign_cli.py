@@ -1,4 +1,3 @@
-import datetime
 import time
 import typing as ty
 from pathlib import Path
@@ -199,7 +198,7 @@ def assign_cmd(
 
     # Run the assign process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
-        start_time = datetime.datetime.now()
+        start_time = time.monotonic()
         assign(
             input_dir=input_dir,
             output_dir=output_dir,
@@ -215,9 +214,9 @@ def assign_cmd(
         )
         if loop < 0:
             break
-        end_time = datetime.datetime.now()
-        elapsed_seconds = (end_time - start_time).total_seconds()
-        sleep_time = loop - elapsed_seconds
+        end_time = time.monotonic()
+        elapsed_seconds = end_time - start_time
+        sleep_time = max(loop - elapsed_seconds, 0)
         logger.info(
             "Assign took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
@@ -225,4 +224,4 @@ def assign_cmd(
             sleep_time,
             loop,
         )
-        time.sleep(loop)
+        time.sleep(sleep_time)

@@ -1,4 +1,3 @@
-import datetime
 import logging
 import shutil
 import signal
@@ -379,7 +378,7 @@ def upload_cmd(
         xnat_repo = _open_repo()
         # Loop the upload process if loop is set to a positive value, otherwise just run it once
         while True:
-            start_time = datetime.datetime.now()
+            start_time = time.monotonic()
             # A prior reconnect attempt may have failed and left us without a
             # connection. Re-establish before doing any work this iteration.
             if xnat_repo is None:
@@ -469,9 +468,9 @@ def upload_cmd(
                     xnat_repo = None
             if loop < 0:
                 break
-            end_time = datetime.datetime.now()
-            elapsed_seconds = (end_time - start_time).total_seconds()
-            sleep_time = loop - elapsed_seconds
+            end_time = time.monotonic()
+            elapsed_seconds = end_time - start_time
+            sleep_time = max(loop - elapsed_seconds, 0)
             logger.info(
                 "Upload took %s seconds, waiting another %s seconds before running "
                 "again (loop every %s seconds)",
@@ -479,7 +478,7 @@ def upload_cmd(
                 sleep_time,
                 loop,
             )
-            time.sleep(loop)
+            time.sleep(sleep_time)
     finally:
         _close_repo(xnat_repo)
         shutil.rmtree(run_tmp_dir, ignore_errors=True)
