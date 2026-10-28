@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fileformats.generic import File, FileSet
 from fileformats.medimage import DicomCollection, DicomImage
+from fileformats.vendor.xnat.medimage import Snapshots
 from frametree.core.frameset import FrameSet
 from frametree.xnat import Xnat
 from tqdm import tqdm
@@ -408,7 +409,25 @@ def upload(
                         resource.path,
                         xresource,
                     )
-                    if isinstance(resource.fileset, File):
+                    if isinstance(resource.fileset, Snapshots):
+                        # XNAT serves a scan's snapshot and thumbnail by the content
+                        # of their files, which is set per upload request, so the
+                        # files are uploaded one by one
+                        content_labels = resource.fileset.content_labels
+                        for fspath in wanted_fspaths:
+                            logger.debug(
+                                "Uploading '%s' to '%s' in %s",
+                                fspath,
+                                fspath.name,
+                                xresource,
+                            )
+                            xresource.upload(
+                                str(fspath),
+                                fspath.name,
+                                file_content=content_labels.get(fspath.name),
+                                file_format="GIF",
+                            )
+                    elif isinstance(resource.fileset, File):
                         for fspath in wanted_fspaths:
                             logger.debug(
                                 "Uploading '%s' to '%s' in %s",

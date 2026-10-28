@@ -9,6 +9,7 @@ from pathlib import Path
 import xnat
 from fileformats.core import FileSet, from_mime, to_mime
 from fileformats.medimage import DicomSeries
+from fileformats.vendor.xnat.medimage import Snapshots
 from frametree.xnat import Xnat
 from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
@@ -22,6 +23,7 @@ from xnat_ingest.helpers.remotes import (
     get_xnat_checksums,
     iterate_s3_sessions,
 )
+from xnat_ingest.helpers.xnat_scan_types import SNAPSHOTS_RESOURCE_LABEL
 
 
 def check_upload(
@@ -192,6 +194,9 @@ def check_upload(
                 scan_id, _ = scan_path.split(".", 1)
                 datatype = from_mime(manifests["datatype"])
                 checksums = manifests["checksums"]
+                if issubclass(datatype, Snapshots):
+                    # Uploaded under the label XNAT shows a scan's snapshots from
+                    resource_name = SNAPSHOTS_RESOURCE_LABEL
                 if not any(issubclass(datatype, r) for r in included_formats):
                     logger.debug(
                         "Skipping checking %s in %s as it's datatype (%s) isn't in the included formats %s",
