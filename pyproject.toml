@@ -17,7 +17,7 @@ dependencies = [
     # the new API does not exist.
     "fileformats >=0.22.1",
     "fileformats-extras >=0.22.1",
-    "fileformats-medimage >=0.15.4",
+    "fileformats-medimage >=0.15.5",
     "fileformats-medimage-extras >=0.15.4",
     "fileformats-vendor-siemens >=0.2.5",
     "fileformats-vendor-siemens-extras >=0.2.5",

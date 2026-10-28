@@ -92,6 +92,7 @@ class ImagingScan:
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
         include: ty.Sequence[ty.Type[FileSet]] = (),
+        build_dir: Path | None = None,
     ) -> Self:
         # Ensure scan type is a valid directory name. A scan with no description set
         # (e.g. not yet resolved by 'assign') is saved as '<scan_id>.' (trailing dot,
@@ -113,6 +114,7 @@ class ImagingScan:
                 copy_mode=copy_mode,
                 collation_map=collation_map,
                 conversion_map=conversion_map,
+                build_dir=build_dir,
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
