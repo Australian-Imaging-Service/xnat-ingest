@@ -1,8 +1,10 @@
 import typing as ty
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from fileformats.application import Zip
 from fileformats.generic import File
 from fileformats.medimage import DicomImage, DicomSeries
 from pydicom.dataset import FileDataset, FileMetaDataset
@@ -510,3 +512,105 @@ def test_get_xnat_resource_scan_without_sop_class_inherits_session_type() -> Non
 
     PetScanData.assert_called_once()
     assert PetScanData.call_args.kwargs["id"] == "602"
+
+
+def _zipped_series_resource(
+    tmp_path: Path, sop_class_uid: str, fileset_type=Zip[DicomSeries]
+) -> ImagingResource:
+    """The package stage's DICOM-zip: a zip of a series, with the series' SOP
+    class in its metadata and a label XNAT never changes."""
+    zip_path = tmp_path / "archive.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("a.dcm", b"not parsed by this test")
+    scan = MagicMock(id="3", type="t2", path="proj:subj:sess:3-t2")
+    scan.session = MagicMock(path="proj:subj:sess")
+    resource = ImagingResource(
+        name="DICOM-zip",
+        fileset=fileset_type(zip_path),
+        checksums={"archive.zip": "digest"},
+        scan=scan,
+    )
+    resource.metadata["SOPClassUID"] = sop_class_uid
+    return resource
+
+
+@pytest.mark.parametrize("fileset_type", [Zip[DicomSeries], Zip, File])
+def test_get_xnat_resource_zipped_series_gives_its_scan_the_sop_class_datatype(
+    tmp_path: Path,
+    fileset_type,
+) -> None:
+    """A secondary-capture series zipped by the package stage, uploaded to an
+    MR session: the scan is created as scScanData, not as the session's
+    mrScanData, and the resource keeps its DICOM-zip label."""
+    resource = _zipped_series_resource(
+        tmp_path, "1.2.840.10008.5.1.4.1.1.7", fileset_type
+    )
+    xsession = _xsession_of_type("xnat:mrSessionData")
+    ScScanData = MagicMock()
+    ScScanData.return_value.resources = {}
+    ScScanData.return_value.files = ["something"]  # skip the catalog refresh
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP["xnat:scScanData"] = ScScanData
+    MrScanData = MagicMock()
+    MrScanData.return_value.resources = {}
+    MrScanData.return_value.files = ["something"]
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP["xnat:mrScanData"] = MrScanData
+    xsession.scans = {}
+
+    get_xnat_resource(resource, xsession)
+
+    ScScanData.assert_called_once()
+    assert ScScanData.call_args.kwargs["id"] == "3"
+    ScScanData.return_value.create_resource.assert_called_once_with("DICOM-zip")
+
+
+def test_get_xnat_resource_zipped_series_rejects_a_scan_of_another_datatype(
+    tmp_path: Path,
+) -> None:
+    resource = _zipped_series_resource(tmp_path, "1.2.840.10008.5.1.4.1.1.7")
+    xscan = MagicMock()
+    xscan.__xsi_type__ = "xnat:mrScanData"
+    xscan.resources = {}
+    xsession = MagicMock()
+    xsession.scans = {"3": xscan}
+
+    with pytest.raises(
+        ValueError, match="has datatype 'xnat:mrScanData'.*requires 'xnat:scScanData'"
+    ):
+        get_xnat_resource(resource, xsession)
+
+
+def test_get_xnat_resource_plain_zip_sop_metadata_sets_scan_type(
+    tmp_path: Path,
+) -> None:
+    """A plain zip of vendor raw data can carry a provenance SOP class in its
+    metadata (Siemens listmode). Under the metadata-presence contract, this
+    determines its scan type while the resource keeps its staged label."""
+    zip_path = tmp_path / "listmode.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("listmode.ptd", b"raw")
+    scan = MagicMock(id="602", type="602", path="proj:subj:sess:602-602")
+    scan.session = MagicMock(path="proj:subj:sess")
+    resource = ImagingResource(
+        name="LISTMODE",
+        fileset=Zip(zip_path),
+        checksums={"listmode.zip": "digest"},
+        scan=scan,
+    )
+    resource.metadata["SOPClassUID"] = "1.3.12.2.1107.5.9.1"  # Siemens raw data
+    xsession = _xsession_of_type("xnat:petSessionData")
+    OtherDicomScanData = MagicMock()
+    OtherDicomScanData.return_value.resources = {}
+    OtherDicomScanData.return_value.files = ["something"]
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP["xnat:otherDicomScanData"] = (
+        OtherDicomScanData
+    )
+    PetScanData = MagicMock()
+    PetScanData.return_value.resources = {}
+    PetScanData.return_value.files = ["something"]
+    xsession.xnat_session.classes.XNAT_CLASS_LOOKUP["xnat:petScanData"] = PetScanData
+    xsession.scans = {}
+
+    get_xnat_resource(resource, xsession)
+
+    OtherDicomScanData.assert_called_once()
+    OtherDicomScanData.return_value.create_resource.assert_called_once_with("LISTMODE")

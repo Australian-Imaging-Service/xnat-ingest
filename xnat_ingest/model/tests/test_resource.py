@@ -77,9 +77,10 @@ def test_save_repairs_an_unreadable_manifest(
 def test_save_publishes_the_manifest_in_one_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The manifest is written beside its final name and moved into place. A
-    process that dies before the move leaves no manifest, never a partial one,
-    and the next save repairs the directory"""
+    """The manifest is written beside its final name and moved into place, and
+    the whole resource is published by one rename. A process that dies before
+    the move leaves no manifest, never a partial one, and nothing at the visible
+    path; the next save publishes the directory"""
     resource = _resource(tmp_path)
     dest_dir = tmp_path / "out"
     dest_dir.mkdir()
@@ -93,10 +94,10 @@ def test_save_publishes_the_manifest_in_one_step(
     monkeypatch.undo()
 
     resource_dir = dest_dir / "my-resource"
-    assert not (resource_dir / ImagingResource.MANIFEST_FNAME).exists()
-    assert (resource_dir / "a-file.txt").read_text() == "content"
+    assert not resource_dir.exists()
     repaired = resource.save(dest_dir, overwrite=True)
     assert ImagingResource.load(resource_dir).checksums == repaired.checksums
+    assert (resource_dir / "a-file.txt").read_text() == "content"
     assert not (resource_dir / (ImagingResource.MANIFEST_FNAME + ".tmp")).exists()
 
 
@@ -114,10 +115,10 @@ def test_save_replaces_a_resource_without_a_manifest(
     died: str,
 ) -> None:
     """A producer that dies after it wrote the data files and before it published
-    the manifest leaves a directory without a manifest, with or without the
-    temporary manifest. The next save of the same input, which is older than the
-    files left behind, replaces the directory with the default 'overwrite'. It
-    does not raise FileExistsError on every pass"""
+    the manifest leaves nothing at the visible path: a resource is built in a
+    temporary directory and published by one rename, so a reader never sees a
+    directory without its manifest. The next save of the same input succeeds and
+    leaves no temporary manifest behind"""
     resource = _resource(tmp_path, age=3600.0)
     dest_dir = tmp_path / "out"
     dest_dir.mkdir()
@@ -134,19 +135,15 @@ def test_save_replaces_a_resource_without_a_manifest(
     with pytest.raises(OSError):
         resource.save(dest_dir, copy_mode=copy_mode)
     monkeypatch.undo()
-    assert not (resource_dir / ImagingResource.MANIFEST_FNAME).exists()
-    assert (resource_dir / "a-file.txt").read_text() == "content"
-    assert tmp_manifest.exists() == (died == "before-the-move")
+    assert not resource_dir.exists()
+    assert [p for p in dest_dir.iterdir() if not p.name.startswith(".")] == []
 
-    with caplog.at_level(logging.WARNING):
-        repaired = resource.save(dest_dir, copy_mode=copy_mode)
+    repaired = resource.save(dest_dir, copy_mode=copy_mode)
 
     assert repaired.checksums == resource.checksums
     assert ImagingResource.load(resource_dir).checksums == resource.checksums
     assert (resource_dir / "a-file.txt").read_text() == "content"
     assert not tmp_manifest.exists()
-    assert "has no manifest" in caplog.text
-    assert (tmp_manifest.name in caplog.text) == (died == "before-the-move")
 
 
 def test_save_replaces_an_empty_resource_directory(

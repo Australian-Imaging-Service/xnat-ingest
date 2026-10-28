@@ -1248,15 +1248,18 @@ def get_xnat_resource(
     elif isinstance(resource.fileset, Snapshots):
         # XNAT only shows a scan's snapshots from its SNAPSHOTS resource
         resource_name = SNAPSHOTS_RESOURCE_LABEL
+    # A packaged or other non-DICOM resource can retain the source SOP class.
+    # It determines the scan datatype, but does not change the staged label.
+    scan_sop_class_uids = sop_class_uids or resource.metadata.get("SOPClassUID")
 
     try:
         xscan = xsession.scans[resource.scan.id]
     except KeyError:
-        if sop_class_uids:
-            scan_type = xnat_scan_type_from_sop_class(sop_class_uids)
+        if scan_sop_class_uids:
+            scan_type = xnat_scan_type_from_sop_class(scan_sop_class_uids)
             ScanClass = xclasses.XNAT_CLASS_LOOKUP[f"xnat:{scan_type}"]
         else:
-            # No SOP class to decide from -- not DICOM (e.g. vendor raw data), or
+            # No SOP class is available (e.g. vendor raw data), or
             # DICOM whose header didn't carry one -- so the scan takes the modality
             # of its session, whose types are named in parallel with the scan ones
             # (e.g. 'xnat:petSessionData' -> 'xnat:petScanData'). Falls back to the
@@ -1271,8 +1274,10 @@ def get_xnat_resource(
             series_description=resource.scan.type,
             parent=xsession,
         )
-    if sop_class_uids:
-        expected_scan_type = f"xnat:{xnat_scan_type_from_sop_class(sop_class_uids)}"
+    if scan_sop_class_uids:
+        expected_scan_type = (
+            f"xnat:{xnat_scan_type_from_sop_class(scan_sop_class_uids)}"
+        )
         existing_scan_type = getattr(xscan, "__xsi_type__", None)
         if (
             isinstance(existing_scan_type, str)
@@ -1280,7 +1285,7 @@ def get_xnat_resource(
         ):
             raise ValueError(
                 f"XNAT scan {resource.scan.id!r} in {resource.scan.session.path} "
-                f"has datatype {existing_scan_type!r}, but its DICOM header "
+                f"has datatype {existing_scan_type!r}, but its SOPClassUID metadata "
                 f"requires {expected_scan_type!r}. Recreate the scan on XNAT "
                 "before retrying; XNAT cannot change a scan's datatype."
             )
