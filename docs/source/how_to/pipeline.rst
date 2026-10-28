@@ -384,6 +384,38 @@ Packaging rejects samples from different DICOM studies in one session. The uploa
 creates the scan from the sample's SOP class, records the archive as ``ZIP``, and
 records the sample as ``DICOM``.
 
+Generating scan snapshots
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+XNAT shows a snapshot and thumbnail for each scan on the session page. ``package``
+can generate them for non-DICOM scans by converting a resource to
+``medimage/vnd.xnat.snapshots``, keeping the original files alongside. For example,
+to show the PNG views of a lesion merged into one resource by
+``--on-resource-clash merge image/png`` (see `Handling resource-name clashes`_):
+
+.. code-block:: console
+
+    $ xnat-ingest package /data/staging/assigned /data/staging/packaged \
+        image/png+set-of \
+        --output-resource photos image/png+set-of \
+        --output-resource snapshots medimage/vnd.xnat.snapshots
+
+The first output passes the PNGs through unchanged, because converting a resource to
+its own type copies it. The second tiles the PNGs, in file-name order, into a roughly
+square grid without resizing them, then saves the grid and a smaller thumbnail as
+GIFs. Converter options go after the target type, e.g.
+``medimage/vnd.xnat.snapshots:thumbnail_size=128`` (the default is 256 pixels on
+the longest side).
+
+The label of the snapshots output doesn't matter. ``upload`` always stores
+snapshots in the scan's ``SNAPSHOTS`` resource, marking the files as the
+``ORIGINAL`` and ``THUMBNAIL`` images that XNAT displays, and ``check-upload`` looks
+for them there.
+
+Only resources that match the source datatype are converted. A scan with just one
+PNG holds an ``image/png`` resource, not an ``image/png+set-of``, so it gets no
+snapshots from the command above.
+
 3. Upload to XNAT
 --------------------
 
