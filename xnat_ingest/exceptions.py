@@ -25,4 +25,8 @@ class IncompleteCheckumsException(DifferingCheckumsException): ...
 
 
 class SessionIdentityRefused(ValueError):
-    """Fresh evidence cannot establish the intended XNAT subject and study."""
+    """Fresh evidence cannot establish the intended XNAT subject and session."""
+
+
+class UnknownStudyIdentity(SessionIdentityRefused):
+    """The remote experiment has no ingest grouping identity yet."""

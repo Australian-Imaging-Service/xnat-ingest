@@ -33,6 +33,7 @@ from tqdm import tqdm
 from ..exceptions import (
     IncompleteCheckumsException,
     SessionIdentityRefused,
+    UnknownStudyIdentity,
     UnsupportedModalityError,
 )
 from ..model.resource import ImagingResource
@@ -49,6 +50,8 @@ from .xnat_scan_types import (
 )
 
 DEFAULT_MAX_WORKERS = 10
+IDENTITY_FIELD = "xnat_ingest_uid"
+IDENTITY_PATH = f"fields/field[name={IDENTITY_FIELD}]/field"
 IDENTITY_HEADERS = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
 
 # An upload loop keeps this first-listing result across sessions and passes.
@@ -115,51 +118,45 @@ class XnatRows:
         return matches[0]
 
 
-def _study_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
-    """Use the staged DICOM UID, not the possibly pre-deidentification group UID."""
+def _grouping_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
+    """Read the format-independent identity saved by ImagingSession."""
     if not isinstance(metadata, ty.Mapping):
         raise SessionIdentityRefused(
             "Cannot verify session identity: malformed metadata"
         )
-    value = metadata.get("StudyInstanceUID")
+    value = metadata.get(ImagingSession.UID_METADATA_KEY)
     if value is None or value == "":
         return None
     if not isinstance(value, str) or not value.strip():
         raise SessionIdentityRefused(
-            "Cannot verify session identity: ambiguous StudyInstanceUID"
+            "Cannot verify session identity: ambiguous grouping UID"
         )
     return value
-
-
-class UnknownStudyIdentity(SessionIdentityRefused):
-    """The subject matches, but remote headers have not established a study UID."""
-
-    def __init__(self, xsi_type: object = None):
-        super().__init__("Cannot verify XNAT study identity before header recovery")
-        self.xsi_type = xsi_type
 
 
 def _assert_session_identity(
     connection: xnat.XNATSession,
     uri: str,
-    study_uid: str | None,
+    grouping_uid: str | None,
     project_id: str | None = None,
     subject_id: str | None = None,
+    adopt: bool = False,
 ) -> None:
-    """Fresh identity evidence, also for an otherwise complete experiment.
+    """Check fresh subject and grouping identity before reuse or completeness.
 
-    Resolve the subject inside the selected project and compare its internal ID.
-    This supports project-specific labels for shared subjects. A missing remote
-    UID cannot prove a known local UID; keep the staged copy for investigation.
-    Session-only resource uploads have no expected subject to compare.
+    A legacy experiment can adopt the incoming identity only in the upload path,
+    after its subject matches. This does not prove the identity of its old files,
+    and the read/write/read sequence is not an atomic claim against other writers.
+    Session-only uploads have no expected subject and cannot adopt an identity.
     """
-    if subject_id is None and study_uid is None:
+    if subject_id is None and grouping_uid is None:
         return
     try:
         items = connection.get_json(uri, headers=IDENTITY_HEADERS)["items"]
         if len(items) != 1:
             raise ValueError("expected one experiment document")
-        fields = items[0]["data_fields"]
+        item = items[0]
+        fields = item["data_fields"]
         if subject_id is not None:
             subjects = XnatRows.read(
                 connection,
@@ -171,17 +168,67 @@ def _assert_session_identity(
             subject = subjects.lookup(subject_id, "label")
             if fields.get("subject_ID") != subject["ID"]:
                 raise ValueError("subject mismatch")
-        if study_uid is not None and fields.get("UID") not in (None, "", study_uid):
-            raise ValueError("StudyInstanceUID mismatch")
+        if grouping_uid is None:
+            return  # Legacy local metadata still gets the subject check.
+        values = []
+        children = item.get("children", [])
+        if not isinstance(children, list):
+            raise ValueError("malformed custom fields")
+        for child in children:
+            if child["field"] == "fields/field":
+                if not isinstance(child["items"], list):
+                    raise ValueError("malformed custom field entries")
+                for entry in child["items"]:
+                    custom = entry["data_fields"]
+                    if custom["name"] == IDENTITY_FIELD:
+                        values.append(custom["field"])
+        if len(values) > 1:
+            raise ValueError("duplicate grouping identity")
+        remote_uid = values[0] if values else None
+        if remote_uid not in (None, ""):
+            if not isinstance(remote_uid, str) or remote_uid != grouping_uid:
+                raise ValueError("grouping identity mismatch")
+            return
     except Exception as exc:
-        # Do not disclose patient identifiers in the error or silently fall back
-        # to creation/upload after an unreadable or malformed identity response.
+        # Do not disclose patient identifiers or fall back after unreadable evidence.
         raise SessionIdentityRefused("Cannot verify XNAT session identity") from exc
-    if study_uid is not None and fields.get("UID") in (None, ""):
-        meta = items[0].get("meta")
+    if not adopt or subject_id is None:
         raise UnknownStudyIdentity(
-            meta.get("xsi:type") if isinstance(meta, dict) else None
+            "Cannot verify XNAT session identity: grouping UID absent"
         )
+    meta = item.get("meta")
+    xsi_type = meta.get("xsi:type") if isinstance(meta, dict) else None
+    if (
+        not isinstance(xsi_type, str)
+        or not re.fullmatch(r"[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*", xsi_type)
+        or not xsi_type.endswith("SessionData")
+    ):
+        raise SessionIdentityRefused(
+            "Cannot verify XNAT session identity: invalid experiment type"
+        )
+    logger.warning(
+        "XNAT session has no ingest grouping identity; old identity is unverified. "
+        "Adopting the incoming identity after the subject check",
+        extra={"event": "xnat_identity_adoption"},
+    )
+    try:
+        scoped_uri = (
+            f"/data/projects/{quote(project_id, safe='')}"
+            f"/subjects/{quote(subject_id, safe='')}"
+            f"/experiments/{quote(fields['ID'], safe='')}"
+        )
+        response = connection.put(
+            scoped_uri,
+            query={f"{xsi_type}/{IDENTITY_PATH}": grouping_uid},
+            accepted_status=tuple(range(200, 300)),
+        )
+        if not 200 <= response.status_code < 300:
+            raise ValueError("identity update was not accepted")
+    except Exception as exc:
+        raise SessionIdentityRefused(
+            "Cannot verify XNAT session identity: identity update failed"
+        ) from exc
+    _assert_session_identity(connection, uri, grouping_uid, project_id, subject_id)
 
 
 class SessionListing(metaclass=abc.ABCMeta):
@@ -220,12 +267,12 @@ class SessionListing(metaclass=abc.ABCMeta):
         return manifests
 
     @property
-    def study_uid(self) -> str | None:
+    def grouping_uid(self) -> str | None:
         try:
             metadata = json.loads((self.cache_path / Metadata.FNAME).read_text())
         except FileNotFoundError:
             return None  # Legacy staging directories need not carry metadata.
-        return _study_uid(metadata)
+        return _grouping_uid(metadata)
 
     @property
     def ids(self):
@@ -276,7 +323,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         except KeyError:
             return None
         _assert_session_identity(
-            connection, xsession.uri, self.study_uid, xproject.id, self.subject_id
+            connection, xsession.uri, self.grouping_uid, xproject.id, self.subject_id
         )
         return xsession
 
@@ -307,7 +354,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         # that is shared into this project.
         uri = f"/data/experiments/{experiment['ID']}"
         _assert_session_identity(
-            connection, uri, self.study_uid, project["ID"], self.subject_id
+            connection, uri, self.grouping_uid, project["ID"], self.subject_id
         )
         return uri
 
@@ -331,7 +378,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         try:
             session_uri = self.find_xnat_session_uri(connection)
         except UnknownStudyIdentity:
-            return False  # get_xnat_session may recover identity from existing headers.
+            return False  # The upload path must explicitly adopt the legacy identity.
         if session_uri is None:
             return False
 
@@ -545,7 +592,7 @@ class SessionOnlyListing(SessionListing):
         """
         xsession = _find_xnat_session_by_label(connection, self.session_id)
         if xsession is not None:
-            _assert_session_identity(connection, xsession.uri, self.study_uid)
+            _assert_session_identity(connection, xsession.uri, self.grouping_uid)
         return xsession
 
     def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
@@ -555,7 +602,7 @@ class SessionOnlyListing(SessionListing):
         """
         uri = _find_xnat_session_uri_by_label(connection, self.session_id)
         if uri is not None:
-            _assert_session_identity(connection, uri, self.study_uid)
+            _assert_session_identity(connection, uri, self.grouping_uid)
         return uri
 
     # all_uploaded is deliberately NOT defined here. Only the session lookup
@@ -618,7 +665,7 @@ class S3SessionListing(SessionListing):
             )
 
     @property
-    def study_uid(self) -> str | None:
+    def grouping_uid(self) -> str | None:
         metadata_objects = [
             obj for parts, obj in self.objects if parts == [Metadata.FNAME]
         ]
@@ -630,7 +677,7 @@ class S3SessionListing(SessionListing):
             )
         with io.BytesIO() as stream:
             self.bucket.download_fileobj(metadata_objects[0].key, stream)
-            return _study_uid(json.loads(stream.getvalue()))
+            return _grouping_uid(json.loads(stream.getvalue()))
 
     @property
     def resource_paths(self) -> set[str]:
@@ -699,10 +746,16 @@ class S3SessionOnlyListing(S3SessionListing):
         return True
 
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
-        return _find_xnat_session_by_label(connection, self.session_id)
+        xsession = _find_xnat_session_by_label(connection, self.session_id)
+        if xsession is not None:
+            _assert_session_identity(connection, xsession.uri, self.grouping_uid)
+        return xsession
 
     def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
-        return _find_xnat_session_uri_by_label(connection, self.session_id)
+        uri = _find_xnat_session_uri_by_label(connection, self.session_id)
+        if uri is not None:
+            _assert_session_identity(connection, uri, self.grouping_uid)
+        return uri
 
 
 def iterate_s3_sessions(
@@ -932,7 +985,7 @@ def get_xnat_session(
     """
     xclasses = xproject.xnat_session.classes
 
-    study_uid = _study_uid(session.metadata)
+    grouping_uid = _grouping_uid(session.metadata)
     try:
         xsession = xproject.experiments[session.session_id]
     except KeyError:
@@ -999,90 +1052,26 @@ def get_xnat_session(
         }
         if session_date is not None:
             session_kwargs["date"] = session_date
-        if study_uid is not None:
-            session_kwargs["UID"] = study_uid
+        if grouping_uid is not None:
+            session_kwargs[IDENTITY_PATH] = grouping_uid
         xsession = SessionClass(**session_kwargs)
-    else:
-        try:
+        if grouping_uid is not None:
             _assert_session_identity(
                 xproject.xnat_session,
                 xsession.uri,
-                study_uid,
+                grouping_uid,
                 xproject.id,
                 session.subject_id,
             )
-        except UnknownStudyIdentity:
-            # Subject equality alone cannot distinguish two studies sharing an
-            # accession. Derive identity from EXISTING remote data before adding
-            # any new files, then compare again. A failed/unknown recovery refuses.
-            logger.warning(
-                "XNAT study identity is unknown; recovering existing headers before reuse",
-                extra={"event": "xnat_identity_recovery"},
-            )
-            xproject.xnat_session.put(f"{xsession.uri}?pullDataFromHeaders=true")
-            try:
-                _assert_session_identity(
-                    xproject.xnat_session,
-                    xsession.uri,
-                    study_uid,
-                    xproject.id,
-                    session.subject_id,
-                )
-            except UnknownStudyIdentity as unknown:
-                # A previous writer may have died after creating an EMPTY
-                # experiment. Inspect raw listings: malformed rows must never
-                # disappear through XnatRows' compatibility filtering.
-                for collection in ("scans", "resources"):
-                    result = xproject.xnat_session.get_json(
-                        f"{xsession.uri}/{collection}",
-                        headers=IDENTITY_HEADERS,
-                    )
-                    try:
-                        rows = result["ResultSet"]["Result"]
-                        if not isinstance(rows, list) or rows:
-                            raise ValueError
-                    except (KeyError, TypeError, ValueError):
-                        raise SessionIdentityRefused(
-                            "Cannot verify XNAT session identity: experiment not proven empty"
-                        ) from None
-                # XNAT accepts this update through the project-scoped URI with
-                # the concrete type from the fresh document. The global URI can
-                # return 422 even when supplied with that same concrete type.
-                xsi_type = unknown.xsi_type
-                if (
-                    not isinstance(xsi_type, str)
-                    or not re.fullmatch(r"[A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*", xsi_type)
-                    or not xsi_type.endswith("SessionData")
-                ):
-                    raise SessionIdentityRefused(
-                        "Cannot verify XNAT session identity: missing or invalid experiment type"
-                    )
-                scoped_uri = (
-                    f"/data/projects/{quote(xproject.id, safe='')}"
-                    f"/subjects/{quote(session.subject_id, safe='')}"
-                    f"/experiments/{quote(session.session_id, safe='')}"
-                )
-                try:
-                    response = xproject.xnat_session.put(
-                        scoped_uri,
-                        query={f"{xsi_type}/UID": study_uid},
-                        accepted_status=tuple(range(200, 300)),
-                    )
-                except Exception as exc:
-                    raise SessionIdentityRefused(
-                        "Cannot verify XNAT session identity: UID update failed"
-                    ) from exc
-                if not 200 <= response.status_code < 300:
-                    raise SessionIdentityRefused(
-                        "Cannot verify XNAT session identity: UID update was not accepted"
-                    )
-                _assert_session_identity(
-                    xproject.xnat_session,
-                    xsession.uri,
-                    study_uid,
-                    xproject.id,
-                    session.subject_id,
-                )
+    else:
+        _assert_session_identity(
+            xproject.xnat_session,
+            xsession.uri,
+            grouping_uid,
+            xproject.id,
+            session.subject_id,
+            adopt=True,
+        )
     return xsession
 
 

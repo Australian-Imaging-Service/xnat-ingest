@@ -1,7 +1,7 @@
 import datetime
 import types
 import typing as ty
-from unittest.mock import ANY
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -100,13 +100,21 @@ def test_missing_session_date_field_is_rejected() -> None:
 
 
 def test_existing_session_date_is_not_changed() -> None:
-    existing = object()
+    existing = types.SimpleNamespace(uri="/data/experiments/E1")
     session = _session("not-a-date")
+    project = _Project({"SESSION": existing})
+    project.id = "PROJECT"
+    project.xnat_session.get_json = Mock(
+        side_effect=[
+            {"items": [{"data_fields": {"ID": "E1", "subject_ID": "S1"}}]},
+            {"ResultSet": {"Result": [{"ID": "S1", "label": "SUBJECT"}]}},
+        ]
+    )
 
     assert (
         get_xnat_session(
             session,
-            _Project({"SESSION": existing}),
+            project,
             date_field="CaptureDate",
         )
         is existing

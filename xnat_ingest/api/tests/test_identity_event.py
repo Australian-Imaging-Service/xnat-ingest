@@ -3,8 +3,8 @@
 from unittest import mock
 
 import pytest
-from xnat_ingest.api.tests.test_upload_cache_invalidation import FakeRepo
 
+from xnat_ingest.api.tests.test_upload_cache_invalidation import FakeRepo
 from xnat_ingest.api.upload_api import upload
 from xnat_ingest.exceptions import SessionIdentityRefused
 from xnat_ingest.helpers.remotes import LocalSessionListing
