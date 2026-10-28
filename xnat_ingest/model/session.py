@@ -1508,6 +1508,8 @@ class ImagingSession:
                 study_tags["Modality"] = (
                     next(iter(modalities)) if len(modalities) == 1 else list(modalities)
                 )
+            # Keep the grouping identity when load() reads the saved metadata.
+            study_tags[cls.UID_METADATA_KEY] = session_uid
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
