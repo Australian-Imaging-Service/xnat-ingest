@@ -82,7 +82,10 @@ class FakeXnat:
         return resources
 
     def get_json(
-        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None, headers=None
+        self,
+        uri: str,
+        query: ty.Optional[ty.Dict[str, str]] = None,
+        accepted_status=None,
     ) -> ty.Any:
         self.calls.append(uri)
         rows: ty.List[ty.Dict[str, str]]
@@ -116,7 +119,17 @@ class FakeXnat:
             raise AssertionError(f"unexpected GET {uri}")
         return {"ResultSet": {"Result": [dict(r) for r in rows]}}
 
-    def get(self, uri: str) -> FakeResponse:
+    def get(
+        self,
+        uri: str,
+        format=None,
+        query=None,
+        accepted_status=None,
+        timeout=None,
+        headers=None,
+    ) -> FakeResponse:
+        if format == "json":
+            return FakeResponse(self.get_json(uri, query=query))
         self.calls.append(uri)
         _, _, files = self._resources()[uri]
         return FakeResponse(

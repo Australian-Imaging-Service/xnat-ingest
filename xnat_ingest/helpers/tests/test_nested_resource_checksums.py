@@ -158,6 +158,14 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
         return {"ResultSet": {"Result": responses[uri]}}
 
     connection.get_json.side_effect = get_json
+    files_response = connection.get.return_value
+
+    def get(uri, format=None, query=None, **kwargs):
+        if format == "json":
+            return SimpleNamespace(json=lambda: get_json(uri, query=query))
+        return files_response
+
+    connection.get.side_effect = get
 
     class Listing(S3SessionListing):
         @property

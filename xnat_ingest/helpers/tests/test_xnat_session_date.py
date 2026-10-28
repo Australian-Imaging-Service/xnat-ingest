@@ -104,10 +104,13 @@ def test_existing_session_date_is_not_changed() -> None:
     session = _session("not-a-date")
     project = _Project({"SESSION": existing})
     project.id = "PROJECT"
-    project.xnat_session.get_json = Mock(
+    project.xnat_session.get = Mock(
         side_effect=[
-            {"items": [{"data_fields": {"ID": "E1", "subject_ID": "S1"}}]},
-            {"ResultSet": {"Result": [{"ID": "S1", "label": "SUBJECT"}]}},
+            types.SimpleNamespace(json=lambda data=data: data)
+            for data in [
+                {"items": [{"data_fields": {"ID": "E1", "subject_ID": "S1"}}]},
+                {"ResultSet": {"Result": [{"ID": "S1", "label": "SUBJECT"}]}},
+            ]
         ]
     )
 

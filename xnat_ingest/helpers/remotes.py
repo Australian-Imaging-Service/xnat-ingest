@@ -84,8 +84,12 @@ class XnatRows:
         columns = f"ID,URI,{lookup_field}"
         if xsi_type is None:
             columns += ",xsiType"
-        kwargs = {"headers": IDENTITY_HEADERS} if fresh else {}
-        result = connection.get_json(uri, query={"columns": columns}, **kwargs)
+        if fresh:
+            result = connection.get(
+                uri, format="json", query={"columns": columns}, headers=IDENTITY_HEADERS
+            ).json()
+        else:
+            result = connection.get_json(uri, query={"columns": columns})
         rows = []
         for row in result["ResultSet"]["Result"]:
             if "URI" not in row and "ID" not in row:
@@ -152,7 +156,9 @@ def _assert_session_identity(
     if subject_id is None and grouping_uid is None:
         return
     try:
-        items = connection.get_json(uri, headers=IDENTITY_HEADERS)["items"]
+        items = connection.get(uri, format="json", headers=IDENTITY_HEADERS).json()[
+            "items"
+        ]
         if len(items) != 1:
             raise ValueError("expected one experiment document")
         item = items[0]

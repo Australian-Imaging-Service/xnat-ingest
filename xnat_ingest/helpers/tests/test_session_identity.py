@@ -2,10 +2,11 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 
 import pytest
 from test_all_uploaded_completeness import LOCAL, RESOURCE_PATH, FakeXnat
+from xnat.session import BaseXNATSession
 
 from xnat_ingest.helpers.remotes import (
     IDENTITY_PATH,
@@ -33,8 +34,11 @@ class IdentityXnat(FakeXnat):
         self.uid = query[f"{self.xsi_type}/{IDENTITY_PATH}"]
         return SimpleNamespace(status_code=200)
 
-    def get_json(self, uri, query=None, headers=None):
-        self.headers.append((uri, headers))
+    def get(self, uri, **kwargs):
+        self.headers.append((uri, kwargs.get("headers")))
+        return super().get(uri, **kwargs)
+
+    def get_json(self, uri, query=None, accepted_status=None):
         if uri == "/data/experiments/E1":
             self.calls.append(uri)
             custom = (
@@ -433,3 +437,18 @@ def test_s3_session_only_checks_identity_without_data_download(
                 lookup(connection)
     assert not listing._downloaded
     assert connection.puts == []
+
+
+@pytest.mark.parametrize("remote_uid", ["group-001", None])
+def test_identity_calls_match_installed_xnatpy_signatures(remote_uid):
+    """Exercise match/adoption with the real client's method signatures enforced."""
+    fake = IdentityXnat(uid=remote_uid)
+    connection = create_autospec(BaseXNATSession, instance=True)
+    connection.get.side_effect = fake.get
+    connection.get_json.side_effect = fake.get_json
+    connection.put.side_effect = fake.put
+    xproject = project(connection)
+
+    assert get_xnat_session(session(), xproject) is xproject.experiments["sess"]
+    assert connection.get.call_count >= 2
+    assert fake.uid == "group-001"

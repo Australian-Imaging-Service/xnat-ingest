@@ -124,10 +124,13 @@ def test_existing_experiment_ignores_modality():
     existing = SimpleNamespace(uri="/data/experiments/E1")
     xproject = _xproject({"sess": existing})
     xproject.id = "proj"
-    xproject.xnat_session.get_json = mock.Mock(
+    xproject.xnat_session.get = mock.Mock(
         side_effect=[
-            {"items": [{"data_fields": {"subject_ID": "S1"}}]},
-            {"ResultSet": {"Result": [{"ID": "S1", "label": "subj"}]}},
+            SimpleNamespace(json=lambda data=data: data)
+            for data in [
+                {"items": [{"data_fields": {"subject_ID": "S1"}}]},
+                {"ResultSet": {"Result": [{"ID": "S1", "label": "subj"}]}},
+            ]
         ]
     )
     xsession = get_xnat_session(_session(), xproject, modality="CT")
