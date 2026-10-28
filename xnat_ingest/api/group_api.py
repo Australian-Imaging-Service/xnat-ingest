@@ -287,6 +287,7 @@ def group_orthanc(
         processed_label=processed_label,
         wait_period=wait_period,
         conversion_map=conversion_map,
+        errors=errors,
     )
 
     # Should from_orthanc() not actually move the data, just reference it in place like from_paths()
