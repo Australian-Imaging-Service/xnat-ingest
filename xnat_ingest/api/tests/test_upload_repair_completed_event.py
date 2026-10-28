@@ -77,7 +77,9 @@ class FakeConnection:
     def clearcache(self) -> None:
         pass
 
-    def get_json(self, uri: str, query: ty.Any = None) -> dict[str, ty.Any]:
+    def get_json(
+        self, uri: str, query: ty.Any = None, headers=None
+    ) -> dict[str, ty.Any]:
         # The completeness check reads REST rows; the upload steps still use
         # the object tree. Both views describe the same absent session.
         if uri == "/data/archive/projects":

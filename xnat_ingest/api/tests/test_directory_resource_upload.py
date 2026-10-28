@@ -80,7 +80,7 @@ def _upload(
     connection = mock.MagicMock()
     connection.projects = {"proj": SimpleNamespace(experiments={})}
 
-    def get_json(uri, query=None):
+    def get_json(uri, query=None, headers=None):
         if uri == "/data/archive/projects":
             rows = [{"ID": "proj", "name": "proj"}]
         elif uri == "/data/projects/proj/experiments":

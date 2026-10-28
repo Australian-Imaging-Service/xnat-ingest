@@ -481,6 +481,38 @@ project with the `frametree <https://arcanaframework.github.io/frametree/>`_ too
 only data with a matching column in the dataset definition is uploaded.
 
 
+Session identity on reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An existing session label must belong to the expected subject. The uploader
+checks the subject's internal XNAT ID through fresh REST responses, including
+for a subject shared into the selected project.
+
+The grouping identity is the ``__uid__`` value saved in session metadata. It
+works for DICOM and other formats; it is not XNAT's DICOM ``UID`` attribute.
+New experiments include it in the custom field ``xnat_ingest_uid`` in the
+creation request, then read it back. This field has no project UI form and is
+hidden from that UI by default. It is not secret storage.
+
+Before reuse or a completeness decision, the uploader reads this field again.
+A different value, duplicate field or unreadable response refuses the upload
+and keeps the staged copy. Local and S3 checks read only the session metadata;
+they do not download DICOM headers to establish identity. Identity reads request
+``Cache-Control: no-cache`` and ``Pragma: no-cache``.
+
+An older experiment with no field is incomplete for the purpose of the skip
+check. In the upload path, after the subject matches, the uploader warns that
+the old identity is unverified, writes the incoming grouping identity, and
+reads it back before sending files. This adoption does not prove that the old
+files belong to the incoming session. It never replaces a different existing
+value. Run one uploader per experiment: the read, write and readback are not
+an atomic claim against concurrent writers.
+
+Legacy local staging without ``__uid__`` keeps the subject check, but cannot
+establish grouping identity or stamp this field. Session-only uploads lack an
+expected subject, so they cannot adopt a missing remote identity; if supplied,
+their local grouping identity must already match the remote field.
+
 4. Check what made it up
 ----------------------------
 
