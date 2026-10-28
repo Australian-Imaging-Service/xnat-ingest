@@ -23,6 +23,8 @@ dependencies = [
     "fileformats-vendor-siemens-extras >=0.2.5",
     "fileformats-vendor-mrtrix3 >=3.1.0a8",
     "fileformats-vendor-mrtrix3-extras >=3.1.0a8",
+    "fileformats-vendor-xnat >=0.3.1",
+    "fileformats-vendor-xnat-extras >=0.3.1",
     "pydicom >=2.3.1",
     "python-dateutil",
     "tqdm >=4.64.1",
@@ -72,8 +74,6 @@ test = [
     # them), so they are not runtime dependencies; the tests need them at
     # import time. Both are on PyPI.
     "fileformats-vendor-canfield-extras",
-    "fileformats-vendor-xnat >=0.3.0",
-    "fileformats-vendor-xnat-extras >=0.3.0",
 ]
 docs = [
     "packaging",
