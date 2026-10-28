@@ -592,3 +592,63 @@ def test_existing_group_destination_is_preserved_and_next_study_runs(tmp_path, c
     assert sentinel.read_bytes() == b"existing generation"
     assert fake.labelled == [("study-ready", "done")]
     assert "study-plain" in caplog.text and str(refused) in caplog.text
+
+
+def test_from_orthanc_preserves_grouping_uid_through_assign(tmp_path):
+    from xnat_ingest.api.assign_api import assign
+    from xnat_ingest.helpers.metadata import Metadata
+
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    grouped = tmp_path / "grouped"
+    with _patch_requests(fake):
+        staged = ImagingSession.from_orthanc(**_publication_kwargs(grouped, store_dir))
+
+    uid = "1_2_3_0"
+    assert len(staged) == 1
+    assert staged[0].uid == uid
+    grouped_dir = grouped / f"_.{uid}"
+    metadata = json.loads((grouped_dir / Metadata.FNAME).read_text())
+    assert metadata[ImagingSession.UID_METADATA_KEY] == uid
+    assert ImagingSession.load(grouped_dir).uid == uid
+
+    assigned = tmp_path / "assigned"
+    assert (
+        assign(
+            grouped,
+            assigned,
+            project_field="StudyID",
+            project_id="PROJ",
+            subject_field="PatientID",
+            session_field="AccessionNumber",
+        )
+        == []
+    )
+    reloaded = ImagingSession.load(assigned / "PROJ.subject1.ACC-READY")
+    assert reloaded.uid == uid
+    assert reloaded.metadata[ImagingSession.UID_METADATA_KEY] == uid
+
+
+def test_from_orthanc_invalid_sessions_have_distinct_grouping_uids(tmp_path):
+    from xnat_ingest.api.assign_api import INVALID_DIRNAME, assign
+
+    fake, store_dir = _make_fake_orthanc(tmp_path)
+    grouped = tmp_path / "grouped"
+    kwargs = _publication_kwargs(grouped, store_dir)
+    kwargs["to_process_label"] = None
+    with _patch_requests(fake):
+        ImagingSession.from_orthanc(**kwargs)
+
+    assigned = tmp_path / "assigned"
+    errors = assign(
+        grouped,
+        assigned,
+        project_field="StudyID",
+        project_id="PROJ",
+        subject_field="MissingPatientID",
+        session_field="AccessionNumber",
+    )
+    # Both distinct studies must be saved; uid=None used to skip the second.
+    assert len(errors) == 2
+    invalid = [p for p in (assigned / INVALID_DIRNAME).iterdir() if p.is_dir()]
+    assert len(invalid) == 2
+    assert {ImagingSession.load(p).uid for p in invalid} == {"1_2_3_0", "1_2_3_2"}
