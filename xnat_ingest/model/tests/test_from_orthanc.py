@@ -681,6 +681,8 @@ def test_from_orthanc_invalid_sessions_have_distinct_grouping_uids(tmp_path):
     invalid = [p for p in (assigned / INVALID_DIRNAME).iterdir() if p.is_dir()]
     assert len(invalid) == 2
     assert {ImagingSession.load(p).uid for p in invalid} == {"1_2_3_0", "1_2_3_2"}
+
+
 def _snapshot_kwargs(output: Path, store: Path) -> ty.Dict[str, ty.Any]:
     kwargs = _publication_kwargs(output, store)
     kwargs.update(to_process_label="ready", processed_label="done")
