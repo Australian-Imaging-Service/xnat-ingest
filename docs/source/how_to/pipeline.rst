@@ -228,7 +228,8 @@ hold, so the late series is the only new data that moves. A processed label make
 the wait period at least one second, so a late instance always gets a later
 ``LastUpdate`` than the one staged. The snapshot label is also what a retention
 tool can check before it deletes a study from Orthanc: the exported instance set
-is the digest, and a changed ``LastUpdate`` means the study holds more.
+is the digest, and a changed ``LastUpdate`` shows that the study changed after it
+was staged.
 
 Missing series display tags
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
