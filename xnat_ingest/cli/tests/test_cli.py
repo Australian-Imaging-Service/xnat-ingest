@@ -43,6 +43,7 @@ from xnat_ingest.cli import (
     check_upload_cmd,
     deidentify_cmd,
     group_cmd,
+    package_cmd,
     upload_cmd,
 )
 from xnat_ingest.helpers.arg_types import (
@@ -1797,6 +1798,157 @@ def test_check_upload_checksum_fail(
     assert "MISSING RESOURCE" not in logs
     assert "EMPTY SCAN" not in logs
     assert "CHECKSUM FAIL" in logs
+
+
+def test_upload_snapshots_display_in_xnat(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    run_prefix: str,
+) -> None:
+    """PNG views of a scan merged into one resource and packaged into XNAT snapshots
+    alongside the originals are served, once uploaded, from the URLs the XNAT
+    session page loads a scan's snapshot and thumbnail from"""
+    project_id = f"SNAPSHOTS{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    images_dir = tmp_path / "images"
+    for i, view in enumerate(["clinical", "dermoscopy"]):
+        _write_minimal_png(
+            images_dir / project_id / "subject1" / "session1" / f"1-{view}.png",
+            rgb=(255 * i, 0, 255),
+        )
+
+    sorted_dir = tmp_path / "sorted"
+    result = cli_runner(
+        group_cmd,
+        [
+            str(images_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+            "--datatype",
+            "image/png",
+            "--session",
+            "SessionID",
+            "all",
+            "--scan",
+            "ScanID",
+            "all",
+            "--on-resource-clash",
+            "merge",
+            "image/png",
+            "--path-metadata-regex",
+            r".*/(?P<ProjectID>\w+)/(?P<SubjectID>\w+)/(?P<SessionID>\w+)/"
+            r"(?P<ScanID>\w+)-\w+\.png",
+            "image/png",
+        ],
+        env={"XINGEST_LOGGERS": "stream debug stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assigned_dir = tmp_path / "assigned"
+    result = cli_runner(
+        assign_cmd,
+        [
+            str(sorted_dir),
+            str(assigned_dir),
+            "--project",
+            "ProjectID",
+            "--subject",
+            "SubjectID",
+            "--session",
+            "SessionID",
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Pass the PNGs through (a conversion to their own type copies them) beside the
+    # snapshots made from them. The snapshots' label is replaced on upload.
+    packaged_dir = tmp_path / "packaged"
+    result = cli_runner(
+        package_cmd,
+        [
+            str(assigned_dir),
+            str(packaged_dir),
+            "image/png+set-of",
+            "--output-resource",
+            "photos",
+            "image/png+set-of",
+            "--output-resource",
+            "snapshots",
+            "medimage/vnd.xnat.snapshots",
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        upload_cmd,
+        [
+            str(packaged_dir),
+            # Photographs have no DICOM modality to choose the session type from, and
+            # xnat4tests doesn't enable the photograph (XC) session type
+            "--modality",
+            "MR",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    staged_resource_dir = next(packaged_dir.glob("*/1.*/snapshots"))
+    with xnat4tests.connect() as xnat_login:
+        xsession = xnat_login.projects[project_id].experiments["session1"]
+        assert sorted(r.label for r in xsession.scans["1"].resources.values()) == [
+            "SNAPSHOTS",
+            "photos",
+        ]
+        for view, fname in [
+            ("snapshot", "snapshot_qc.gif"),
+            ("thumbnail", "snapshot_qc_t.gif"),
+        ]:
+            # The session page loads a scan's snapshot and thumbnail from these
+            # endpoints. XNAT serves the files in the SNAPSHOTS resource whose content
+            # is ORIGINAL/THUMBNAIL, and otherwise tries to generate them from DICOM.
+            response = xnat_login.get(
+                f"/xapi/projects/{project_id}/experiments/{xsession.id}/scan/1/{view}"
+            )
+            assert response.content == (staged_resource_dir / fname).read_bytes()
+
+    # check-upload finds the snapshots under the label they were uploaded with
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            str(packaged_dir),
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert check_upload_log_file.read_text() == ""
 
 
 def test_deidentify_cli_dicom(

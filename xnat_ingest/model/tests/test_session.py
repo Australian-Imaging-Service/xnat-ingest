@@ -19,7 +19,6 @@ from fileformats.vendor.siemens.medimage import (
     SyngoMi_Vr20b_ListMode,
     SyngoMi_Vr20b_RawData,
 )
-from fileformats.vendor.xnat.medimage import Snapshots
 from frametree.common import FileSystem  # type: ignore[import-untyped]
 from frametree.core.frameset import FrameSet  # type: ignore[import-untyped]
 from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
@@ -473,47 +472,6 @@ def test_from_paths_resource_label_defaults_to_mime_like_type_name(
     )
 
     assert list(next(iter(sessions[0].scans.values())).resources) == ["file"]
-
-
-@pytest.mark.parametrize(
-    "resource_field",
-    [None, [IDSpec("res_{__datatype__}")]],
-    ids=["no-resource-spec", "with-resource-spec"],
-)
-def test_from_paths_snapshots_resource_label(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    resource_field: list[IDSpec] | None,
-) -> None:
-    """XNAT snapshots are always labelled 'SNAPSHOTS' (so XNAT shows them as the
-    scan's snapshots), regardless of any --resource spec."""
-    src = tmp_path / "src"
-    src.mkdir()
-    gif_bytes = b"GIF89a" + b"\0" * 20
-    for fname in ("S1_1_qc.gif", "S1_1_qc_t.gif"):
-        (src / fname).write_bytes(gif_bytes)
-    snapshots = Snapshots([src / "S1_1_qc.gif", src / "S1_1_qc_t.gif"])
-
-    # The generic from_paths classifies each file on its own, so it can't assemble
-    # the original/thumbnail pair into a single Snapshots fileset
-    monkeypatch.setattr(
-        "xnat_ingest.model.session.from_paths", lambda *a, **kw: [snapshots]
-    )
-
-    kwargs: dict[str, ty.Any] = {}
-    if resource_field is not None:
-        kwargs["resource_field"] = resource_field
-    sessions = ImagingSession.from_paths(
-        src,
-        datatypes=[Snapshots],
-        session_field=[IDSpec("__datatype__")],
-        scan_field=[IDSpec("__datatype__")],
-        **kwargs,
-    )
-
-    scan = next(iter(sessions[0].scans.values()))
-    assert list(scan.resources) == ["SNAPSHOTS"]
-    assert scan.resources["SNAPSHOTS"].fileset is snapshots
 
 
 @pytest.mark.parametrize(

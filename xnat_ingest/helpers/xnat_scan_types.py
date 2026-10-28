@@ -222,6 +222,8 @@ PRIMARY_SOP_CLASS_UIDS = frozenset(
 #: The resource a scan's DICOM files are catalogued under
 DICOM_RESOURCE_LABEL = "DICOM"
 SECONDARY_RESOURCE_LABEL = "secondary"
+#: The resource XNAT serves a scan's snapshot and thumbnail images from
+SNAPSHOTS_RESOURCE_LABEL = "SNAPSHOTS"
 
 
 def xnat_resource_label_from_sop_class(

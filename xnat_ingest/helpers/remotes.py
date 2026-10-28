@@ -24,6 +24,7 @@ from dateutil import parser as dateutil_parser
 from fileformats.application import Json
 from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
+from fileformats.vendor.xnat.medimage import Snapshots
 from tqdm import tqdm
 
 from ..exceptions import IncompleteCheckumsException, UnsupportedModalityError
@@ -34,6 +35,7 @@ from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata
 from .xnat_scan_types import (
+    SNAPSHOTS_RESOURCE_LABEL,
     group_by_modality,
     xnat_resource_label_from_sop_class,
     xnat_scan_type_from_sop_class,
@@ -1243,6 +1245,9 @@ def get_xnat_resource(
         sop_class_uids = None
     if sop_class_uids:
         resource_name = xnat_resource_label_from_sop_class(sop_class_uids)
+    elif isinstance(resource.fileset, Snapshots):
+        # XNAT only shows a scan's snapshots from its SNAPSHOTS resource
+        resource_name = SNAPSHOTS_RESOURCE_LABEL
 
     try:
         xscan = xsession.scans[resource.scan.id]
