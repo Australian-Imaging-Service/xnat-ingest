@@ -565,7 +565,7 @@ def group_orthanc_cmd(
 
     # Run the staging process in a loop if loop is set to a positive value, otherwise just run it once
     while True:
-        start_time = datetime.datetime.now()
+        start_time = time.monotonic()
         group_orthanc(
             url=url,
             store_dir=store_dir,
@@ -582,9 +582,9 @@ def group_orthanc_cmd(
         )
         if loop < 0:
             break
-        end_time = datetime.datetime.now()
-        elapsed_seconds = (end_time - start_time).total_seconds()
-        sleep_time = loop - elapsed_seconds
+        end_time = time.monotonic()
+        elapsed_seconds = end_time - start_time
+        sleep_time = max(loop - elapsed_seconds, 0)
         logger.info(
             "Grouping from Orthanc took %s seconds, waiting another %s seconds before running "
             "again (loop every %s seconds)",
@@ -592,4 +592,4 @@ def group_orthanc_cmd(
             sleep_time,
             loop,
         )
-        time.sleep(loop)
+        time.sleep(sleep_time)
