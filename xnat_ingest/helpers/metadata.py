@@ -138,3 +138,18 @@ class Metadata(ty.Mapping[str, ty.Any]):
             else:
                 collated[key] = values
         return collated
+
+
+class Fields(Metadata):
+    """XNAT custom variables for a session, persisted as ``__FIELDS__.json``.
+
+    Reuses ``Metadata``'s atomic, write-only-if-changed ``save`` and its ``load``, but
+    has no lazy source. Values come only from the file or from the package stage,
+    never from the owner's children (``Metadata._ensure_read`` would otherwise
+    collate the session's scan metadata into this file).
+    """
+
+    FNAME = "__FIELDS__.json"
+
+    def _ensure_read(self) -> None:
+        self._read = True

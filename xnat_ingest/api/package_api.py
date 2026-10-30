@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
-from ..helpers.arg_types import OnResourceClash
+from ..helpers.arg_types import IDSpec, OnResourceClash
 from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..helpers.xnat_scan_types import xnat_resource_label_from_sop_class
@@ -33,6 +33,7 @@ def _package_session(
     """
     packaged = session.new_empty()
     packaged.metadata.update(dict(session.metadata))
+    packaged.fields.update(dict(session.fields))
     study_uids: set[str] = set()
     makes_dicom_sample = any(
         issubclass(target_datatype, DicomImage)
@@ -153,12 +154,17 @@ def package(
     require_manifest: bool = True,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     unlink_source: str | None = None,
+    fields: ty.Mapping[str, IDSpec] | None = None,
 ) -> list[str]:
     """Replace matching scan resources with multiple named converted resources.
 
     Conversions are materialised only after a staged session has been loaded, so
     this stage can be placed after deidentification. All output conversions are
     independent and receive the original source fileset.
+
+    If ``fields`` (XNAT field name -> IDSpec) is given, each is resolved against the
+    session metadata and saved with the session as ``__FIELDS__.json`` for upload as
+    XNAT  custom variables.
     """
     if not issubclass(source_datatype, FileSet):
         raise TypeError("source_datatype must be a FileSet type")
@@ -204,6 +210,14 @@ def package(
                     source_datatype=source_datatype,
                     output_resources=output_resources,
                     on_resource_clash=on_resource_clash,
+                )
+
+            if fields:
+                extracted = packaged.fields.extract(packaged.metadata, fields)
+                logger.info(
+                    "Extracted XNAT fields %s for '%s'",
+                    sorted(extracted),
+                    listing.name,
                 )
 
             final_dir = output_dir / packaged.staging_dirname()

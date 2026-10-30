@@ -252,6 +252,29 @@ class Convert(MultiCliTyped):
 
 
 @attrs.define
+class FieldMapping(MultiCliTyped):
+    """A ``--field`` entry: exposes a session metadata key as an XNAT custom variable.
+
+    ``name`` is the XNAT field name written to ``__FIELDS__.json``
+    ``specifier`` is the (flat) session metadata key its value is read from
+    """
+
+    name: str = attrs.field()
+    specifier: str = attrs.field()
+
+    @classmethod
+    def to_dict(cls, mappings: ty.Iterable["FieldMapping"]) -> dict[str, IDSpec]:
+        """XNAT field name -> IDSpec, rejecting duplicate field names"""
+        mappings = list(mappings)
+        duplicates = sorted(
+            n for n, c in Counter(m.name for m in mappings).items() if c > 1
+        )
+        if duplicates:
+            raise ValueError(f"Duplicate --field names: {duplicates}")
+        return {m.name: IDSpec(m.specifier) for m in mappings}
+
+
+@attrs.define
 class OutputResource(MultiCliTyped):
     """A named output produced by converting a source resource.
 
