@@ -11,6 +11,7 @@ from ..api.package_api import package
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     CopyModeParamType,
+    FieldMapping,
     LoggerConfig,
     MimeType,
     OnResourceClash,
@@ -54,6 +55,22 @@ reopening the archive.
         "Resource label and target datatype to produce from each matching source. "
         "May be repeated. Target specs accept converter options after ':', e.g. "
         "'application/zip:allowZip64=false'."
+    ),
+)
+@click.option(
+    "--field",
+    "fields",
+    type=FieldMapping.cli_type,
+    multiple=True,
+    nargs=2,
+    metavar="<xnat-field> <specifier>",
+    envvar="XINGEST_FIELDS",
+    help=(
+        "Expose session metadata as an XNAT custom variable (field), saved to "
+        "__FIELDS__.json and applied on upload. The specifier is a metadata key "
+        "(optionally indexed, e.g. 'ImageType[0]') or a format string (e.g. "
+        "'{StudyDate:%Y-%m-%d}'). May be repeated. As an environment variable, "
+        "separate entries with ';'."
     ),
 )
 @click.option(
@@ -128,6 +145,7 @@ def package_cmd(
     output_dir: Path,
     source_datatype: MimeType,
     output_resources: tuple[OutputResource, ...],
+    fields: tuple[FieldMapping, ...],
     copy_mode: FileSet.CopyMode,
     unlink_source: str | None,
     on_resource_clash: OnResourceClash,
@@ -147,6 +165,11 @@ def package_cmd(
             "Each --output-resource label must be unique",
             param_hint="--output-resource",
         )
+
+    try:
+        field_specs = FieldMapping.to_dict(fields)
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--field") from e
 
     source = source_datatype.datatype
     resolved_outputs = {
@@ -172,6 +195,7 @@ def package_cmd(
             require_manifest=require_manifest,
             copy_mode=copy_mode,
             unlink_source=unlink_source,
+            fields=field_specs,
         )
         if errors:
             logger.error(

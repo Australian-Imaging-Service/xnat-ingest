@@ -47,6 +47,7 @@ from xnat_ingest.cli import (
     upload_cmd,
 )
 from xnat_ingest.helpers.arg_types import (
+    FieldMapping,
     IDSpec,
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,
@@ -263,6 +264,49 @@ def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
         assert result.exit_code == 0, show_cli_trace(result)
 
+        assert out_file.read_text().split("\n")[:-1] == expected
+
+
+def test_field_mapping_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--field",
+        "fields",
+        type=FieldMapping.cli_type,
+        nargs=2,
+        multiple=True,
+        default=[],
+        metavar="<xnat-field> <specifier>",
+        envvar="XINGEST_FIELDS",
+    )
+    def field_cmd(out_file: Path, fields: ty.List[FieldMapping]) -> None:
+        with open(out_file, "w") as f:
+            for mapping in fields:
+                f.write(f"{mapping.name},{mapping.specifier}\n")
+
+    out_file = tmp_path / "out.txt"
+
+    # Entries are ';'-separated and split on the first whitespace only, so a
+    # specifier can itself contain spaces
+    for val, expected in [
+        [
+            "scanner_model ManufacturerModelName",
+            ["scanner_model,ManufacturerModelName"],
+        ],
+        [
+            "scanner_model ManufacturerModelName;site InstitutionName",
+            ["scanner_model,ManufacturerModelName", "site,InstitutionName"],
+        ],
+        [
+            "study_date {StudyDate:%Y-%m-%d};label {PatientID} {StudyID}",
+            ["study_date,{StudyDate:%Y-%m-%d}", "label,{PatientID} {StudyID}"],
+        ],
+    ]:
+        with patch.dict(os.environ, {"XINGEST_FIELDS": val}):
+            result = cli_runner(field_cmd, [str(out_file)])
+
+        assert result.exit_code == 0, show_cli_trace(result)
         assert out_file.read_text().split("\n")[:-1] == expected
 
 

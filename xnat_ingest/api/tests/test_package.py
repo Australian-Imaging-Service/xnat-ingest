@@ -11,6 +11,8 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from xnat_ingest.api.package_api import _package_session, package
 from xnat_ingest.cli.package_cli import package_cmd
+from xnat_ingest.helpers.arg_types import IDSpec
+from xnat_ingest.helpers.fields import Fields
 from xnat_ingest.model.scan import ImagingScan
 from xnat_ingest.model.session import ImagingSession
 
@@ -327,3 +329,25 @@ def test_package_passes_a_session_without_source_resources_through(
     out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(out.scans["1"].resources) == {"SOURCE"}
     assert set(out.session_resources) == {"REPORT"}
+
+
+def test_package_writes_fields_file(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _staged_session(input_dir)
+
+    errors = package(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        source_datatype=MyFormat,
+        output_resources={"DICOM": (MyFormat, {})},
+        fields={"preserved_field": IDSpec("session-field")},
+    )
+
+    assert errors == []
+    session_dir = output_dir / "PROJECT.SUBJECT.SESSION"
+    assert (session_dir / Fields.FNAME).exists()
+    assert dict(ImagingSession.load(session_dir).fields) == {
+        "preserved_field": "preserved"
+    }

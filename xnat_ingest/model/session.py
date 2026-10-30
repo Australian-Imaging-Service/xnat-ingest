@@ -58,6 +58,7 @@ from ..helpers.arg_types import (
     OnResourceClash,
     PathMetadataRegex,
 )
+from ..helpers.fields import Fields
 from ..helpers.metadata import Metadata
 from .resource import ImagingResource
 from .scan import ImagingScan
@@ -540,6 +541,9 @@ class ImagingSession:
     run_uid: ty.Optional[str] = attrs.field(default=None)
     metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
+    # XNAT custom variables to set on upload, persisted as __FIELDS__.json
+    fields: Fields = attrs.field(eq=False, repr=False, init=False)
+
     METADATA_FNAME = "__METADATA__.yaml"
     METADATA_DIR = "__metadata__"
     # Directory-name prefix used to flag sessions that have been grouped into scans but
@@ -565,6 +569,10 @@ class ImagingSession:
     @metadata.default
     def _metadata_default(self):
         return Metadata({}, self)
+
+    @fields.default
+    def _fields_default(self):
+        return Fields({}, self)
 
     @property
     def name(self) -> str:
@@ -2147,6 +2155,8 @@ class ImagingSession:
         if (session_dir / Metadata.FNAME).exists():
             session.metadata = Metadata.load(session_dir, session)
             session.uid = session.metadata.get(cls.UID_METADATA_KEY, None)
+        if (session_dir / Fields.FNAME).exists():
+            session.fields = Fields.load(session_dir, session)
         return session
 
     def staging_dirname(self, available_projects: list[str] | None = None) -> str:
@@ -2312,6 +2322,9 @@ class ImagingSession:
         logger.debug("Saving session metadata")
         self.metadata[self.UID_METADATA_KEY] = self.uid
         self.metadata.save(session_dir)
+        if self.fields:
+            self.fields.save(session_dir)
+            saved.fields.update(dict(self.fields))
         return saved, session_dir
 
     @classmethod
