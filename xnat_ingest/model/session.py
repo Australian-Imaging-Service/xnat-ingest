@@ -10,6 +10,7 @@ import tempfile
 import typing as ty
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cached_property
 from glob import glob
@@ -43,7 +44,11 @@ from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
-from ..exceptions import ImagingSessionParseError, StagingError
+from ..exceptions import (
+    ImagingSessionParseError,
+    OrthancStudyChangedError,
+    StagingError,
+)
 from ..helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AssociatedFiles,
@@ -468,6 +473,40 @@ def _deidentify_or_copy_resource(
     )
     reid_mdata = _metadata_diff(orig_metadata, deid_resource.metadata)
     return deid_resource, reid_mdata
+
+
+def _dicom_multi_value(value: ty.Any) -> list[str]:
+    """The components of a multi-valued DICOM tag as Orthanc reports it: one
+    backslash-joined string, or a list when the caller already split it."""
+    if isinstance(value, str):
+        return value.split("\\")
+    return [str(v) for v in value]
+
+
+def _remove_scratch_dir(path: Path) -> None:
+    """Remove a scratch directory of a study that failed to stage.
+
+    A failure to remove it, for example a permission error, is logged and not
+    raised, so the next study is still staged. The remaining files are then
+    removed where possible.
+    """
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        # The directory, or a file in it, is already gone. Remove the rest.
+        shutil.rmtree(path, ignore_errors=True)
+    except OSError as e:
+        logger.warning("Could not remove the scratch directory '%s': %s", path, e)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _is_timestamp(value: str) -> bool:
+    """Whether `value` is a real Orthanc timestamp (YYYYMMDDTHHMMSS)."""
+    try:
+        datetime.strptime(value, "%Y%m%dT%H%M%S")
+    except ValueError:
+        return False
+    return True
 
 
 @attrs.define(slots=False)
@@ -1102,6 +1141,7 @@ class ImagingSession:
         conversion_map: (
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
+        errors: list[str] | None = None,
     ) -> list["ImagingSession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
@@ -1135,6 +1175,10 @@ class ImagingSession:
             before the study is labelled as processed, with the options passed through
             to ``convert()``.
 
+        errors : list[str], optional
+            if given, the IDs of the studies that could not be staged in this
+            pass are appended to it. Such a study is logged and left
+            unlabelled, so it is tried again on the next pass
         Returns
         -------
         list[ImagingSession]
@@ -1177,7 +1221,95 @@ class ImagingSession:
             candidates = _find_studies([], "All")
 
         if processed_label:
+            # The snapshot label below is "<processed>-<LastUpdate>-<digest>" in
+            # at most 64 characters (Orthanc's label limit), with a digest of
+            # at least 8 hex digits. Checked here, before any study is staged.
+            snapshot_prefix = f"{processed_label}-"
+            digest_len = min(24, 64 - len(snapshot_prefix) - len("YYYYMMDDTHHMMSS-"))
+            if digest_len < 8:
+                raise ValueError(
+                    f"processed label {processed_label!r} is too long for a "
+                    "snapshot label (64 characters at most)"
+                )
+            receipt_re = re.compile(
+                re.escape(snapshot_prefix)
+                + r"(\d{8}T\d{6})-([0-9a-f]{%d})$" % digest_len
+            )
+            # LastUpdate has one-second resolution. The change check relies on
+            # a late instance getting a LastUpdate in a later second than the
+            # one staged, so the study must have been quiet for a second.
+            if not wait_period or wait_period < 1:
+                logger.info(
+                    "Using a wait period of 1 second with the processed label "
+                    "%r (requested: %r)",
+                    processed_label,
+                    wait_period,
+                )
+                wait_period = 1
             candidates -= _find_studies([processed_label], "All")
+            # A processed study can change after it was staged: a series that
+            # arrives late. The staging run records the LastUpdate it staged
+            # as a second label, "<processed_label>-<LastUpdate>". A processed
+            # study whose current LastUpdate has no such label (or none at
+            # all, from an older version) has instances this stage never
+            # saw: its labels are removed and it is staged again in full.
+            resp = requests.post(
+                f"{url}/tools/find",
+                auth=auth,
+                json={
+                    "Level": "Study",
+                    "Query": {},
+                    "Labels": [processed_label],
+                    "LabelsConstraint": "All",
+                    "Expand": True,
+                },
+            )
+            resp.raise_for_status()
+            expanded = resp.json()
+            if not isinstance(expanded, list) or not all(
+                isinstance(e, dict) and isinstance(e.get("ID"), str) for e in expanded
+            ):
+                raise ValueError(
+                    f"Unexpected reply to the expanded study query at '{url}'"
+                )
+            for entry in expanded:
+                # Both keys must be present. A study document without Labels
+                # comes from an Orthanc without label support, which this
+                # mode cannot work with.
+                labels = entry.get("Labels")
+                last_update = entry.get("LastUpdate")
+                if (
+                    not isinstance(labels, list)
+                    or not all(isinstance(lb, str) for lb in labels)
+                    or not isinstance(last_update, str)
+                    or not re.fullmatch(r"\d{8}T\d{6}", last_update)
+                    or not _is_timestamp(last_update)
+                ):
+                    raise ValueError(
+                        f"Unexpected Labels or LastUpdate for Orthanc study "
+                        f"'{entry['ID']}' at '{url}'"
+                    )
+                if to_process_label and to_process_label not in labels:
+                    continue
+                snapshots = [lb for lb in labels if lb.startswith(snapshot_prefix)]
+                # Exactly one well-formed snapshot label naming the current
+                # LastUpdate: the cheap check. The digest is for the reclaimer,
+                # which holds the instance list anyway.
+                match = receipt_re.match(snapshots[0]) if len(snapshots) == 1 else None
+                if match and match.group(1) == last_update:
+                    continue
+                logger.info(
+                    "Orthanc study '%s' changed after it was staged "
+                    "(LastUpdate %s, snapshot labels %s): staging it again",
+                    entry["ID"],
+                    last_update,
+                    snapshots,
+                )
+                for label in [processed_label, *snapshots]:
+                    requests.delete(
+                        f"{url}/studies/{entry['ID']}/labels/{label}", auth=auth
+                    ).raise_for_status()
+                candidates.add(entry["ID"])
 
         study_ids = sorted(candidates)
         logger.info(
@@ -1193,7 +1325,18 @@ class ImagingSession:
         )
 
         staged: list[ImagingSession] = []
-        for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
+        # The build directory and the conversion scratch directories of the
+        # study being staged, for the clean-up when staging fails part way.
+        current_work_dir: dict[str, ty.Any] = {}
+
+        def _discard_work_dir() -> None:
+            work_dir = current_work_dir.pop("path", None)
+            if work_dir is not None and work_dir.exists():
+                _remove_scratch_dir(work_dir)
+            for convert_dir in current_work_dir.pop("convert", []):
+                _remove_scratch_dir(convert_dir)
+
+        def _stage_study(study_id: str) -> ImagingSession | None:
             study = get_json(f"/studies/{study_id}")
             if wait_period:
                 try:
@@ -1213,7 +1356,7 @@ class ImagingSession:
                         age,
                         wait_period,
                     )
-                    continue
+                    return None
             study_tags = {**study["MainDicomTags"], **study["PatientMainDicomTags"]}
 
             session_uid = IDSpec("StudyInstanceUID").get_value(study_tags)
@@ -1221,6 +1364,7 @@ class ImagingSession:
             # One group-orthanc producer must own this output directory. A
             # converter child that outlives its parent is outside this contract.
             work_dir = output_dir / "__build__" / f"orthanc_{session_uid}"
+            current_work_dir["path"] = work_dir
             if work_dir.exists():
                 shutil.rmtree(work_dir)
             session_dir = work_dir / final_dir.name
@@ -1228,6 +1372,8 @@ class ImagingSession:
 
             modalities: set[str] = set()
             staged_instance_ids: dict[str, set[str]] = {}
+            staged_resources: set[tuple[str, str]] = set()
+            scan_types: dict[str, str] = {}
             for series_id in study["Series"]:
                 series = get_json(f"/series/{series_id}")
                 if modality := series["MainDicomTags"].get("Modality"):
@@ -1271,16 +1417,42 @@ class ImagingSession:
                     )
 
                 if "ImageType" in all_tags:
+                    # Orthanc gives a multi-valued tag as one backslash-joined
+                    # string. The mapping wants the components; an escaped ID
+                    # string ("DERIVED_SECONDARY") never matched any of them.
                     resource_label = dicom_image_type_to_resource_label(
-                        IDSpec("ImageType").get_value(all_tags)
+                        _dicom_multi_value(all_tags["ImageType"])
                     )
                 else:
                     resource_label = "DICOM"
                 scan_dir = session_dir / f"{scan_id}.{scan_type}"
+                # The scan ID (SeriesNumber) must name one scan. Two series with
+                # the same SeriesNumber and SeriesDescription would share one
+                # resource directory and one manifest; two with the same
+                # SeriesNumber and different descriptions would be loaded as
+                # one scan, and one of them dropped. Refuse the study instead.
+                if scan_types.setdefault(scan_id, scan_type) != scan_type:
+                    raise StagingError(
+                        f"Orthanc study '{study_id}': SeriesNumber '{scan_id}' is "
+                        f"used by series with different descriptions "
+                        f"('{scan_types[scan_id]}' and '{scan_type}'). The study "
+                        "needs attention before it can be staged."
+                    )
+                resource_key = (scan_dir.name, resource_label)
+                if resource_key in staged_resources:
+                    raise StagingError(
+                        f"Orthanc study '{study_id}': series '{series_id}' maps to "
+                        f"'{scan_dir.name}/{resource_label}' like another series of "
+                        f"the study (SeriesNumber '{scan_id}', SeriesDescription "
+                        f"'{scan_type}'). The study needs attention before it can "
+                        "be staged."
+                    )
+                staged_resources.add(resource_key)
                 if convert_series:
                     convert_tmp_dir = Path(
                         tempfile.mkdtemp(prefix="__convert_", dir=output_dir)
                     )
+                    current_work_dir.setdefault("convert", []).append(convert_tmp_dir)
                     resource_dir = convert_tmp_dir / resource_label
                 else:
                     resource_dir = scan_dir / resource_label
@@ -1344,6 +1516,8 @@ class ImagingSession:
                 study_tags["Modality"] = (
                     next(iter(modalities)) if len(modalities) == 1 else list(modalities)
                 )
+            # Keep the grouping identity when load() reads the saved metadata.
+            study_tags[cls.UID_METADATA_KEY] = session_uid
             with open(metadata_path, "w") as f:
                 json.dump(study_tags, f, indent=4, default=str)
 
@@ -1355,7 +1529,7 @@ class ImagingSession:
                 if current_study.get("LastUpdate") != study.get(
                     "LastUpdate"
                 ) or current_series_ids != set(staged_instance_ids):
-                    raise RuntimeError(
+                    raise OrthancStudyChangedError(
                         f"Orthanc study '{study_id}' changed while it was being staged"
                     )
                 for series_id, expected_instance_ids in staged_instance_ids.items():
@@ -1363,7 +1537,7 @@ class ImagingSession:
                     if {instance["ID"] for instance in current_instances} != (
                         expected_instance_ids
                     ):
-                        raise RuntimeError(
+                        raise OrthancStudyChangedError(
                             f"Orthanc study '{study_id}' changed while it was being staged"
                         )
             if os.path.lexists(final_dir):
@@ -1373,7 +1547,9 @@ class ImagingSession:
                     final_dir,
                 )
                 shutil.rmtree(work_dir)
-                continue
+                if errors is not None:
+                    errors.append(study_id)
+                return None
             session_dir.rename(final_dir)
             for resource in staged_session.resources:
                 resource.fileset.fspaths = frozenset(
@@ -1382,6 +1558,25 @@ class ImagingSession:
                 )
             work_dir.rmdir()
             if processed_label:
+                # The snapshot label names the LastUpdate the final check
+                # verified. A stale one from an earlier staging goes first,
+                # and the processed label last, so a processed study always
+                # carries exactly one snapshot label.
+                exported = sorted(
+                    iid for ids in staged_instance_ids.values() for iid in ids
+                )
+                digest = hashlib.sha256(
+                    ("\n".join(exported) + "\n").encode()
+                ).hexdigest()[:digest_len]
+                snapshot = f"{snapshot_prefix}{study['LastUpdate']}-{digest}"
+                for stale in current_study.get("Labels") or []:
+                    if stale.startswith(f"{processed_label}-") and stale != snapshot:
+                        requests.delete(
+                            f"{url}/studies/{study_id}/labels/{stale}", auth=auth
+                        ).raise_for_status()
+                requests.put(
+                    f"{url}/studies/{study_id}/labels/{snapshot}", auth=auth
+                ).raise_for_status()
                 requests.put(
                     f"{url}/studies/{study_id}/labels/{processed_label}", auth=auth
                 ).raise_for_status()
@@ -1389,7 +1584,25 @@ class ImagingSession:
             logger.info(
                 "Staged and labelled study '%s' -> '%s'", study_id, final_dir.name
             )
-            staged.append(staged_session)
+            return staged_session
+
+        for study_id in tqdm(study_ids, "Staging studies from Orthanc"):
+            current_work_dir.clear()
+            try:
+                session = _stage_study(study_id)
+            except OrthancStudyChangedError as e:
+                logger.warning("%s. It is staged again on a later pass.", e)
+                _discard_work_dir()
+            except Exception as e:  # noqa: BLE001 - one study must not stop the stage
+                logger.error(
+                    "Skipping Orthanc study '%s': %s", study_id, e, exc_info=True
+                )
+                _discard_work_dir()
+                if errors is not None:
+                    errors.append(study_id)
+            else:
+                if session is not None:
+                    staged.append(session)
 
         return staged
 
@@ -1514,24 +1727,7 @@ class ImagingSession:
                     deid_resource,
                     on_clash=on_resource_clash,
                 )
-        # SESSION-LEVEL RESOURCES, which this loop used to drop entirely.
-        #
-        # A session can carry resources attached to the SESSION rather than to a
-        # scan -- a report, a summary, anything added with add_session_resource.
-        # deidentified starts from new_empty(), which copies the ids and nothing
-        # else, and the loop above walks self.scans only, so those resources
-        # never reached the output. They were not de-identified, not copied, and
-        # nothing said so.
-        #
-        # save() has always handled them (included_session_resources), so this
-        # was a hole in deidentify alone, and it is worse than a plain data loss:
-        # the per-session completeness gate counts data files on both sides, so a
-        # session carrying one would come out short, be reported incomplete, and
-        # correctly refuse to unlink its input -- for ever, on every cycle,
-        # because the next run drops it again.
-        #
-        # They go at the top of dest_dir rather than under a scan id, which is
-        # where save() puts them and where load() looks for them.
+        # Session resources use the same deidentification policy as scan resources.
         for resource_name, resource in self.session_resources.items():
             contains_phi = getattr(resource.fileset, "contains_phi", False)
             resource_recipe_file = None
@@ -1938,6 +2134,14 @@ class ImagingSession:
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
+                if scan.id in session.scans:
+                    # Two directories, one scan ID: a dict entry would silently
+                    # replace the other scan, and its files would never be saved.
+                    raise ImagingSessionParseError(
+                        f"Two scan directories of '{session_dir}' have the scan ID "
+                        f"'{scan.id}' ('{session.scans[scan.id].type}' and "
+                        f"'{scan.type}'). The session needs attention."
+                    )
                 scan.session = session
                 session.scans[scan.id] = scan
             else:
@@ -1978,6 +2182,62 @@ class ImagingSession:
         if self.run_uid:
             session_dirname += f".{self.run_uid}"
         return session_dirname
+
+    @classmethod
+    @contextmanager
+    def load_for_processing(
+        cls,
+        session_dir: Path,
+        require_manifest: bool = True,
+        check_checksums: bool = True,
+        unlink_source: str | None = None,
+    ) -> ty.Iterator[Self]:
+        """Load input and remove its recorded files after successful processing.
+
+        The context body must finish processing and save its output before it
+        returns. If it raises, no source files are removed. New paths that arrive
+        after the snapshot stay for the next cycle. Writers must not replace a
+        recorded path during processing: this is a path snapshot, not a lock.
+        """
+        if unlink_source not in (None, "all", "keep-metadata"):
+            raise ValueError(f"Unknown unlink_source mode: {unlink_source!r}")
+        source_files = (
+            [p for p in session_dir.rglob("*") if p.is_file() or p.is_symlink()]
+            if unlink_source
+            else []
+        )
+        session = cls.load(
+            session_dir,
+            require_manifest=require_manifest,
+            check_checksums=check_checksums,
+        )
+        resource_dirs = [resource.fileset.parent for resource in session.resources]
+        yield session
+        if not unlink_source:
+            return
+        if unlink_source == "keep-metadata":
+            source_files = [
+                p
+                for p in source_files
+                if any(p.is_relative_to(d) for d in resource_dirs)
+            ]
+            roots = resource_dirs
+        else:
+            roots = [session_dir]
+        for path in source_files:
+            path.unlink(missing_ok=True)
+        for root in roots:
+            directories = [
+                p for p in root.rglob("*") if p.is_dir() and not p.is_symlink()
+            ]
+            for directory in sorted(
+                directories, key=lambda p: len(p.parts), reverse=True
+            ) + [root]:
+                try:
+                    directory.rmdir()
+                except OSError:
+                    # A late file keeps its directory. Empty directories only.
+                    pass
 
     def save(
         self,
@@ -2050,11 +2310,14 @@ class ImagingSession:
                 collation_map=collation_map,
                 conversion_map=conversion_map,
                 include=include,
+                build_dir=dest_dir / "__build__",
             )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         for resource in included_session_resources:
-            saved_resource = resource.save(session_dir, copy_mode=copy_mode)
+            saved_resource = resource.save(
+                session_dir, copy_mode=copy_mode, build_dir=dest_dir / "__build__"
+            )
             saved.session_resources[saved_resource.name] = saved_resource
         logger.debug("Saving session metadata")
         self.metadata[self.UID_METADATA_KEY] = self.uid

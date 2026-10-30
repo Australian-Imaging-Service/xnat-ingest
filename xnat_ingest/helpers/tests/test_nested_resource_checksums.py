@@ -137,8 +137,11 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
     )
     connection = remote.xnat_session
 
-    def get_json(uri, query=None):
+    def get_json(uri, query=None, headers=None):
+        if uri == "/data/experiments/E1":
+            return {"items": [{"data_fields": {"subject_ID": "S1", "UID": ""}}]}
         responses = {
+            "/data/projects/proj/subjects": [{"ID": "S1", "label": "subj"}],
             "/data/archive/projects": [{"ID": "proj", "name": "proj"}],
             "/data/projects/proj/experiments": [
                 {"ID": "E1", "label": "sess", "xsiType": "xnat:mrSessionData"}
@@ -155,6 +158,14 @@ def test_nested_session_resource_completeness_and_repair(tmp_path, missing):
         return {"ResultSet": {"Result": responses[uri]}}
 
     connection.get_json.side_effect = get_json
+    files_response = connection.get.return_value
+
+    def get(uri, format=None, query=None, **kwargs):
+        if format == "json":
+            return SimpleNamespace(json=lambda: get_json(uri, query=query))
+        return files_response
+
+    connection.get.side_effect = get
 
     class Listing(S3SessionListing):
         @property

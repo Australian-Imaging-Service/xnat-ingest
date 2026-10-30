@@ -36,7 +36,7 @@ class FakeConnection:
         self.found = found
 
     def get_json(
-        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None
+        self, uri: str, query: ty.Optional[ty.Dict[str, str]] = None, headers=None
     ) -> ty.Any:
         rows: ty.List[ty.Dict[str, str]] = []
         if uri == "/data/experiments":

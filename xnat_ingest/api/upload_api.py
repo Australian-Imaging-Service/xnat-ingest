@@ -33,7 +33,7 @@ from xnat_ingest.helpers.remotes import (
     split_resource_by_modality,
 )
 
-from ..exceptions import IncompleteCheckumsException
+from ..exceptions import IncompleteCheckumsException, SessionIdentityRefused
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
@@ -629,10 +629,28 @@ def upload(
                             f"\n{traceback.format_exc()}\n\n"
                         )
                     ]
-                    logger.error("".join(error_msg))
+                    logger.error(
+                        "".join(error_msg),
+                        extra={
+                            "event": "xnat_identity_refused",
+                            "session": session_listing.name,
+                        }
+                        if isinstance(e, SessionIdentityRefused)
+                        else {},
+                    )
                     errors.extend(error_msg)
                     continue
                 else:
+                    if isinstance(e, SessionIdentityRefused):
+                        logger.error(
+                            "Refusing upload of '%s': %s",
+                            session_listing.name,
+                            e,
+                            extra={
+                                "event": "xnat_identity_refused",
+                                "session": session_listing.name,
+                            },
+                        )
                     raise
 
     if errors:

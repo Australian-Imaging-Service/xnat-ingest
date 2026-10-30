@@ -217,6 +217,20 @@ eligible for re-staging. Note that ``--unlink-source`` is not yet implemented fo
 ``group-orthanc`` — the source studies always stay in Orthanc, and the processed
 label is what stops them being staged again.
 
+A series that arrives after its study was staged is staged again without a manual
+step. When ``group-orthanc`` applies the processed label, it also applies a
+*snapshot label*, ``<processed-label>-<LastUpdate>-<digest>``: the ``LastUpdate``
+of the study at the time it was staged, and a digest of the instance IDs it
+exported. On every run, a processed study whose ``LastUpdate`` no longer matches
+its snapshot label (or that has no snapshot label, from an older version) loses
+both labels and is staged again in full. Downstream stages skip what they already
+hold, so the late series is the only new data that moves. A processed label makes
+the wait period at least one second, so a late instance always gets a later
+``LastUpdate`` than the one staged. The snapshot label is also what a retention
+tool can check before it deletes a study from Orthanc: the exported instance set
+is the digest, and a changed ``LastUpdate`` shows that the study changed after it
+was staged.
+
 Missing series display tags
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -240,6 +254,17 @@ expression to resolve. Its default ``SeriesNumber`` therefore needs an explicit
 ``--scan SeriesInstanceUID,medimage/dicom-collection`` for sources without numbers.
 Automatic number fallback on that configurable path is a separate follow-up;
 missing optional descriptions in the shared ``assign`` path are handled above.
+
+A study that cannot be staged does not stop the others. Two series of one study
+that map to one scan directory and resource (the same ``SeriesNumber`` and
+``SeriesDescription``), or one ``SeriesNumber`` used with two descriptions, are
+refused before the study is published; files already linked for its earlier
+series are discarded with the build directory. Loading such a session would
+keep only one of the scans. The study is logged as an error with its Orthanc ID and the reason, left
+without the processed label, and tried again on the next run, so the error stays
+visible until the study is corrected at the source. The other studies of the run
+are staged as usual. A study that changes while it is being staged is logged as a
+warning and staged again on a later run.
 
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -455,6 +480,38 @@ that matches that type. The alternative is defining an expected column layout fo
 project with the `frametree <https://arcanaframework.github.io/frametree/>`_ tool, and
 only data with a matching column in the dataset definition is uploaded.
 
+
+Session identity on reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An existing session label must belong to the expected subject. The uploader
+checks the subject's internal XNAT ID through fresh REST responses, including
+for a subject shared into the selected project.
+
+The grouping identity is the ``__uid__`` value saved in session metadata. It
+works for DICOM and other formats; it is not XNAT's DICOM ``UID`` attribute.
+New experiments include it in the custom field ``xnat_ingest_uid`` in the
+creation request, then read it back. This field has no project UI form and is
+hidden from that UI by default. It is not secret storage.
+
+Before reuse or a completeness decision, the uploader reads this field again.
+A different value, duplicate field or unreadable response refuses the upload
+and keeps the staged copy. Local and S3 checks read only the session metadata;
+they do not download DICOM headers to establish identity. Identity reads request
+``Cache-Control: no-cache`` and ``Pragma: no-cache``.
+
+An older experiment with no field is incomplete for the purpose of the skip
+check. In the upload path, after the subject matches, the uploader warns that
+the old identity is unverified, writes the incoming grouping identity, and
+reads it back before sending files. This adoption does not prove that the old
+files belong to the incoming session. It never replaces a different existing
+value. Run one uploader per experiment: the read, write and readback are not
+an atomic claim against concurrent writers.
+
+Legacy local staging without ``__uid__`` keeps the subject check, but cannot
+establish grouping identity or stamp this field. Session-only uploads lack an
+expected subject, so they cannot adopt a missing remote identity; if supplied,
+their local grouping identity must already match the remote field.
 
 4. Check what made it up
 ----------------------------
