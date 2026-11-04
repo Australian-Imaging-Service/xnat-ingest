@@ -15,6 +15,7 @@ from ..helpers.arg_types import (
     OnResourceClash,
 )
 from ..helpers.logging import logger, set_logger_handling
+from ..model.session import ImagingSession
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
@@ -47,6 +48,8 @@ deidentification).
 Formats without a matching recipe file are only deidentified if one is found for a
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').
+Metadata side-cars in the deidentified output retain only __uid__, where present.
+Other metadata fields are omitted; source metadata is unchanged.
 
 The re-identification metadata (a mapping from original to de-identified identifiers for
 each resource in the session, plus any DICOM tags modified during de-identification) is
@@ -172,6 +175,19 @@ only written if --reid-dir is given; see that option.
         "e.g. generated using `Fernet.generate_key()` from the cryptography package"
     ),
 )
+@click.option(
+    "--metadata-allowlist",
+    type=str,
+    default=ImagingSession.UID_METADATA_KEY,
+    envvar="XINGEST_METADATA_ALLOWLIST",
+    callback=lambda context, param, value: tuple(
+        key.strip() for key in value.split(",") if key.strip()
+    ),
+    help=(
+        "Comma-separated metadata keys to retain in output sidecars "
+        "(XINGEST_METADATA_ALLOWLIST env. var). Defaults to __uid__."
+    ),
+)
 def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
@@ -185,7 +201,8 @@ def deidentify_cmd(
     loop: int,
     on_resource_clash: OnResourceClash,
     unlink_source: str | None,
-    reid_encrypt_key: str | None = None,
+    reid_encrypt_key: str | None,
+    metadata_allowlist: ty.Collection[str],
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -218,6 +235,7 @@ def deidentify_cmd(
             require_manifest=require_manifest,
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
+            metadata_allowlist=metadata_allowlist,
         )
         # The return value was previously discarded, so a session that failed or was
         # left incomplete produced no signal above this function at all. group_cmd and

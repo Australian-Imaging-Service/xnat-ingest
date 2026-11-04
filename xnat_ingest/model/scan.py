@@ -91,6 +91,7 @@ class ImagingScan:
         conversion_map: (
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
+        metadata_allowlist: ty.Collection[str] | None = None,
         include: ty.Sequence[ty.Type[FileSet]] = (),
         build_dir: Path | None = None,
     ) -> Self:
@@ -115,10 +116,11 @@ class ImagingScan:
                 collation_map=collation_map,
                 conversion_map=conversion_map,
                 build_dir=build_dir,
+                metadata_allowlist=metadata_allowlist,
             )
             saved_resource.scan = saved
             saved.resources[saved_resource.name] = saved_resource
-        self.metadata.save(scan_dir)
+        self.metadata.save(scan_dir, allowlist=metadata_allowlist)
         return saved
 
     @classmethod

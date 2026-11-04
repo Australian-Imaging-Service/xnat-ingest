@@ -1161,3 +1161,51 @@ def test_deidentify_retires_recorded_session_files_after_success(
 
     assert errors == []
     assert not (input_dir / SESSION_NAME).exists()
+
+
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_deidentify_keeps_only_uid_in_output_metadata(
+    dirs: tuple[Path, Path, Path, Path],
+    existing_output: bool,
+):
+    input_dir, output_dir, spec_dir, _ = dirs
+    source_dir = input_dir / SESSION_NAME
+    metadata_paths = [
+        Path("__METADATA__.json"),
+        Path("1.T/__METADATA__.json"),
+        Path("1.T/RES/__METADATA__.json"),
+    ]
+
+    for relative_path in metadata_paths:
+        path = source_dir / relative_path
+        metadata = json.loads(path.read_text())
+        metadata["PatientName"] = "Source name"
+        path.write_text(json.dumps(metadata))
+
+    originals = {path: (source_dir / path).read_bytes() for path in metadata_paths}
+
+    if existing_output:
+        ImagingSession.load(source_dir).save(output_dir)
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+        )
+
+    assert errors == []
+    output_session = output_dir / SESSION_NAME
+
+    for relative_path in metadata_paths:
+        expected = (
+            {"__uid__": SESSION_NAME}
+            if relative_path == Path("__METADATA__.json")
+            else {}
+        )
+        assert json.loads((output_session / relative_path).read_text()) == expected
+        assert (source_dir / relative_path).read_bytes() == originals[relative_path]
+
+    reloaded = ImagingSession.load(output_session)
+    assert reloaded.uid == SESSION_NAME
+    assert reloaded.scans["1"].resources["RES"].checksums
