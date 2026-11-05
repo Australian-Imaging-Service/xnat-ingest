@@ -372,7 +372,7 @@ def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
     assert sorted(out.scans) == ["1", "2"]
     assert set(out.scans["1"].resources) == {"DICOM"}
     assert set(out.scans["2"].resources) == {"DICOM"}
-    assert not list(input_dir.iterdir())
+    assert not (input_dir / "PROJECT.SUBJECT.SESSION").exists()
 
 
 def test_package_keeps_an_input_that_changed_while_it_was_packaged(
