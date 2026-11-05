@@ -3,6 +3,7 @@ from .associate_cli import associate_cmd
 from .base import cli
 from .check_upload_cli import check_upload_cmd
 from .deidentify_cli import deidentify_cmd
+from .fields_cli import fields_cmd
 from .group_cli import group_cmd, group_orthanc_cmd
 from .package_cli import package_cmd
 from .upload_cli import upload_cmd
@@ -17,4 +18,5 @@ __all__ = [
     "group_cmd",
     "group_orthanc_cmd",
     "package_cmd",
+    "fields_cmd",
 ]

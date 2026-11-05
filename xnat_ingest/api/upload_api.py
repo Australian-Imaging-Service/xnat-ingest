@@ -1,4 +1,5 @@
 import errno
+import json
 import math
 import shutil
 import tempfile
@@ -51,6 +52,24 @@ def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
         resource.scan is not None
         and isinstance(resource.fileset, (DicomCollection, DicomImage))
         for resource in resources
+    )
+
+
+def _upload_session_fields(
+    session: ImagingSession, xsession: ty.Any, connection: ty.Any
+) -> None:
+    if not session.fields:
+        return
+
+    connection.put(
+        f"/xapi/custom-fields/experiments/{xsession.id}/fields",
+        data=json.dumps(dict(session.fields)),
+        headers={"Content-Type": "application/json"},
+    )
+    logger.info(
+        "Uploaded XNAT fields %s for '%s'",
+        sorted(session.fields),
+        session.name,
     )
 
 

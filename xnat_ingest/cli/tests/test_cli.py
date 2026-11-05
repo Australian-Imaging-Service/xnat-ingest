@@ -42,12 +42,12 @@ from xnat_ingest.cli import (
     associate_cmd,
     check_upload_cmd,
     deidentify_cmd,
+    fields_cmd,
     group_cmd,
     package_cmd,
     upload_cmd,
 )
 from xnat_ingest.helpers.arg_types import (
-    IDSpec,
     MimeType,  # type: ignore[import-untyped]
     XnatLogin,
 )
@@ -216,54 +216,80 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     ]
 
 
-def test_field_spec_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
-    @click.command()
-    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
-    @click.option(
-        "--field",
-        type=IDSpec.cli_type,
-        nargs=2,
-        multiple=True,
-        default=[["ImageType[2:]", "all"]],
-        metavar="<specifier> <datatype>",
-        envvar="XINGEST_FIELD",
-        help=(
-            "The keywords of the metadata field to extract the XNAT imaging resource ID from "
-            "for different datatypes (use `generic/file-set` as a catch-all if required)."
-        ),
+def test_fields_cli_envvar(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_FIELDS": (
+                "scanner_model ManufacturerModelName;study_date {StudyDate:%Y-%m-%d}"
+            )
+        },
+    ):
+        result = cli_runner(
+            fields_cmd,
+            [str(input_dir), str(output_dir)],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+
+def test_fields_cli_accepts_multiple_mappings(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    result = cli_runner(
+        fields_cmd,
+        [
+            str(input_dir),
+            str(output_dir),
+            "--extract",
+            "scanner_model",
+            "ManufacturerModelName",
+            "--extract",
+            "study_date",
+            "{StudyDate:%Y-%m-%d}",
+        ],
     )
-    def test_cli_types(out_file: Path, field: ty.List[IDSpec]) -> None:
-        with open(out_file, "w") as f:
-            for field_spec in field:
-                f.write(f"{field_spec.specifier},{field_spec.datatype.mime_like}\n")
 
-    out_file = tmp_path / "out.txt"
+    assert result.exit_code == 0, show_cli_trace(result)
 
-    # Patch the environment to set the XINGEST_FIELD variable using unittest.mock.
-    # Each entry provides <specifier> <datatype>, leaving the optional trailing
-    # <formatter> token to fall back to its attrs-level default (None)
 
-    for val, expected in [
-        ["ImageType[2:] generic/file-set", ["ImageType[2:],core/file-set"]],
+def test_fields_cli_rejects_duplicate_field_names(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    result = cli_runner(
+        fields_cmd,
         [
-            "ImageType[-1] medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
-            ["ImageType[-1],medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data"],
+            str(input_dir),
+            str(output_dir),
+            "--extract",
+            "site",
+            "InstitutionName",
+            "--extract",
+            "site",
+            "Manufacturer",
         ],
-        [
-            "SeriesNumber medimage/dicom-series;"
-            "UID medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
-            [
-                "SeriesNumber,medimage/dicom-series",
-                "UID,medimage/vnd.siemens.syngo-mi.vr20b.large-raw-data",
-            ],
-        ],
-    ]:
-        with patch.dict(os.environ, {"XINGEST_FIELD": val}):
-            result = cli_runner(test_cli_types, [str(out_file)])
+    )
 
-        assert result.exit_code == 0, show_cli_trace(result)
-
-        assert out_file.read_text().split("\n")[:-1] == expected
+    assert result.exit_code == 2, show_cli_trace(result)
+    assert "Duplicate --field names" in result.output
+    assert not output_dir.exists()
 
 
 def test_stage_and_upload(
