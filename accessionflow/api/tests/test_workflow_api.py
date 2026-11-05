@@ -38,8 +38,14 @@ class _FakeFlow:
         name: ty.Optional[str] = None,
         work_pool_name: ty.Optional[str] = None,
         cron: ty.Optional[str] = None,
+        parameters: ty.Optional[dict] = None,
     ) -> None:
-        self.deployed = {"name": name, "work_pool_name": work_pool_name, "cron": cron}
+        self.deployed = {
+            "name": name,
+            "work_pool_name": work_pool_name,
+            "cron": cron,
+            "parameters": parameters,
+        }
 
 
 class _SettingsContext:
@@ -149,11 +155,13 @@ def test_deploy_registers_each_spec_against_work_pool(
         "name": "wf-a",
         "work_pool_name": "my-pool",
         "cron": None,
+        "parameters": {},
     }
     assert deployed_names["wf-b"] == {
         "name": "wf-b",
         "work_pool_name": "my-pool",
         "cron": None,
+        "parameters": {},
     }
 
 

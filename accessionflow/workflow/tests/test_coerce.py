@@ -6,20 +6,20 @@ from xnat_ingest.workflow import coerce
 
 
 def test_construct_from_mapping() -> None:
-    spec = coerce.construct(IDSpec, {"specifier": "SeriesNumber", "datatype": "all"})
+    spec = coerce.construct(IDSpec, {"expr": "SeriesNumber", "datatype": "all"})
     assert isinstance(spec, IDSpec)
-    assert spec.specifier == "SeriesNumber"
+    assert spec.expr == "SeriesNumber"
 
 
 def test_construct_from_list() -> None:
     spec = coerce.construct(ClashSpec, ["merge", "image/png"])
     assert spec.policy == "merge"
-    assert spec.scope is Png
+    assert spec.datatype is Png
 
 
 def test_construct_from_scalar() -> None:
     spec = coerce.construct(IDSpec, "SeriesNumber")
-    assert spec.specifier == "SeriesNumber"
+    assert spec.expr == "SeriesNumber"
     assert spec.datatype is FileSet  # IDSpec's default datatype
 
 
@@ -45,19 +45,19 @@ def test_datatypes_list() -> None:
 def test_id_specs_bare_string() -> None:
     specs = coerce.id_specs("SeriesNumber")
     assert len(specs) == 1
-    assert specs[0].specifier == "SeriesNumber"
+    assert specs[0].expr == "SeriesNumber"
 
 
 def test_id_specs_bare_mapping() -> None:
-    specs = coerce.id_specs({"specifier": "SeriesNumber", "datatype": "all"})
+    specs = coerce.id_specs({"expr": "SeriesNumber", "datatype": "all"})
     assert len(specs) == 1
 
 
 def test_id_specs_list_of_mappings() -> None:
     specs = coerce.id_specs(
         [
-            {"specifier": "dermoscopy-{LesionID}", "datatype": "image/png|image/jpeg"},
-            {"specifier": "dexi-{CaptureTime}", "datatype": "image/png"},
+            {"expr": "dermoscopy-{LesionID}", "datatype": "image/png|image/jpeg"},
+            {"expr": "dexi-{CaptureTime}", "datatype": "image/png"},
         ]
     )
     assert len(specs) == 2
@@ -71,7 +71,7 @@ def test_id_specs_empty() -> None:
 
 def test_path_metadata_regexes() -> None:
     regexes = coerce.path_metadata_regexes(
-        [{"regex": r".*/(?P<subject_uid>[\w-]+)", "datatype": "image/png"}]
+        [{"pattern": r".*/(?P<subject_uid>[\w-]+)", "datatype": "image/png"}]
     )
     assert len(regexes) == 1
     assert isinstance(regexes[0], PathMetadataRegex)
@@ -88,7 +88,7 @@ def test_on_resource_clash_bare_string() -> None:
 
 def test_on_resource_clash_scoped_list() -> None:
     specs = coerce.on_resource_clash(
-        [{"policy": "merge", "scope": "image/png|image/jpeg"}]
+        [{"policy": "merge", "datatype": "image/png|image/jpeg"}]
     )
     assert isinstance(specs, list)
     assert isinstance(specs[0], ClashSpec)
@@ -102,7 +102,7 @@ def test_metadata_tables_joins_mapping_alias(tmp_path) -> None:  # type: ignore[
         [
             {
                 "path": str(csv_path),
-                "row_frequency": "fileset[image/png]",
+                "rows": "fileset[image/png]",
                 "joins": {"ImagePath": '=HYPERLINK("{subject_uid}")'},
             }
         ]

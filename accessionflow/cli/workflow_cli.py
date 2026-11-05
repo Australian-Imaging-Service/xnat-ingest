@@ -98,8 +98,13 @@ def check_cmd(spec_path: Path, params: ty.Sequence[str]) -> None:
             else:
                 default_desc = "required" if p.required else f"default: {p.default!r}"
             secret_marker = " [secret]" if p.secret else ""
+            prefect_marker = (
+                " [prefect-param]" if p.name in spec.deferred_defaults else ""
+            )
             desc = f" - {p.description}" if p.description else ""
-            click.echo(f"    - {p.name} ({default_desc}){secret_marker}{desc}")
+            click.echo(
+                f"    - {p.name} ({default_desc}){secret_marker}{prefect_marker}{desc}"
+            )
     for stage in resolve_order(spec.stages):
         deps = ", ".join(sorted(dependencies(stage)))
         arrow = f"  <- {deps}" if deps else ""

@@ -18,6 +18,15 @@ argument, resolved through the same ``params:`` mechanism as everything else. Th
 keeps the schema backend-agnostic - a future non-XNAT upload stage just declares
 its own ``args:`` shape, with no spec format change needed.
 
+A ``${NAME}`` reference used as the *whole value* of a plain (non-coerced -
+``Stage.coerced_args``) ``args:`` entry, for a **non-secret** declared param, is
+left unresolved here and instead becomes a real Prefect flow parameter (see
+``workflow.runner``) - editable/re-triggerable via Prefect's own UI/API/orchestration
+DB. Everything else (a ``secret: true`` param, a placeholder inside a coerced/
+structured arg, one embedded in a larger string, or an undeclared name) is resolved
+eagerly, here, and baked into the spec - most importantly, a secret is never passed
+through Prefect's parameter store. See :func:`_resolve_stage_args`.
+
 ``load_spec()`` fully validates a spec - including resolving 'extends', param/env
 placeholders, stage dependency cycles, unknown stage references, and (by
 dry-running each stage's kwarg builder) unknown/malformed ``args:`` - without
@@ -46,13 +55,19 @@ __all__ = [
     "StageSpec",
     "WorkflowSpec",
     "load_spec",
+    "NO_DEFAULT",
+    "substitute_deferred_params",
 ]
 
 _PLACEHOLDER_RE = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}")
+# A string that is *only* one placeholder, with nothing else around it - only this
+# shape can be deferred to a Prefect parameter (see module docstring); a value that
+# merely contains a placeholder alongside other text is always resolved eagerly.
+_WHOLE_PLACEHOLDER_RE = re.compile(r"^\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}$")
 
 # Sentinel distinguishing "no default given" (-> the param is required) from a real
 # falsy default such as `None`/`""`.
-_NO_DEFAULT: ty.Any = object()
+NO_DEFAULT: ty.Any = object()
 
 # Dummy paths used only to dry-run a stage's kwarg builder at validation time - never
 # touched on disk, since build_kwargs functions are pure (no I/O of their own).
@@ -69,12 +84,12 @@ class ParamSpec:
 
     name: str
     description: ty.Optional[str] = None
-    default: ty.Any = _NO_DEFAULT
+    default: ty.Any = NO_DEFAULT
     secret: bool = False
 
     @property
     def required(self) -> bool:
-        return self.default is _NO_DEFAULT
+        return self.default is NO_DEFAULT
 
 
 def _parse_params(raw: ty.Any) -> ty.Dict[str, ParamSpec]:
@@ -87,7 +102,7 @@ def _parse_params(raw: ty.Any) -> ty.Dict[str, ParamSpec]:
         params[name] = ParamSpec(
             name=name,
             description=entry.get("description"),
-            default=entry.get("default", _NO_DEFAULT),
+            default=entry.get("default", NO_DEFAULT),
             secret=bool(entry.get("secret", False)),
         )
     return params
@@ -152,6 +167,85 @@ def _resolve_placeholders(
     return value
 
 
+def substitute_deferred_params(
+    value: ty.Any, resolved: ty.Mapping[str, ty.Any]
+) -> ty.Any:
+    """Replace a whole-value ``${NAME}`` placeholder (recursively) with
+    ``resolved[NAME]`` wherever ``NAME`` is a key of ``resolved``, leaving anything
+    else untouched. Used by ``workflow.runner`` to substitute a deferred (Prefect
+    flow parameter) placeholder with its real value at actual run time - the
+    counterpart to :func:`_resolve_stage_args` deferring it here in the first
+    place."""
+    if isinstance(value, str):
+        m = _WHOLE_PLACEHOLDER_RE.match(value)
+        if m and m.group("name") in resolved:
+            return resolved[m.group("name")]
+        return value
+    if isinstance(value, list):
+        return [substitute_deferred_params(v, resolved) for v in value]
+    if isinstance(value, dict):
+        return {k: substitute_deferred_params(v, resolved) for k, v in value.items()}
+    return value
+
+
+def _resolve_stage_args(
+    args: ty.Dict[str, ty.Any],
+    coerced_keys: ty.FrozenSet[str],
+    params: ty.Dict[str, ParamSpec],
+    overrides: ty.Dict[str, str],
+    path: str,
+) -> ty.Tuple[ty.Dict[str, ty.Any], ty.Set[str]]:
+    """Resolve one stage's ``args:``, leaving a whole-value ``${NAME}`` placeholder
+    unresolved (deferred to a Prefect flow parameter - see module docstring) when
+    ``NAME`` names a non-secret declared param and the placeholder sits directly
+    under a *plain* (non-``coerced_keys``) argument - at any nesting depth, so e.g.
+    ``input_paths: ["${input_dir}"]`` still defers ``input_dir``. Returns the
+    resolved ``args`` dict plus the set of deferred param names found."""
+    deferred: ty.Set[str] = set()
+
+    def _resolve(value: ty.Any, coerced: bool, subpath: str) -> ty.Any:
+        if isinstance(value, str):
+            match = _WHOLE_PLACEHOLDER_RE.match(value)
+            if match and not coerced:
+                name = match.group("name")
+                pspec = params.get(name)
+                if pspec is not None and not pspec.secret:
+                    deferred.add(name)
+                    return value
+            return _resolve_placeholders(value, subpath, params, overrides)
+        if isinstance(value, list):
+            return [
+                _resolve(v, coerced, f"{subpath}[{i}]") for i, v in enumerate(value)
+            ]
+        if isinstance(value, dict):
+            return {k: _resolve(v, coerced, f"{subpath}.{k}") for k, v in value.items()}
+        return value
+
+    resolved = {
+        key: _resolve(value, key in coerced_keys, f"{path}.{key}")
+        for key, value in args.items()
+    }
+    return resolved, deferred
+
+
+def _resolve_deferred_default(
+    name: str, params: ty.Dict[str, ParamSpec], overrides: ty.Dict[str, str]
+) -> ty.Any:
+    """The value a deferred param's Prefect flow parameter should default to: the
+    same ``--param`` > environment > declared-``default:`` precedence as an eager
+    ``${NAME}``, except a required param with none of those available returns
+    ``NO_DEFAULT`` instead of raising - Prefect enforces "required" itself when the
+    flow is actually triggered, which for ``serve``/``deploy`` may be well after
+    load time (``run``, which executes immediately, still requires a value - see
+    ``workflow.runner.run_workflow``)."""
+    if name in overrides:
+        return overrides[name]
+    if name in os.environ:
+        return os.environ[name]
+    pspec = params[name]
+    return pspec.default if not pspec.required else NO_DEFAULT
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
@@ -205,6 +299,11 @@ class WorkflowSpec:
     schedule: ty.Optional[str] = None
     source: ty.Optional[Path] = None
     params: ty.Dict[str, ParamSpec] = attrs.field(factory=dict)
+    # Non-secret params deferred to a real Prefect flow parameter (see module
+    # docstring), mapped to their resolved default - or NO_DEFAULT if none of
+    # --param/the environment/a declared default supplied one (a required Prefect
+    # parameter, left for 'serve'/'deploy' to ask for at trigger time).
+    deferred_defaults: ty.Dict[str, ty.Any] = attrs.field(factory=dict)
     # Deliberately no 'work_dir' here: it's per-host scratch space, not part of
     # what the pipeline does, so it's a --work-dir CLI/API argument (see
     # workflow.runner.resolve_work_dir) rather than something declared in the
@@ -219,7 +318,12 @@ def _require_mapping(value: ty.Any, path: str) -> dict:
     return value
 
 
-def _stage_spec(raw: ty.Any, index: int) -> StageSpec:
+def _stage_spec(
+    raw: ty.Any,
+    index: int,
+    params: ty.Dict[str, ParamSpec],
+    overrides: ty.Dict[str, str],
+) -> ty.Tuple[StageSpec, ty.Set[str]]:
     path = f"stages[{index}]"
     raw = dict(_require_mapping(raw, path))
     try:
@@ -247,16 +351,24 @@ def _stage_spec(raw: ty.Any, index: int) -> StageSpec:
     args = _require_mapping(raw.pop("args", {}) or {}, f"{path} ('{name}').args")
     if raw:
         raise WorkflowSpecError(f"{path} ('{name}'): unknown field(s) {sorted(raw)}")
-    return StageSpec(
+    resolved_args, deferred = _resolve_stage_args(
+        dict(args),
+        STAGES[command].coerced_args,
+        params,
+        overrides,
+        f"{path} ('{name}').args",
+    )
+    stage = StageSpec(
         name=name,
         command=command,
         input=input_,
         after=list(after),
-        args=dict(args),
+        args=resolved_args,
         enabled=bool(enabled),
         retries=int(retries),
         retry_delay_seconds=float(retry_delay_seconds),
     )
+    return stage, deferred
 
 
 def _strip_reserved(kwargs: dict) -> dict:
@@ -267,16 +379,22 @@ def _strip_reserved(kwargs: dict) -> dict:
     return {k: v for k, v in kwargs.items() if not k.startswith("_")}
 
 
-def _validate_stage_args(stage: StageSpec) -> None:
+def _validate_stage_args(stage: StageSpec, deferred_names: ty.Set[str]) -> None:
     """Dry-run the stage's kwarg builder against placeholder paths (no filesystem
     or network I/O) to catch bad composite args (an unrecognised mime-type, an
     invalid --on-resource-clash policy, a missing upload 'server', ...) and unknown
     'args:' keys at load time rather than only surfacing them when the workflow
-    actually runs."""
+    actually runs. A deferred (Prefect-parameterised) placeholder is stood in for
+    with a dummy value - its real value isn't known until the flow actually runs,
+    but that shouldn't stop everything else about the stage from being checked now.
+    """
     reg = STAGES[stage.command]
     dummy_ctx = StageContext(input_path=_DUMMY_INPUT, output_path=_DUMMY_OUTPUT)
+    dry_run_args = substitute_deferred_params(
+        stage.args, {name: f"__deferred_param_{name}__" for name in deferred_names}
+    )
     try:
-        kwargs = reg.build_kwargs(dict(stage.args), dummy_ctx)
+        kwargs = reg.build_kwargs(dict(dry_run_args), dummy_ctx)
     except Exception as e:
         raise WorkflowSpecError(f"stages ('{stage.name}').args: {e}") from e
     if reg.needs_xnat and "_xnat_connection" not in kwargs:
@@ -285,13 +403,22 @@ def _validate_stage_args(stage: StageSpec) -> None:
             "(and usually 'user'/'password') under its own 'args:'"
         )
     checked = _strip_reserved(kwargs)
-    sig_params = set(inspect.signature(reg.api_fn).parameters)
-    unknown = set(checked) - sig_params
+    sig = inspect.signature(reg.api_fn)
+    unknown = set(checked) - set(sig.parameters)
     if unknown:
         raise WorkflowSpecError(
             f"stages ('{stage.name}').args: unknown argument(s) for command "
             f"'{stage.command}': {sorted(unknown)}"
         )
+    try:
+        # injected_args (e.g. upload's 'xnat_repo') are supplied by run_stage()
+        # itself, not build_kwargs() - stand a dummy in for them so a required
+        # argument the workflow machinery provides isn't flagged as missing.
+        sig.bind(**checked, **dict.fromkeys(reg.injected_args))
+    except TypeError as e:
+        raise WorkflowSpecError(
+            f"stages ('{stage.name}').args: {e} for command '{stage.command}'"
+        ) from e
 
 
 def load_spec(
@@ -315,10 +442,15 @@ def load_spec(
 
     params = _parse_params(raw.pop("params", None))
     overrides = dict(param_overrides or {})
-    raw = _resolve_placeholders(raw, "$", params, overrides)
 
-    name = raw.pop("name", path.stem)
+    # name/schedule are plain top-level scalars, always resolved eagerly - a
+    # workflow's own name or cron schedule isn't a per-run Prefect parameter.
+    name = _resolve_placeholders(
+        raw.pop("name", path.stem), "$.name", params, overrides
+    )
     schedule = raw.pop("schedule", None)
+    if schedule is not None:
+        schedule = _resolve_placeholders(schedule, "$.schedule", params, overrides)
 
     stages_raw = raw.pop("stages", None)
     if not stages_raw:
@@ -329,7 +461,12 @@ def load_spec(
     if raw:
         raise WorkflowSpecError(f"$: unknown top-level field(s) {sorted(raw)}")
 
-    stages = [_stage_spec(s, i) for i, s in enumerate(stages_raw)]
+    stages = []
+    deferred_names: ty.Set[str] = set()
+    for i, s in enumerate(stages_raw):
+        stage, stage_deferred = _stage_spec(s, i, params, overrides)
+        stages.append(stage)
+        deferred_names.update(stage_deferred)
 
     names = [s.name for s in stages]
     dupes = {n for n in names if names.count(n) > 1}
@@ -349,7 +486,11 @@ def load_spec(
     dag.resolve_order(stages)  # raises on a dependency cycle
 
     for stage in stages:
-        _validate_stage_args(stage)
+        _validate_stage_args(stage, deferred_names)
+
+    deferred_defaults = {
+        n: _resolve_deferred_default(n, params, overrides) for n in deferred_names
+    }
 
     return WorkflowSpec(
         name=name,
@@ -357,4 +498,5 @@ def load_spec(
         schedule=schedule,
         source=path,
         params=params,
+        deferred_defaults=deferred_defaults,
     )

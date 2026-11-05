@@ -94,10 +94,10 @@ param is a plain string. Each entry takes:
     supplies it. Omit it to make the param **required**.
 
 ``secret``
-    Cosmetic only — masks the value (and a literal ``default:``, if given) in
-    ``check`` output. It does not change how the value is stored or resolved; use an
-    environment variable, not a literal ``default:``, for anything actually
-    sensitive.
+    Marks the param as one that must never be handed to Prefect's own parameter
+    store (see "Two kinds of parameter" below) — it also masks the value (and a
+    literal ``default:``, if given) in ``check`` output. Use an environment
+    variable, not a literal ``default:``, for anything actually sensitive.
 
 A ``${NAME}`` reference resolves in this order:
 
@@ -107,8 +107,9 @@ A ``${NAME}`` reference resolves in this order:
 2. A same-named **environment variable** — so a k8s Secret mounted the ordinary way
    (``env:``/``envFrom:``) just works, no CLI flag needed.
 3. The param's declared ``default:``.
-4. Otherwise, ``check``/``run``/``serve``/``deploy`` fail immediately with an error
-   naming the missing parameter and its description.
+4. Otherwise: for a plain, non-secret param this isn't an error yet (see below) —
+   for anything else, ``check``/``run``/``serve``/``deploy`` fail immediately with
+   an error naming the missing parameter and its description.
 
 A ``${NAME}`` used somewhere in the spec but never declared under ``params:`` still
 resolves via ``--param``/the environment (step 1/2 above) — declaring it just adds a
@@ -119,6 +120,39 @@ anything else site-specific — a metadata table CSV path, say) is a param like 
 other, referenced as ``"${input_dir}"`` wherever a literal path would otherwise
 appear, so the same spec file runs unmodified at every site with different
 ``--param``/environment values.
+
+Two kinds of parameter: baked-in vs. a real Prefect parameter
+-----------------------------------------------------------------
+
+Not every ``${NAME}`` resolves the same way. Used as the *whole value* of a plain
+argument (one that isn't parsed into a structured type — see the composite-argument
+section below) for a **non-secret** param, it isn't resolved when the spec loads at
+all — it becomes a genuine Prefect flow parameter instead, with the resolved value
+above (or the declared default) as its default:
+
+.. code-block:: console
+
+    $ xnat-ingest workflow check minimal-dicom.yaml -p ... | grep prefect-param
+        - input_dir (required) [prefect-param] - Root directory of the scanner export to ingest
+        - xnat_server (required) [prefect-param] - URL of the XNAT server to upload to
+
+That means it shows up as a normal, named/typed parameter in Prefect's own UI/API/
+orchestration database — visible in run history, and editable on the deployment
+without redeploying, the same as any other Prefect flow's parameters. Everything
+else — a ``secret: true`` param (regardless of where it's used), a placeholder
+inside a structured/coerced argument (a datatype, an ``IDSpec``, ...), one embedded
+in a larger string rather than filling the whole value, or an undeclared name — is
+resolved once, here, from ``--param``/the environment/the declared default, and
+baked into the flow's closure. Most importantly, this is what keeps a secret out of
+Prefect's parameter store entirely: it is never data Prefect sees, stores, or
+displays.
+
+This is also why a required non-secret param (``xnat_server (required)`` above) is
+fine to leave unresolved through ``check`` and ``deploy`` — Prefect enforces
+"required" itself, when the deployment is actually triggered, the same way it would
+for any of its own flow parameters. ``run`` is the exception: since a one-shot run
+executes immediately with no later trigger to ask for anything, it still requires a
+concrete value for every parameter up front.
 
 No implicit backend config
 ---------------------------
@@ -232,19 +266,19 @@ of small mappings; a single-field flag can stay a bare string or a list:
 
     args:
       session:
-        - specifier: "{subject_uid}_{CaptureDate:%Y%m%d}"
+        - expr: "{subject_uid}_{CaptureDate:%Y%m%d}"
       scan:
-        - specifier: "dermoscopy-{LesionID}"
+        - expr: "dermoscopy-{LesionID}"
           datatype: "image/png|image/jpeg"
       on_resource_clash:
         - policy: merge
-          scope: "image/png|image/jpeg"
+          datatype: "image/png|image/jpeg"
       path_metadata_regex:
-        - regex: '.*/(?P<subject_uid>[\w-]+)/(?P<filename>[\w-]+\.(?:png|jpe?g))'
+        - pattern: '.*/(?P<subject_uid>[\w-]+)/(?P<filename>[\w-]+\.(?:png|jpe?g))'
           datatype: "image/png|image/jpeg"
       metadata_tables:
         - path: /data/lesion-table.csv
-          row_frequency: "fileset[image/png|image/jpeg]"
+          rows: "fileset[image/png|image/jpeg]"
           joins:
             ImagePath: '=HYPERLINK("{subject_uid}/{filename}")'
 
@@ -286,16 +320,20 @@ the target server explicitly, rather than relying on whatever Prefect profile
 happens to be active. They're accepted by both the CLI and the
 ``xnat_ingest.api.workflow_api.deploy`` function directly.
 
-Every ``${NAME}`` placeholder (including credentials) is resolved once, at deploy
-time, from ``--param``/the environment, and baked into that deployment's flow
-closure — the same way ``run``/``serve`` resolve them, and deliberately **not** by
-making them Prefect flow parameters. Prefect stores submitted parameter values in
-its own orchestration database and surfaces them in its UI, which is the wrong
-place for a secret like ``xnat_password`` to live; resolving before the flow is
-even built means one never reaches Prefect at all. The consequence is that rotating
-a credential means redeploying with a new ``--param``/environment value, rather
-than updating a value the server holds — a deliberate trade **against** ordinary
-Prefect Deployment.parameters usage, made for that reason.
+Secrets (``xnat_password`` above) are resolved once, at deploy time, from
+``--param``/the environment, and baked into that deployment's flow closure — never
+becoming a Prefect flow parameter, so a secret never reaches Prefect's own
+orchestration database/UI at all (see "Two kinds of parameter" above). The
+consequence is that rotating a secret means redeploying with a new
+``--param``/environment value, rather than updating a value the server holds.
+
+Every other (non-secret, plain-argument) param — ``xnat_server``/``xnat_user``
+above — becomes a real Prefect deployment parameter instead: the value resolved at
+deploy time (or the declared default) becomes its default, editable/re-triggerable
+later from Prefect's own UI/API with no redeploy needed, same as any other Prefect
+flow's parameters. One left with no resolvable value at deploy time is simply a
+required parameter with no default — Prefect asks for it when the deployment is
+actually triggered.
 
 ``deploy`` applies the same ``param_overrides``/``--work-dir``/``--work-pool`` to
 every spec matched by ``--pattern`` (default ``*.yaml``) under ``specs_dir``. A

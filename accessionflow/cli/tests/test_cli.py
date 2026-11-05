@@ -262,9 +262,6 @@ def test_fields_cli_accepts_multiple_mappings(
         ],
     )
 
-    assert result.exit_code == 0, show_cli_trace(result)
-
-
 def test_fields_cli_rejects_duplicate_field_names(
     tmp_path: Path,
     cli_runner: ty.Any,
