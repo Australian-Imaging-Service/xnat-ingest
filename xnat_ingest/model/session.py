@@ -2248,6 +2248,7 @@ class ImagingSession:
         conversion_map: (
             dict[type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
+        metadata_allowlist: ty.Collection[str] | None = None,
         include: ty.Sequence[type[FileSet]] = (),
     ) -> tuple[Self, Path]:
         r"""Saves the session to a directory. The session will be saved to a directory
@@ -2267,6 +2268,17 @@ class ImagingSession:
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
+        collation_map : dict[type[FileSet], FileSet.CopyCollation] or None
+            maps file-set types to the collation mode used when copying matching
+            resources. If None, the file format's default collation behavior is used.
+        conversion_map : dict[type[FileSet], tuple[type[FileSet], dict[str, str]]] or None
+            maps source file-set types to a target type and conversion options. Matching
+            resources are converted before they are saved. If None, no conversion is
+            performed.
+        metadata_allowlist : Collection[str] or None
+            metadata keys to include in the JSON file. If None, all metadata is
+            written. An empty collection writes an empty metadata object. Filtering
+            affects only the saved data; the in-memory metadata is unchanged.
         include : sequence[type[FileSet]], optional
             only save resources matching at least one of these datatypes. An empty
             sequence saves all resources.
@@ -2311,17 +2323,21 @@ class ImagingSession:
                 conversion_map=conversion_map,
                 include=include,
                 build_dir=dest_dir / "__build__",
+                metadata_allowlist=metadata_allowlist,
             )
             saved_scan.session = saved
             saved.scans[saved_scan.id] = saved_scan
         for resource in included_session_resources:
             saved_resource = resource.save(
-                session_dir, copy_mode=copy_mode, build_dir=dest_dir / "__build__"
+                session_dir,
+                copy_mode=copy_mode,
+                build_dir=dest_dir / "__build__",
+                metadata_allowlist=metadata_allowlist,
             )
             saved.session_resources[saved_resource.name] = saved_resource
         logger.debug("Saving session metadata")
         self.metadata[self.UID_METADATA_KEY] = self.uid
-        self.metadata.save(session_dir)
+        self.metadata.save(session_dir, allowlist=metadata_allowlist)
         if self.fields:
             self.fields.save(session_dir)
             saved.fields.update(dict(self.fields))

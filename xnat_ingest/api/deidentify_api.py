@@ -33,6 +33,7 @@ def deidentify(
     unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
     max_workers: int | None = None,
+    metadata_allowlist: ty.Collection[str] = {ImagingSession.UID_METADATA_KEY},
 ) -> list[str]:
     """
     Parameters
@@ -135,11 +136,17 @@ def deidentify(
                         available_projects
                     )
                     if final_dir.exists():
-                        deidentified_session.save(output_dir, available_projects)
+                        deidentified_session.save(
+                            output_dir,
+                            available_projects,
+                            metadata_allowlist=metadata_allowlist,
+                        )
                     else:
                         work_dir.mkdir(parents=True)
                         _, built_dir = deidentified_session.save(
-                            work_dir, available_projects
+                            work_dir,
+                            available_projects,
+                            metadata_allowlist=metadata_allowlist,
                         )
                         os.replace(built_dir, final_dir)
                 finally:

@@ -107,6 +107,7 @@ class ImagingResource:
         conversion_map: (
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
+        metadata_allowlist: ty.Collection[str] | None = None,
         calculate_checksums: bool = True,
         overwrite: bool | None = None,
         build_dir: Path | None = None,
@@ -126,6 +127,10 @@ class ImagingResource:
             A mapping of source FileSet types to (target FileSet types, conversion options).
             When a resource matches a source type, it will be converted to the target type during save,
             with the options passed through to ``convert()``.
+        metadata_allowlist : Collection[str] or None
+            Metadata keys to include in the JSON file. If None, all metadata is
+            written. An empty collection writes an empty metadata object. Filtering
+            affects only the saved data; the in-memory metadata is unchanged.
         calculate_checksums: bool
             Whether to calculate the checksums of the files
         overwrite: bool
@@ -179,6 +184,8 @@ class ImagingResource:
             try:
                 loaded = self.load(resource_dir, require_manifest=False)
                 if loaded.checksums == checksums:
+                    if metadata_allowlist is not None:
+                        self.metadata.save(resource_dir, allowlist=metadata_allowlist)
                     return loaded
                 elif overwrite or (
                     overwrite is None and self.newer_than_or_equal(loaded)
@@ -253,7 +260,7 @@ class ImagingResource:
             )
             manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
             self.write_manifest(built, manifest)
-            self.metadata.save(built)
+            self.metadata.save(built, allowlist=metadata_allowlist)
             relative_paths = [p.relative_to(built) for p in saved_fileset.fspaths]
             backup = temporary / "previous"
             if resource_dir.exists():

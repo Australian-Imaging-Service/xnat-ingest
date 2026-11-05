@@ -63,7 +63,7 @@ class Metadata(ty.Mapping[str, ty.Any]):
             self._dct.update(self._obj.load_metadata())
             self._read = True
 
-    def save(self, data_dir: Path) -> None:
+    def save(self, data_dir: Path, allowlist: ty.Collection[str] | None = None) -> None:
         """Write the metadata file, but ONLY if its content would change.
 
         WHY THE COMPARISON. There are three call sites, not three writes:
@@ -92,9 +92,15 @@ class Metadata(ty.Mapping[str, ty.Any]):
         # and defeat the short-circuit, and writing it would replace a complete file
         # with a partial one.
         self._ensure_read()
+        # Filter only the serialized copy; keep the in-memory metadata intact.
+        metadata = (
+            self._dct
+            if allowlist is None
+            else {key: value for key, value in self._dct.items() if key in allowlist}
+        )
         # 'default=str' handles values that aren't natively JSON-serialisable but
         # have a sensible string representation, e.g. pydicom's PersonName
-        serialised = json.dumps(self._dct, default=str, indent=4)
+        serialised = json.dumps(metadata, default=str, indent=4)
         fspath = data_dir / self.FNAME
         try:
             if fspath.read_text() == serialised:
