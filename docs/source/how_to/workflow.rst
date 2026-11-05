@@ -13,10 +13,10 @@ maintained by hand across however many container definitions.
 `Prefect <https://www.prefect.io/>`_: one process, one file, and every composite
 option expressed as real YAML structure rather than a packed string. It is
 deliberately **not** a general orchestration language — no expressions, no shell
-steps, no templating beyond ``${ENV_VAR}`` interpolation for secrets. A spec is a flat
-list of xnat-ingest stages chained by data dependencies; everything else under a
-stage's ``args:`` is exactly the keyword arguments of the matching
-:doc:`../api` function, just spelled in YAML.
+steps, no templating beyond ``${NAME}`` placeholders resolved against declared
+parameters. A spec is a flat list of xnat-ingest stages chained by data dependencies;
+everything else under a stage's ``args:`` is exactly the keyword arguments of the
+matching :doc:`../api` function, just spelled in YAML.
 
 Install the extra this needs — it's optional, so plain CLI usage never requires
 Prefect:
@@ -31,18 +31,23 @@ full non-DICOM case with every composite argument:
 .. code-block:: yaml
 
     name: minimal-dicom
-    work_dir: /var/lib/xnat-ingest/work/minimal-dicom
 
-    xnat:
-      server: https://xnat.example.org
-      user: ${XNAT_USER}
-      password: ${XNAT_PASSWORD}
+    params:
+      input_dir:
+        description: "Root directory of the scanner export to ingest"
+      xnat_server:
+        description: "URL of the XNAT server to upload to"
+      xnat_user:
+        description: "XNAT username"
+      xnat_password:
+        description: "XNAT password"
+        secret: true
 
     stages:
       - name: group
         command: group
         args:
-          input_paths: [/data/scanner-export]
+          input_paths: ["${input_dir}"]
 
       - name: assign
         command: assign
@@ -55,12 +60,113 @@ full non-DICOM case with every composite argument:
       - name: upload
         command: upload
         input: assign
+        args:
+          server: "${xnat_server}"
+          user: "${xnat_user}"
+          password: "${xnat_password}"
 
 .. code-block:: console
 
-    $ xnat-ingest workflow check minimal-dicom.yaml   # validate, no Prefect needed
-    $ xnat-ingest workflow run   minimal-dicom.yaml    # run once, synchronously
-    $ xnat-ingest workflow serve minimal-dicom.yaml    # long-running deployment
+    $ xnat-ingest workflow check minimal-dicom.yaml \
+        -p input_dir=/data/scanner-export \
+        -p xnat_server=https://xnat.example.org \
+        -p xnat_user=scanner-uploader \
+        -p xnat_password="$XNAT_PASSWORD"
+    $ xnat-ingest workflow run   minimal-dicom.yaml   # run once, synchronously
+    $ xnat-ingest workflow serve minimal-dicom.yaml   # long-running local deployment
+
+``check`` never requires Prefect (or the parameters to resolve to anything real —
+just to resolve at all); ``run``/``serve``/``deploy`` do.
+
+Declaring what a workflow needs: ``params:``
+---------------------------------------------
+
+The top-level ``params:`` block names every ``${NAME}`` placeholder a spec expects
+supplied per-deployment — the same idea as a GitHub Actions ``workflow_dispatch``
+``inputs:`` block or an Argo ``parameters:`` list, kept deliberately simple: every
+param is a plain string. Each entry takes:
+
+``description``
+    Shown by ``xnat-ingest workflow check``.
+
+``default``
+    If given, the param is optional and falls back to this when nothing else
+    supplies it. Omit it to make the param **required**.
+
+``secret``
+    Cosmetic only — masks the value (and a literal ``default:``, if given) in
+    ``check`` output. It does not change how the value is stored or resolved; use an
+    environment variable, not a literal ``default:``, for anything actually
+    sensitive.
+
+A ``${NAME}`` reference resolves in this order:
+
+1. ``--param``/``-p name=value`` on the ``check``/``run``/``serve``/``deploy``
+   command line — always wins, useful for local testing or a k8s ``args:`` entry
+   that reads a Secret via ``$(SECRET_ENV_VAR)`` substitution.
+2. A same-named **environment variable** — so a k8s Secret mounted the ordinary way
+   (``env:``/``envFrom:``) just works, no CLI flag needed.
+3. The param's declared ``default:``.
+4. Otherwise, ``check``/``run``/``serve``/``deploy`` fail immediately with an error
+   naming the missing parameter and its description.
+
+A ``${NAME}`` used somewhere in the spec but never declared under ``params:`` still
+resolves via ``--param``/the environment (step 1/2 above) — declaring it just adds a
+default and a clearer error if it's missing.
+
+This is also how a spec stays transportable between sites: ``input_dir`` (and
+anything else site-specific — a metadata table CSV path, say) is a param like any
+other, referenced as ``"${input_dir}"`` wherever a literal path would otherwise
+appear, so the same spec file runs unmodified at every site with different
+``--param``/environment values.
+
+No implicit backend config
+---------------------------
+
+There is no top-level ``xnat:`` block that gets silently wired into every ``upload``
+stage. Credentials are plain ``args:`` on the ``upload`` stage(s) that need them,
+resolved through the same ``params:`` mechanism as everything else:
+
+.. code-block:: yaml
+
+    - name: upload
+      command: upload
+      input: deidentify
+      args:
+        server: "${xnat_server}"
+        user: "${xnat_user}"
+        password: "${xnat_password}"
+
+This keeps the spec format backend-agnostic — a future non-XNAT upload stage just
+declares its own ``args:`` shape, with no change to the spec schema — and means a
+workflow with two ``upload`` stages targeting different servers just gives each its
+own ``server``/``user``/``password``, explicitly, rather than assuming "the one
+configured backend".
+
+Sharing config between specs, where it's actually worth it, is ``extends:`` (see
+below) — but reach for it deliberately: the shipped ``example-specs/`` deliberately
+keep the (small) duplication of their ``xnat_server``/``xnat_user``/
+``xnat_password`` declarations rather than factoring out a shared file, so each spec
+stays fully self-contained and readable on its own.
+
+Where output gets staged: ``--work-dir``
+-------------------------------------------
+
+There is likewise no ``work_dir:``/``${work_dir}`` in the spec's own YAML — where
+each stage's output lands on *this* host is a deployment/runtime concern, not part
+of what the pipeline does, so the same spec runs on a different host with a
+different ``--work-dir`` completely unmodified. ``run``/``serve``/``deploy`` all
+accept it:
+
+.. code-block:: console
+
+    $ xnat-ingest workflow run minimal-dicom.yaml --work-dir /var/lib/xnat-ingest/work
+
+Every stage without its own ``args.output_dir`` gets a subdirectory under
+``<work-dir>/<workflow-name>/<stage-name>`` — namespaced by workflow name so several
+specs (e.g. everything ``deploy``ed from one directory) can share one ``--work-dir``
+root without their outputs colliding. Left unset, it defaults to
+``.xnat-ingest-<name>`` next to the spec file.
 
 Spec format
 -----------
@@ -68,22 +174,14 @@ Spec format
 ``name``
     Used as the Prefect flow/deployment name. Defaults to the spec file's stem.
 
-``work_dir``
-    Where each stage's output lands, one subdirectory per stage
-    (``<work_dir>/<stage-name>``), unless a stage sets its own ``args.output_dir``.
-    Only the first stage's real input and the final ``upload`` target need spelling
-    out anywhere in the spec. Defaults to ``.xnat-ingest-<name>`` next to the spec
-    file.
-
-``xnat``
-    ``server``/``user``/``password``/``verify_ssl``, required by any ``upload``
-    stage. Interpolate secrets rather than inlining them — see below.
+``params``
+    See above.
 
 ``schedule``
-    A cron expression, used by ``workflow serve`` (ignored by ``run``/``check``).
-    Schedule the whole workflow this way rather than looping individual stages —
-    ``--loop`` (see :ref:`Deployment tips`) is a plain-CLI mechanism and isn't used
-    here.
+    A cron expression, used by ``workflow serve``/``workflow deploy`` (ignored by
+    ``run``/``check``). Schedule the whole workflow this way rather than looping
+    individual stages — ``--loop`` (see :ref:`Deployment tips`) is a plain-CLI
+    mechanism and isn't used here.
 
 ``stages``
     A list of:
@@ -121,9 +219,8 @@ Spec format
 
 ``extends``
     Path (relative to this file) to another spec to deep-merge underneath this
-    one's own top-level keys, so several workflows can share one ``xnat:`` block
-    (or ``work_dir``, etc.) without duplicating it while staying independently
-    deployable. See ``example-specs/common.yaml``.
+    one's own top-level keys. Use sparingly (see above) — genuinely shared
+    ``params:`` declarations are the main legitimate case.
 
 Expressing composite arguments
 -------------------------------
@@ -159,12 +256,51 @@ conversion (and validates every ``args:`` key against the target function's actu
 parameters) without touching the filesystem or network, so a typo'd datatype or an
 unknown argument is caught before anything runs.
 
-Secrets
--------
+Deploying to a Prefect server
+------------------------------
 
-``${ENV_VAR}`` is the only templating a spec supports, resolved once at load time
-after any ``extends`` merge — so a shared ``xnat:`` block in ``common.yaml`` can
-reference ``${XNAT_PASSWORD}`` once and every workflow that extends it just needs
-that variable set in its own environment. Never inline a password — an undefined
-``${VAR}`` reference fails validation immediately rather than being passed through
-literally.
+``workflow run``/``workflow serve`` execute locally, in the calling process.
+``workflow deploy`` instead registers a spec (or every spec in a directory) as a
+proper Prefect deployment against a remote server:
+
+.. code-block:: console
+
+    $ xnat-ingest workflow deploy example-specs/ \
+        --prefect-api-url https://prefect.example.org/api \
+        --work-pool xnat-ingest \
+        --work-dir /var/lib/xnat-ingest/work \
+        -p xnat_server=https://xnat.example.org \
+        -p xnat_user=scanner-uploader \
+        -p xnat_password="$XNAT_PASSWORD"
+
+This is registration only — it does **not** start anything. A Prefect worker
+(``prefect worker start --pool xnat-ingest``), running somewhere with network
+access to the relevant input/work/XNAT paths, must be polling that same work pool
+for a deployment to ever actually execute. Create the work pool ahead of time if it
+doesn't already exist (e.g. ``prefect work-pool create xnat-ingest --type process``
+for a worker that runs flows as local subprocesses).
+
+``--prefect-api-url``/``--prefect-api-key`` (also settable via the standard
+``PREFECT_API_URL``/``PREFECT_API_KEY`` environment variables) point ``deploy`` at
+the target server explicitly, rather than relying on whatever Prefect profile
+happens to be active. They're accepted by both the CLI and the
+``xnat_ingest.api.workflow_api.deploy`` function directly.
+
+Every ``${NAME}`` placeholder (including credentials) is resolved once, at deploy
+time, from ``--param``/the environment, and baked into that deployment's flow
+closure — the same way ``run``/``serve`` resolve them, and deliberately **not** by
+making them Prefect flow parameters. Prefect stores submitted parameter values in
+its own orchestration database and surfaces them in its UI, which is the wrong
+place for a secret like ``xnat_password`` to live; resolving before the flow is
+even built means one never reaches Prefect at all. The consequence is that rotating
+a credential means redeploying with a new ``--param``/environment value, rather
+than updating a value the server holds — a deliberate trade **against** ordinary
+Prefect Deployment.parameters usage, made for that reason.
+
+``deploy`` applies the same ``param_overrides``/``--work-dir``/``--work-pool`` to
+every spec matched by ``--pattern`` (default ``*.yaml``) under ``specs_dir``. A
+batch that genuinely needs different values per spec (different sites'
+credentials, say) should be deployed with separate ``deploy`` calls rather than one
+covering the whole directory. A spec that fails to load or deploy is logged and
+skipped by default so the rest of the batch still goes through; pass
+``--raise-errors`` to stop at the first failure instead.
