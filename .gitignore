@@ -22,6 +22,6 @@ __pycache__
 *.egg-info
 ~*
 *.venv
-/xnat_ingest/_version.py
+/accessionflow/_version.py
 /dicom data
 /associate data

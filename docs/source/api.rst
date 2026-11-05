@@ -8,21 +8,21 @@ The following functions mirror the command line tools, and can be used to
 evoke the same modular behaviour via a Python workflow.
 
 
-.. autofunction:: xnat_ingest.api.group
+.. autofunction:: accessionflow.api.collate
 
-.. autofunction:: xnat_ingest.api.group_orthanc
+.. autofunction:: accessionflow.api.collate_orthanc
 
-.. autofunction:: xnat_ingest.api.assign
+.. autofunction:: accessionflow.api.label
 
-.. autofunction:: xnat_ingest.api.deidentify
+.. autofunction:: accessionflow.api.deidentify
 
-.. autofunction:: xnat_ingest.api.package
+.. autofunction:: accessionflow.api.package
 
-.. autofunction:: xnat_ingest.api.upload
+.. autofunction:: accessionflow.api.upload
 
-.. autofunction:: xnat_ingest.api.check_upload
+.. autofunction:: accessionflow.api.check_upload
 
-.. autofunction:: xnat_ingest.api.associate
+.. autofunction:: accessionflow.api.attach
 
 
 
@@ -33,14 +33,14 @@ These classes represent an imaging session as it moves through the pipeline stag
 above: a session contains scans, each of which contains one or more resources (e.g.
 the original DICOM files, a derived NIfTI conversion).
 
-.. autoclass:: xnat_ingest.model.session.ImagingSession
+.. autoclass:: accessionflow.model.session.ImagingSession
     :members: uid, project_id, subject_id, session_id, scans, session_resources, run_uid,
-        metadata, from_paths, assign, deidentify, associate_files, save, load
+        metadata, from_paths, label, deidentify, attach_files, save, load
 
-.. autoclass:: xnat_ingest.model.scan.ImagingScan
-    :members: id, type, resources, associated, metadata, save, load
+.. autoclass:: accessionflow.model.scan.ImagingScan
+    :members: id, type, resources, attached, metadata, save, load
 
-.. autoclass:: xnat_ingest.model.resource.ImagingResource
+.. autoclass:: accessionflow.model.resource.ImagingResource
     :members: name, fileset, checksums, scan, metadata, save, load
 
-.. autofunction:: xnat_ingest.model.session.recipe_formats_for
+.. autofunction:: accessionflow.model.session.recipe_formats_for

@@ -1,0 +1,966 @@
+from datetime import datetime
+from pathlib import Path
+
+import click
+import pytest
+from click.testing import CliRunner
+from fileformats.application import Zip
+from fileformats.core import FileSet
+from fileformats.image.raster import Jpeg, Png
+from fileformats.text import Csv, Plain, Tsv
+
+from accessionflow.exceptions import ImagingSessionParseError
+from accessionflow.helpers.arg_types import (
+    SEMICOLON_LIST,
+    ClashSpec,
+    Convert,
+    IDSpec,
+    JoinExpr,
+    MetadataTable,
+    parse_join_exprs,
+    row_frequency_converter,
+    table_file_converter,
+)
+from accessionflow.model.resource import ImagingResource
+from accessionflow.model.scan import ImagingScan
+from accessionflow.model.session import ImagingSession
+
+# ── existing plain-field / slice syntax, unaffected by the new format-string mode ──
+
+
+def test_plain_field() -> None:
+    assert IDSpec("SeriesNumber").get_value({"SeriesNumber": "7"}) == "7"
+
+
+def test_open_ended_slice() -> None:
+    value = IDSpec("ImageType[2:]").get_value(
+        {"ImageType": ["ORIGINAL", "PRIMARY", "FOO", "BAR"]}
+    )
+    assert value == "FOO_BAR"
+
+
+def test_negative_index() -> None:
+    assert IDSpec("ImageType[-1]").get_value({"ImageType": ["A", "B", "C"]}) == "C"
+
+
+def test_plain_field_missing_raises_without_missing_ids() -> None:
+    with pytest.raises(ImagingSessionParseError):
+        IDSpec("SeriesNumber").get_value({})
+
+
+def test_plain_field_missing_uses_placeholder() -> None:
+    missing: dict[str, str] = {}
+    value = IDSpec("SeriesNumber").get_value({}, missing_ids=missing)
+    assert value.startswith("INVALID_MISSING_SERIESNUMBER_")
+    assert missing["SeriesNumber"] == value
+
+
+# ── new format-string mode ──
+
+
+def test_compound_specifier_combines_fields() -> None:
+    spec = IDSpec("{PatientID}_{AccessionNumber}")
+    value = spec.get_value({"PatientID": "subj-01", "AccessionNumber": "42"})
+    # '-' is kept (permitted in XNAT IDs); other punctuation would collapse to '_'
+    assert value == "subj-01_42"
+
+
+def test_date_format_spec_against_live_datetime() -> None:
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    value = spec.get_value(
+        {"PatientID": "subj01", "AcquisitionDate": datetime(2026, 3, 4)}
+    )
+    assert value == "subj01_20260304"
+
+
+def test_date_format_spec_against_json_roundtripped_string() -> None:
+    """Once metadata has round-tripped through JSON (e.g. reloaded by 'label' from
+    the '__METADATA__.json' 'collate' wrote), a date field is a plain string rather
+    than a real datetime - the dateutil fallback should still make %-style formatting
+    work in that case"""
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    value = spec.get_value({"PatientID": "subj01", "AcquisitionDate": "20260304"})
+    assert value == "subj01_20260304"
+
+
+def test_date_format_spec_collapses_list_to_single_formatted_value() -> None:
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    value = spec.get_value(
+        {
+            "PatientID": "subj01",
+            "AcquisitionDate": [
+                "2026-03-04T09:15:00",
+                None,
+                "2026-03-04T14:30:00",
+            ],
+        }
+    )
+    assert value == "subj01_20260304"
+
+
+def test_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    with pytest.raises(
+        ImagingSessionParseError,
+        match=(
+            r"Field 'AcquisitionDate'.*resolves to multiple values "
+            r"after formatting: \['20260304', '20260305'\]"
+        ),
+    ):
+        spec.get_value(
+            {
+                "PatientID": "subj01",
+                "AcquisitionDate": ["2026-03-04", "2026-03-05"],
+            }
+        )
+
+
+def test_non_date_format_spec_collapses_list_to_single_formatted_value() -> None:
+    spec = IDSpec("{PatientID}_{VisitNumber:02d}")
+    value = spec.get_value({"PatientID": "subj01", "VisitNumber": [3, None, 3]})
+    assert value == "subj01_03"
+
+
+def test_non_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
+    spec = IDSpec("{PatientID}_{VisitNumber:02d}")
+    with pytest.raises(
+        ImagingSessionParseError,
+        match=(
+            r"Field 'VisitNumber'.*resolves to multiple values after formatting: "
+            r"\['03', '04'\]"
+        ),
+    ):
+        spec.get_value({"PatientID": "subj01", "VisitNumber": [3, 4]})
+
+
+def test_non_date_string_with_percent_spec_raises() -> None:
+    """A field that genuinely isn't date-like shouldn't silently produce garbage"""
+    spec = IDSpec("{SeriesDescription:%Y%m%d}")
+    with pytest.raises(ValueError):
+        spec.get_value({"SeriesDescription": "AC CT 3.0 SWB HD_FoV"})
+
+
+def test_missing_field_in_compound_specifier_uses_placeholder() -> None:
+    missing: dict[str, str] = {}
+    spec = IDSpec("{PatientID}_{AccessionNumber}")
+    value = spec.get_value({"PatientID": "subj01"}, missing_ids=missing)
+    assert value.startswith("subj01_INVALID_MISSING_ACCESSIONNUMBER_")
+    assert missing["AccessionNumber"] in value
+
+
+def test_missing_field_in_compound_specifier_raises_without_missing_ids() -> None:
+    spec = IDSpec("{PatientID}_{AccessionNumber}")
+    with pytest.raises(ImagingSessionParseError):
+        spec.get_value({"PatientID": "subj01"})
+
+
+def test_missing_date_field_with_percent_spec_uses_placeholder() -> None:
+    """A missing field with a strftime-style spec shouldn't itself crash - the
+    placeholder needs to tolerate being substituted into a '%...' format spec"""
+    missing: dict[str, str] = {}
+    spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
+    value = spec.get_value({"PatientID": "subj01"}, missing_ids=missing)
+    assert value.startswith("subj01_INVALID_MISSING_ACQUISITIONDATE_")
+
+
+def test_unreferenced_non_identifier_key_is_harmless() -> None:
+    """A metadata dict containing a key that isn't a valid identifier (e.g. DICOM's
+    all-digit fallback name for a private/unnamed tag) shouldn't break a compound
+    specifier that doesn't reference it"""
+    spec = IDSpec("{PatientID}")
+    value = spec.get_value({"PatientID": "subj01", "00100010": "private tag value"})
+    assert value == "subj01"
+
+
+def test_directly_referencing_all_digit_key_raises_clearly() -> None:
+    """Python's format-string syntax always treats an all-digit field name as a
+    positional index rather than a keyword lookup, so this can't be supported - but
+    it should fail with a clear, catchable error rather than a raw IndexError"""
+    spec = IDSpec("{00100010}")
+    with pytest.raises(ImagingSessionParseError):
+        spec.get_value({"00100010": "private tag value"}, missing_ids={})
+
+
+def test_get_value_from_matching_spec_returns_default_on_no_match(
+    tmp_path: Path,
+) -> None:
+    """When no IDSpec's datatype matches the target, a supplied ``default`` is
+    returned instead of raising ``TypeError``."""
+    path = tmp_path / "a.txt"
+    path.write_text("x")
+    fileset = Plain(path)
+    # spec scoped to image/png -> never matches a text file
+    specs = [IDSpec("SomeField", "image/png")]
+
+    assert (
+        IDSpec.get_value_from_matching_spec(fileset, specs, default="fallback")
+        == "fallback"
+    )
+    with pytest.raises(TypeError, match="apply to a Plain"):
+        IDSpec.get_value_from_matching_spec(fileset, specs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# --metadata-table feature
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def csv_table(tmp_path: Path) -> Csv:
+    path = tmp_path / "meta.csv"
+    path.write_text(
+        "PatientID,Session,Age,Comment\n"
+        "subj01,MR01,42,first\n"
+        "subj01,MR02,42,second\n"
+        "subj02,MR01,55,third\n"
+    )
+    return Csv(path)
+
+
+@pytest.fixture
+def tsv_table(tmp_path: Path) -> Tsv:
+    path = tmp_path / "meta.tsv"
+    path.write_text("PatientID\tComment\nsubj01\thello\nsubj02\tworld\n")
+    return Tsv(path)
+
+
+def _session(**metadata: object) -> ImagingSession:
+    session = ImagingSession(uid="sess-uid")
+    session.metadata.update(metadata)
+    return session
+
+
+def _scan(**metadata: object) -> ImagingScan:
+    scan = ImagingScan(id="1", type="t1")
+    scan.metadata.update(metadata)
+    return scan
+
+
+def _resource(tmp_path: Path, **metadata: object) -> ImagingResource:
+    fspath = tmp_path / "datafile.txt"
+    fspath.write_text("some data")
+    resource = ImagingResource(name="DICOM", fileset=Plain(fspath))
+    resource.metadata.update(metadata)
+    return resource
+
+
+# ── parse_join_exprs ────────────────────────────────────────────────────────
+
+
+def test_parse_join_exprs_single_string() -> None:
+    parsed = parse_join_exprs("PatientID=DicomPatientID")
+    assert parsed == [JoinExpr("PatientID", "DicomPatientID")]
+
+
+def test_parse_join_exprs_comma_separated() -> None:
+    parsed = parse_join_exprs("A=x,B=y")
+    assert parsed == [JoinExpr("A", "x"), JoinExpr("B", "y")]
+
+
+def test_parse_join_exprs_strips_whitespace() -> None:
+    assert parse_join_exprs(" A = x ") == [JoinExpr("A", "x")]
+
+
+def test_parse_join_exprs_escaped_comma_kept_in_value() -> None:
+    """A '\\,' is an escaped literal comma, not a separator between expressions"""
+    parsed = parse_join_exprs(r"A=x\,y,B=z")
+    assert parsed == [JoinExpr("A", "x,y"), JoinExpr("B", "z")]
+
+
+def test_parse_join_exprs_value_may_hold_equals_sign() -> None:
+    assert parse_join_exprs("A=a=b") == [JoinExpr("A", "a=b")]
+
+
+def test_parse_join_exprs_accepts_list_of_strings() -> None:
+    assert parse_join_exprs(["A=x", "B=y"]) == [
+        JoinExpr("A", "x"),
+        JoinExpr("B", "y"),
+    ]
+
+
+def test_parse_join_exprs_passes_through_joinexpr_instances() -> None:
+    expr = JoinExpr("A", "x")
+    assert parse_join_exprs([expr]) == [expr]
+
+
+def test_parse_join_exprs_invalid_without_equals_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid join expression"):
+        parse_join_exprs("no-equals-sign")
+
+
+# ── JoinExpr.value ─────────────────────────────────────────────────────────
+
+
+def test_joinexpr_value_plain_field_lookup() -> None:
+    assert JoinExpr("Col", "PatientID").value({"PatientID": "subj01"}) == "subj01"
+
+
+def test_joinexpr_value_coerces_non_string_to_str() -> None:
+    assert JoinExpr("Col", "Age").value({"Age": 42}) == "42"
+
+
+def test_joinexpr_value_template_combines_fields() -> None:
+    value = JoinExpr("Col", "{PatientID}_{Session}").value(
+        {"PatientID": "subj01", "Session": "MR02"}
+    )
+    assert value == "subj01_MR02"
+
+
+def test_joinexpr_value_missing_plain_field_raises_keyerror() -> None:
+    with pytest.raises(KeyError):
+        JoinExpr("Col", "PatientID").value({})
+
+
+def test_joinexpr_value_missing_template_field_raises_keyerror() -> None:
+    with pytest.raises(KeyError):
+        JoinExpr("Col", "{PatientID}").value({})
+
+
+# ── table_file_converter ───────────────────────────────────────────────────
+
+
+def test_table_file_converter_passes_through_fileset(csv_table: Csv) -> None:
+    assert table_file_converter(csv_table) is csv_table
+
+
+def test_table_file_converter_detects_csv(csv_table: Csv) -> None:
+    converted = table_file_converter(str(csv_table.fspath))
+    assert isinstance(converted, Csv)
+
+
+def test_table_file_converter_detects_tsv(tsv_table: Tsv) -> None:
+    assert isinstance(table_file_converter(str(tsv_table.fspath)), Tsv)
+
+
+def test_table_file_converter_accepts_path_object(csv_table: Csv) -> None:
+    assert isinstance(table_file_converter(csv_table.fspath), Csv)
+
+
+def test_table_file_converter_explicit_mime_suffix(tmp_path: Path) -> None:
+    """A trailing '[<mime-type>]' names the format explicitly (as in the CLI docs,
+    'path/to/file.csv[text/csv]')"""
+    path = tmp_path / "table.csv"
+    path.write_text("A,B\n1,2\n")
+    converted = table_file_converter(f"{path}[text/csv]")
+    assert isinstance(converted, Csv)
+    assert converted.fspath == path
+
+
+def test_table_file_converter_explicit_mime_suffix_tolerates_whitespace(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "table.tsv"
+    path.write_text("A\tB\n1\t2\n")
+    converted = table_file_converter(f"  {path}[text/tab-separated-values]  ")
+    assert isinstance(converted, Tsv)
+
+
+def test_table_file_converter_rejects_other_types() -> None:
+    with pytest.raises(TypeError):
+        table_file_converter(123)  # type: ignore[arg-type]
+
+
+# ── ClashSpec ─────────────────────────────────────────────────────────────
+
+
+def test_clash_spec_single_mime_scope() -> None:
+    spec = ClashSpec("merge", "image/png")
+    assert spec.policy == "merge"
+    assert spec.scope is Png
+
+
+def test_clash_spec_union_scope() -> None:
+    spec = ClashSpec("avoid", "image/png|image/jpeg")
+    assert issubclass(Png, spec.scope) and issubclass(Jpeg, spec.scope)
+
+
+def test_clash_spec_all_scope_is_fileset() -> None:
+    assert ClashSpec("overwrite", "all").scope is FileSet
+
+
+def test_clash_spec_rejects_unknown_policy() -> None:
+    with pytest.raises(ValueError):
+        ClashSpec("bogus", "all")
+
+
+def test_clash_spec_cli_option_nargs_two() -> None:
+    @click.command()
+    @click.option(
+        "--on-resource-clash",
+        type=ClashSpec.cli_type,
+        nargs=2,
+        multiple=True,
+        default=(),
+    )
+    def cmd(on_resource_clash: tuple[ClashSpec, ...]) -> None:
+        for s in on_resource_clash:
+            click.echo(f"{s.policy}:{s.scope}")
+
+    res = CliRunner().invoke(
+        cmd,
+        ["--on-resource-clash", "merge", "image/png|image/jpeg"],
+        catch_exceptions=False,
+    )
+    assert res.output.strip() == f"merge:{Png | Jpeg}"
+
+
+# ── SEMICOLON_LIST env-var splitting ──────────────────────────────────────
+
+
+def test_semicolon_list_splits_env_var_on_semicolon() -> None:
+    assert SEMICOLON_LIST.split_envvar_value("*/*/*.png;*/*/*.jpg") == [
+        "*/*/*.png",
+        "*/*/*.jpg",
+    ]
+
+
+def test_semicolon_list_keeps_spaces_within_a_value_and_drops_blanks() -> None:
+    assert SEMICOLON_LIST.split_envvar_value(" a/b c/*.png ;; d/*.jpg ") == [
+        "a/b c/*.png",
+        "d/*.jpg",
+    ]
+
+
+def test_semicolon_list_option_accepts_repeated_flags_and_env_var() -> None:
+    @click.command()
+    @click.option(
+        "--exclude-path", type=SEMICOLON_LIST, multiple=True, default=(), envvar="XP"
+    )
+    def cmd(exclude_path: tuple[str, ...]) -> None:
+        click.echo("|".join(exclude_path))
+
+    from_flags = CliRunner().invoke(
+        cmd, ["--exclude-path", "a b/*.png", "--exclude-path", "c/*.jpg"]
+    )
+    assert from_flags.output.strip() == "a b/*.png|c/*.jpg"
+
+    from_env = CliRunner().invoke(cmd, [], env={"XP": "a b/*.png;c/*.jpg"})
+    assert from_env.output.strip() == "a b/*.png|c/*.jpg"
+
+
+# ── row_frequency_converter ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("freq", ["session", "scan", "resource"])
+def test_row_frequency_converter_hierarchy_levels(freq: str) -> None:
+    assert row_frequency_converter(freq) == freq
+
+
+def test_row_frequency_converter_plain_fileset_becomes_fileset_class() -> None:
+    assert row_frequency_converter("fileset") is FileSet
+
+
+def test_row_frequency_converter_is_case_insensitive() -> None:
+    assert row_frequency_converter("SeSsIoN") == "session"
+    assert row_frequency_converter("FileSet") is FileSet
+
+
+def test_row_frequency_converter_single_mime() -> None:
+    assert row_frequency_converter("fileset[image/png]") is Png
+
+
+def test_row_frequency_converter_union_mime_pipe_separated() -> None:
+    # a '|'-union of FileSet types, usable directly with isinstance()
+    assert row_frequency_converter("fileset[image/png|image/jpeg]") == Png | Jpeg
+
+
+def test_row_frequency_converter_invalid_level_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid frequency"):
+        row_frequency_converter("subject")
+
+
+def test_row_frequency_converter_unrecognised_mime_raises_valueerror() -> None:
+    with pytest.raises(ValueError, match="Could not recognise mime type"):
+        row_frequency_converter("fileset[not/a-real-mime]")
+
+
+def test_row_frequency_converter_accepts_iterable_of_types() -> None:
+    assert row_frequency_converter([Png, Jpeg]) == Png | Jpeg
+
+
+def test_row_frequency_converter_accepts_iterable_of_mime_strings() -> None:
+    assert row_frequency_converter(["image/png", "image/jpeg"]) == Png | Jpeg
+
+
+def test_row_frequency_converter_single_element_iterable_returns_bare_type() -> None:
+    assert row_frequency_converter([Png]) is Png
+
+
+def test_row_frequency_converter_reconverts_resolved_values() -> None:
+    """attrs re-runs the converter on an already-converted value"""
+    assert row_frequency_converter(Png) is Png
+    assert row_frequency_converter(Png | Jpeg) == Png | Jpeg
+
+
+def test_row_frequency_converter_iterable_with_bad_entry_raises() -> None:
+    with pytest.raises(TypeError):
+        row_frequency_converter([Png, 42])  # type: ignore[list-item]
+
+
+# ── MetadataTable construction ─────────────────────────────────────────────
+
+
+def test_metadata_table_built_from_cli_style_strings(csv_table: Csv) -> None:
+    table = MetadataTable(str(csv_table.fspath), "session", "PatientID=PatientID")
+    assert isinstance(table.table_file, Csv)
+    assert table.row_frequency == "session"
+    assert table.join_exprs == [JoinExpr("PatientID", "PatientID")]
+
+
+def test_metadata_table_requires_at_least_one_join_expr(csv_table: Csv) -> None:
+    with pytest.raises(ValueError, match="At least one join expression"):
+        MetadataTable(csv_table, "session", [])
+
+
+def test_metadata_table_equality_ignores_loaded_table_cache(csv_table: Csv) -> None:
+    a = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    b = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    _ = a.table  # populate the lazy cache on one of them only
+    assert a == b
+
+
+# ── MetadataTable.table / _load_table ──────────────────────────────────────
+
+
+def test_table_loads_csv_column_oriented(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    assert dict(table.table) == {
+        "PatientID": ["subj01", "subj01", "subj02"],
+        "Session": ["MR01", "MR02", "MR01"],
+        "Age": ["42", "42", "55"],
+        "Comment": ["first", "second", "third"],
+    }
+
+
+def test_table_loads_tsv(tsv_table: Tsv) -> None:
+    table = MetadataTable(tsv_table, "session", "PatientID=PatientID")
+    assert dict(table.table) == {
+        "PatientID": ["subj01", "subj02"],
+        "Comment": ["hello", "world"],
+    }
+
+
+def test_table_handles_utf8_bom(tmp_path: Path) -> None:
+    path = tmp_path / "bom.csv"
+    path.write_bytes("PatientID,Comment\nsubj01,x\n".encode("utf-8-sig"))
+    table = MetadataTable(Csv(path), "session", "PatientID=PatientID")
+    assert list(table.table) == ["PatientID", "Comment"]
+
+
+def test_table_is_cached_after_first_access(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    assert table.table is table.table
+
+
+# ── MetadataTable.inject ───────────────────────────────────────────────────
+
+
+def test_inject_session_injects_whole_matched_row(csv_table: Csv) -> None:
+    table = MetadataTable(
+        csv_table, "session", ["PatientID=PatientID", "Session=Session"]
+    )
+    session = _session(PatientID="subj01", Session="MR02")
+    table.inject(session)
+    # every column of the matched row is injected, not just the join columns
+    assert session.metadata["Age"] == "42"
+    assert session.metadata["Comment"] == "second"
+
+
+def test_inject_no_matching_row_is_a_noop(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    session = _session(PatientID="nobody")
+    table.inject(session)
+    assert "Comment" not in session.metadata
+
+
+def test_inject_multiple_matching_rows_raises(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    session = _session(PatientID="subj01")  # matches two rows
+    with pytest.raises(ValueError, match="Multiple rows"):
+        table.inject(session)
+
+
+def test_inject_missing_join_field_on_target_is_a_noop(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    session = _session(SomethingElse="x")
+    table.inject(session)
+    assert "Comment" not in session.metadata
+
+
+def test_inject_unknown_join_column_raises(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "session", "NoSuchColumn=PatientID")
+    session = _session(PatientID="subj01")
+    with pytest.raises(ValueError, match="not found in metadata table"):
+        table.inject(session)
+
+
+def test_inject_wrong_frequency_target_is_a_noop(
+    csv_table: Csv, tmp_path: Path
+) -> None:
+    table = MetadataTable(csv_table, "session", "PatientID=PatientID")
+    scan = _scan(PatientID="subj02", Session="MR01")
+    table.inject(scan)
+    assert "Comment" not in scan.metadata
+
+
+def test_inject_scan_frequency(csv_table: Csv) -> None:
+    table = MetadataTable(csv_table, "scan", ["PatientID=PatientID", "Session=Session"])
+    scan = _scan(PatientID="subj02", Session="MR01")
+    table.inject(scan)
+    assert scan.metadata["Comment"] == "third"
+
+
+def test_inject_resource_frequency(csv_table: Csv, tmp_path: Path) -> None:
+    table = MetadataTable(
+        csv_table, "resource", ["PatientID=PatientID", "Session=Session"]
+    )
+    resource = _resource(tmp_path, PatientID="subj01", Session="MR01")
+    table.inject(resource)
+    assert resource.metadata["Comment"] == "first"
+
+
+def test_inject_fileset_mime_frequency_against_raw_fileset(tmp_path: Path) -> None:
+    csv_path = tmp_path / "files.csv"
+    csv_path.write_text("Name,Note\nhello.txt,greeting\nother.txt,ignored\n")
+    data = tmp_path / "hello.txt"
+    data.write_text("hi")
+    fileset = Plain(data)
+    fileset.metadata["Name"] = "hello.txt"
+
+    table = MetadataTable(Csv(csv_path), "fileset[text/plain]", "Name=Name")
+    assert table.row_frequency is Plain
+    table.inject(fileset)
+    assert fileset.metadata["Note"] == "greeting"
+
+
+def test_inject_fileset_union_mime_frequency_matches_any_member(tmp_path: Path) -> None:
+    lookup = tmp_path / "lookup.csv"
+    lookup.write_text("Name,Note\ndata.tsv,matched\n")
+    data = tmp_path / "data.tsv"
+    data.write_text("a\tb\n1\t2\n")
+    fileset = Tsv(data)
+    fileset.metadata["Name"] = "data.tsv"
+
+    table = MetadataTable(
+        Csv(lookup), "fileset[text/csv|text/tab-separated-values]", "Name=Name"
+    )
+    assert table.row_frequency == Csv | Tsv
+    table.inject(fileset)
+    assert fileset.metadata["Note"] == "matched"
+
+    # a fileset that is neither member is left untouched
+    other = tmp_path / "note.txt"
+    other.write_text("hi")
+    other_fs = Plain(other)
+    other_fs.metadata["Name"] = "note.txt"
+    table.inject(other_fs)
+    assert "Note" not in other_fs.metadata
+
+
+def test_inject_plain_fileset_frequency_matches_any_fileset(tmp_path: Path) -> None:
+    csv_path = tmp_path / "files.csv"
+    csv_path.write_text("Name,Note\nhello.txt,greeting\n")
+    data = tmp_path / "hello.txt"
+    data.write_text("hi")
+    fileset = Plain(data)
+    fileset.metadata["Name"] = "hello.txt"
+
+    table = MetadataTable(Csv(csv_path), "fileset", "Name=Name")
+    assert table.row_frequency is FileSet
+    table.inject(fileset)
+    assert fileset.metadata["Note"] == "greeting"
+
+
+def test_inject_and_combines_multiple_join_exprs(csv_table: Csv) -> None:
+    table = MetadataTable(
+        csv_table, "session", ["PatientID=PatientID", "Session=Session"]
+    )
+    session = _session(PatientID="subj01", Session="MR01")
+    table.inject(session)
+    assert session.metadata["Comment"] == "first"
+
+
+def test_inject_template_join_expr(csv_table: Csv, tmp_path: Path) -> None:
+    lookup = tmp_path / "lookup.csv"
+    lookup.write_text("Key,Label\nsubj01/MR02,the-label\n")
+    table = MetadataTable(Csv(lookup), "session", "Key={PatientID}/{Session}")
+    session = _session(PatientID="subj01", Session="MR02")
+    table.inject(session)
+    assert session.metadata["Label"] == "the-label"
+
+
+# ── MetadataTable.inject_list ──────────────────────────────────────────────
+
+
+def test_inject_list_none_is_a_noop() -> None:
+    MetadataTable.inject_list(None, [_session(PatientID="subj01")])
+
+
+def test_inject_list_empty_is_a_noop() -> None:
+    MetadataTable.inject_list([], [_session(PatientID="subj01")])
+
+
+def test_inject_list_applies_every_table_to_every_target(
+    csv_table: Csv, tmp_path: Path
+) -> None:
+    weights = tmp_path / "weights.csv"
+    weights.write_text("PatientID,Weight\nsubj01,70\nsubj02,85\n")
+    table_a = MetadataTable(
+        csv_table, "session", ["PatientID=PatientID", "Session=Session"]
+    )
+    table_b = MetadataTable(Csv(weights), "session", "PatientID=PatientID")
+    sessions = [
+        _session(PatientID="subj01", Session="MR01"),
+        _session(PatientID="subj02", Session="MR01"),
+    ]
+    MetadataTable.inject_list([table_a, table_b], sessions)
+    # table_a contributes Comment, table_b contributes Weight, to each session
+    assert (sessions[0].metadata["Comment"], sessions[0].metadata["Weight"]) == (
+        "first",
+        "70",
+    )
+    assert (sessions[1].metadata["Comment"], sessions[1].metadata["Weight"]) == (
+        "third",
+        "85",
+    )
+
+
+# ── CLI wiring (click param type + env var) ────────────────────────────────
+
+
+def _metadata_table_cli() -> click.Command:
+    @click.command()
+    @click.option(
+        "--metadata-table",
+        "metadata_tables",
+        type=MetadataTable.cli_type,
+        multiple=True,
+        nargs=3,
+        default=(),
+        envvar="XINGEST_METADATA_TABLES",
+    )
+    def cmd(metadata_tables: tuple[MetadataTable, ...]) -> None:
+        for mt in metadata_tables:
+            click.echo(
+                f"{type(mt.table_file).__name__}|{mt.row_frequency}|"
+                + ";".join(f"{e.column_name}={e.value_expr}" for e in mt.join_exprs)
+            )
+
+    return cmd
+
+
+def test_metadata_table_cli_option(csv_table: Csv) -> None:
+    result = CliRunner().invoke(
+        _metadata_table_cli(),
+        [
+            "--metadata-table",
+            str(csv_table.fspath),
+            "session",
+            "PatientID=PatientID",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert result.output.strip() == "Csv|session|PatientID=PatientID"
+
+
+def test_metadata_table_cli_option_repeatable(csv_table: Csv, tsv_table: Tsv) -> None:
+    result = CliRunner().invoke(
+        _metadata_table_cli(),
+        [
+            "--metadata-table",
+            str(csv_table.fspath),
+            "scan",
+            "A=B",
+            "--metadata-table",
+            str(tsv_table.fspath),
+            "resource",
+            "C=D",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.output.splitlines() == [
+        "Csv|scan|A=B",
+        "Tsv|resource|C=D",
+    ]
+
+
+def test_metadata_table_env_var_single(
+    monkeypatch: pytest.MonkeyPatch, csv_table: Csv
+) -> None:
+    monkeypatch.setenv(
+        "XINGEST_METADATA_TABLES",
+        f"{csv_table.fspath} session PatientID=PatientID",
+    )
+    result = CliRunner().invoke(_metadata_table_cli(), [], catch_exceptions=False)
+    assert result.output.strip() == "Csv|session|PatientID=PatientID"
+
+
+def test_metadata_table_env_var_multiple_semicolon_separated(
+    monkeypatch: pytest.MonkeyPatch, csv_table: Csv, tsv_table: Tsv
+) -> None:
+    monkeypatch.setenv(
+        "XINGEST_METADATA_TABLES",
+        f"{csv_table.fspath} scan A=B;{tsv_table.fspath} resource C=D",
+    )
+    result = CliRunner().invoke(_metadata_table_cli(), [], catch_exceptions=False)
+    assert result.output.splitlines() == ["Csv|scan|A=B", "Tsv|resource|C=D"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# --convert option / target_converter's fileformats.core.Field roundtrip
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 'application/zip's converter task has fields covering the roundtrip outcomes:
+#   - allowZip64/strict_timestamps: bool -> matches fileformats.field.Boolean exactly,
+#     so the CLI string is actually coerced to a real Python bool.
+#   - compression: int | str -> not a *bare* type that matches a registered Field
+#     primitive, so Field.from_primitive raises FormatMismatchError, which
+#     target_converter catches and falls back to leaving the raw string untouched;
+#     that's still valid here since str is one of the union's members.
+#   - compresslevel: int | None -> same fallback, but a raw string is *not* valid for
+#     this field (neither member is str) - target_converter now actually instantiates
+#     the converter task with the parsed options, so Pydra's own type-checking catches
+#     this immediately with a clear error instead of failing deep in the ingest
+#     pipeline once the conversion actually runs.
+
+
+def test_convert_bare_mime_has_no_options() -> None:
+    convert = Convert("text/plain", "application/zip")
+    assert convert.target is Zip
+    assert convert.options == {}
+
+
+def test_convert_bool_option_roundtrips_to_real_bool() -> None:
+    convert = Convert("text/plain", "application/zip:allowZip64=false")
+    assert convert.options == {"allowZip64": False}
+    assert convert.options["allowZip64"] is False
+
+
+def test_convert_bool_option_true_roundtrip() -> None:
+    convert = Convert("text/plain", "application/zip:allowZip64=true")
+    assert convert.options["allowZip64"] is True
+
+
+def test_convert_multiple_bool_options() -> None:
+    convert = Convert(
+        "text/plain",
+        "application/zip:allowZip64=false,strict_timestamps=true",
+    )
+    assert convert.options == {"allowZip64": False, "strict_timestamps": True}
+
+
+def test_convert_union_typed_string_option_passes_through() -> None:
+    """'compression: int | str' isn't a single registered Field primitive, so the
+    raw CLI string is kept as-is - and it's accepted by the task itself since str is
+    one of the union's members (create_zip resolves the name itself)"""
+    convert = Convert("text/plain", "application/zip:compression=ZIP_STORED")
+    assert convert.options == {"compression": "ZIP_STORED"}
+
+
+def test_convert_unresolvable_option_value_raises_early_via_task_instantiation() -> (
+    None
+):
+    """'compresslevel: int | None' isn't a bare registered Field primitive, so the
+    string isn't coerced - and unlike 'compression', a raw string isn't valid for
+    either member of this union. Rather than silently keeping the bad string,
+    target_converter instantiates the converter task with it and lets Pydra's own
+    type-checking raise, so this fails immediately rather than deep in the pipeline"""
+    with pytest.raises(ValueError, match="compresslevel"):
+        Convert("text/plain", "application/zip:compresslevel=5")
+
+
+def test_convert_invalid_bool_value_raises_early() -> None:
+    with pytest.raises(ValueError, match="allowZip64"):
+        Convert("text/plain", "application/zip:allowZip64=notabool")
+
+
+def test_convert_same_type_target_needs_no_converter() -> None:
+    """When source already satisfies the target type, get_converter() returns None -
+    target_converter must handle that without crashing, and any options are then
+    necessarily invalid since there's no converter task to validate them against"""
+    convert = Convert("application/zip", "application/zip")
+    assert convert.target is Zip
+    assert convert.options == {}
+    with pytest.raises(ValueError, match="Invalid option 'allowZip64'"):
+        Convert("application/zip", "application/zip:allowZip64=false")
+
+
+def test_convert_unknown_option_key_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid option 'bogus'"):
+        Convert("text/plain", "application/zip:bogus=1")
+
+
+def test_convert_malformed_option_pair_raises() -> None:
+    with pytest.raises(ValueError, match="expected 'key=val'"):
+        Convert("text/plain", "application/zip:novalue")
+
+
+def test_convert_reconverts_already_resolved_target_spec() -> None:
+    """attrs re-runs converters on already-converted values (e.g. attrs.evolve)"""
+    convert = Convert("text/plain", "application/zip:allowZip64=false")
+    resolved = Convert("text/plain", convert._target_spec)
+    assert resolved.target is Zip
+    assert resolved.options == convert.options
+
+
+# ── --convert CLI wiring ────────────────────────────────────────────────────
+
+
+def _convert_cli() -> click.Command:
+    @click.command()
+    @click.option(
+        "--convert",
+        "conversions",
+        type=Convert.cli_type,
+        nargs=2,
+        multiple=True,
+        default=(),
+    )
+    def cmd(conversions: tuple[Convert, ...]) -> None:
+        for c in conversions:
+            click.echo(f"{c.source.__name__}->{c.target.__name__}:{c.options}")
+
+    return cmd
+
+
+def test_convert_cli_option() -> None:
+    result = CliRunner().invoke(
+        _convert_cli(),
+        ["--convert", "text/plain", "application/zip:allowZip64=false"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert result.output.strip() == "Plain->Zip:{'allowZip64': False}"
+
+
+def test_convert_cli_option_repeatable() -> None:
+    result = CliRunner().invoke(
+        _convert_cli(),
+        [
+            "--convert",
+            "text/plain",
+            "application/zip",
+            "--convert",
+            "image/png",
+            "application/zip:strict_timestamps=false",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.output.splitlines() == [
+        "Plain->Zip:{}",
+        "Png->Zip:{'strict_timestamps': False}",
+    ]
+
+
+def test_convert_cli_option_invalid_value_reported_clearly() -> None:
+    """An option value Pydra rejects (e.g. a plain string for an 'int | None' field)
+    is surfaced as a clear ValueError at CLI-parse time rather than an opaque
+    failure deep in the ingest pipeline once the conversion actually runs"""
+    result = CliRunner().invoke(
+        _convert_cli(),
+        ["--convert", "text/plain", "application/zip:compresslevel=9"],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert "compresslevel" in str(result.exception)

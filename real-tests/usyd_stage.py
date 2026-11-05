@@ -1,9 +1,9 @@
 import logging
 
+from accessionflow.utils import show_cli_trace
 from click.testing import CliRunner
-from xnat_ingest.utils import show_cli_trace
 
-from xnat_ingest.cli import sort
+from accessionflow.cli import sort
 
 runner = CliRunner()
 

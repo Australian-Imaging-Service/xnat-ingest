@@ -1,21 +1,21 @@
 Deidentification
 ================
 
-For sites where the ``assign``-ed sessions still contain identifiable data (e.g. a
+For sites where the ``label``-ed sessions still contain identifiable data (e.g. a
 clinical scanner staging DICOMs before upload), insert a ``deidentify`` step between
-``assign`` and ``upload``. It strips patient-identifying fields from each session and
+``label`` and ``upload``. It strips patient-identifying fields from each session and
 writes the deidentified copy, and — only if ``--reid-dir`` is given — a
 re-identification mapping so the process can be reversed later if needed (e.g. to look
 up a scan for a clinical follow-up).
 
 .. code-block:: console
 
-    $ xnat-ingest deidentify /data/staging/assigned /data/staging/deidentified \
-        /etc/xnat-ingest/deid-specs --reid-dir /data/staging/reid
+    $ accessionflow deidentify /data/staging/labelled /data/staging/deidentified \
+        /etc/accessionflow/deid-specs --reid-dir /data/staging/reid
 
-* ``INPUT_DIR`` — the ``assign`` output directory (``XINGEST_INPUT_DIR``)
+* ``INPUT_DIR`` — the ``label`` output directory (``XINGEST_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where deidentified sessions are written; point ``upload`` at this
-  directory instead of the ``assign`` output (``XINGEST_OUTPUT_DIR``)
+  directory instead of the ``label`` output (``XINGEST_OUTPUT_DIR``)
 * ``SPEC_DIR`` — the deidentification specs, one directory per project (see below)
   (``XINGEST_SPEC_DIR``)
 * ``--reid-dir`` — optional; where the re-identification mappings are written, one
@@ -23,9 +23,9 @@ up a scan for a clinical follow-up).
   than persist it, which is the safer choice when holding an
   original\ ↔\ deidentified lookup on disk is itself a concern.
 
-As with ``assign``, ``--unlink-source all``/``--unlink-source keep-metadata`` clean up
-the ``assign`` output once a session's been deidentified — see
-:ref:`2. Assign project/subject/session IDs` for what the two modes do.
+As with ``label``, ``--unlink-source all``/``--unlink-source keep-metadata`` clean up
+the ``label`` output once a session's been deidentified — see
+:ref:`2. Label project/subject/session IDs` for what the two modes do.
 
 Every input session with resources is processed, even when its output already
 exists. A late series is saved into the existing output session. Earlier scans
@@ -69,7 +69,7 @@ Laying out the deidentification specs
 ------------------------------------------
 
 ``SPEC_DIR`` holds one subdirectory per project, named to match the project ID that
-``assign`` gave the session, plus an optional ``__default__`` subdirectory used as a
+``label`` gave the session, plus an optional ``__default__`` subdirectory used as a
 fallback for any project without its own:
 
 .. code-block:: text

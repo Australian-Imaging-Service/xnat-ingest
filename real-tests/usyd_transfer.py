@@ -1,7 +1,7 @@
+from accessionflow.utils import show_cli_trace
 from click.testing import CliRunner
-from xnat_ingest.utils import show_cli_trace
 
-from xnat_ingest.cli import transfer
+from accessionflow.cli import transfer
 
 runner = CliRunner()
 

@@ -1,0 +1,431 @@
+import hashlib
+import json
+import logging
+import os
+import shutil
+import tempfile
+import typing as ty
+from pathlib import Path
+
+import attrs
+from fileformats.application import Json
+from fileformats.core import FileSet
+from fileformats.core.exceptions import FormatMismatchError
+from fileformats.generic import Directory
+from typing_extensions import Self
+
+from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
+from ..helpers.metadata import Metadata
+
+logger = logging.getLogger("accessionflow")
+
+if ty.TYPE_CHECKING:
+    from .scan import ImagingScan  # noqa
+
+
+@attrs.define
+class ImagingResource:
+    """Representation of a resource to be uploaded to XNAT, which is a set of files
+    associated with a scan. There can be multiple resources associated with a scan,
+    e.g. the original DICOM files, a BIDS-converted version of the scan, and a brain
+    mask generated from the scan.
+
+    Parameters
+    ----------
+    name: str
+        The name of the resource
+    fileset: FileSet
+        The set of files associated with the resource
+    checksums: dict[str, str]
+        The checksums of the files in the resource
+    scan: ImagingScan
+        The scan that the resource is associated with
+    """
+
+    name: str
+    fileset: FileSet
+    checksums: dict[str, str] = attrs.field(eq=False, repr=False)
+    scan: "ImagingScan" = attrs.field(default=None, eq=False, repr=False)
+    metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
+
+    @checksums.default
+    def calculate_checksums(self) -> dict[str, str]:
+        return self.fileset.hash_files(
+            crypto=hashlib.md5, relative_to=self.fileset.parent
+        )
+
+    @metadata.default
+    def _metadata_default(self) -> Metadata:
+        return Metadata({}, self)
+
+    @property
+    def datatype(self) -> ty.Type[FileSet]:
+        return type(self.fileset)
+
+    @property
+    def mime_like(self) -> str:
+        return self.fileset.mime_like
+
+    def matches_datatypes(self, datatypes: ty.Sequence[type[FileSet]]) -> bool:
+        """Return whether this resource matches any requested datatype."""
+        return not datatypes or any(
+            isinstance(self.fileset, datatype) for datatype in datatypes
+        )
+
+    def __lt__(self, other: Self) -> bool:
+        if self.scan is None and other.scan is None:
+            return self.name < other.name
+        if self.scan is None:
+            return True  # session resources sort before scan resources
+        if other.scan is None:
+            return False
+        try:
+            scan_id = int(self.scan.id)
+        except ValueError:
+            scan_id = self.scan.id  # type: ignore[assignment]
+        try:
+            other_scan_id = int(other.scan.id)
+        except ValueError:
+            other_scan_id = other.scan.id  # type: ignore[assignment]
+        return (scan_id, self.name) < (other_scan_id, other.name)
+
+    def newer_than_or_equal(self, other: Self) -> bool:
+        """Whether this resource's files are at least as recent as `other`'s.
+
+        Compares the most recent modification time on each side. `FileSet.mtimes`
+        yields (path, mtime) pairs, so comparing those directly compares paths
+        before times, and zipping them drops files when the two sets differ in
+        length.
+        """
+        return self.fileset.last_modified >= other.fileset.last_modified
+
+    def save(
+        self,
+        dest_dir: Path,
+        copy_mode: FileSet.CopyMode = FileSet.CopyMode.copy,
+        collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None = None,
+        conversion_map: (
+            dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+        ) = None,
+        metadata_allowlist: ty.Collection[str] | None = None,
+        calculate_checksums: bool = True,
+        overwrite: bool | None = None,
+        build_dir: Path | None = None,
+    ) -> Self:
+        """Save the resource to a directory
+
+        Parameters
+        ----------
+        dest_dir: Path
+            The directory to save the resource
+        copy_mode: FileSet.CopyMode
+            The method to copy the files
+        collation_map: dict[ty.Type[FileSet], FileSet.CopyCollation] | None
+            A mapping of FileSet types to CopyCollation objects that specify how to collate files of that type when saving the
+            sessions. If None, the default collation behavior for each FileSet type will be used.
+        conversion_map: dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
+            A mapping of source FileSet types to (target FileSet types, conversion options).
+            When a resource matches a source type, it will be converted to the target type during save,
+            with the options passed through to ``convert()``.
+        metadata_allowlist : Collection[str] or None
+            Metadata keys to include in the JSON file. If None, all metadata is
+            written. An empty collection writes an empty metadata object. Filtering
+            affects only the saved data; the in-memory metadata is unchanged.
+        calculate_checksums: bool
+            Whether to calculate the checksums of the files
+        overwrite: bool
+            Whether to overwrite the resource if it already exists, if None then the files
+            are overwritten if they are newer than the ones saved, otherwise a warning is
+            issued, if False an exception will be raised, if True then the resource is
+            saved regardless of the files being newer. An existing resource that is
+            incomplete (no manifest, a manifest that cannot be read, or files that do
+            not match the manifest) is always replaced
+
+        build_dir: Path, optional
+            Directory for complete resource builds on the destination filesystem.
+            Session.save supplies a directory outside the visible session.
+            Standalone saves use a hidden directory inside dest_dir.
+
+        Returns
+        -------
+        ImagingResource
+            The saved resource
+
+        Raises
+        ------
+        FileExistsError
+            If a complete resource already exists and overwrite is False or None and
+            the files are not newer
+        """
+        fileset = self.fileset
+        resource_dir = dest_dir / self.name
+        checksums = (
+            self.calculate_checksums() if calculate_checksums else self.checksums
+        )
+        if resource_dir.exists() and not self.manifest_fpath(resource_dir).exists():
+            # A producer stopped after it wrote data files and before it published
+            # the manifest. It can leave the temporary manifest. This save cannot
+            # verify these files and it holds the complete resource, so it
+            # replaces the directory. It does not compare file times. The files
+            # left behind can be newer than an input that did not change, and
+            # then that check refused every later save.
+            tmp_fpath = resource_dir / self.MANIFEST_TMP_FNAME
+            detail = (
+                f" (a save stopped before it moved '{tmp_fpath.name}' into place)"
+                if tmp_fpath.exists()
+                else ""
+            )
+            logger.warning(
+                f"Resource '{self.name}' already exists in '{dest_dir}', but it has "
+                f"no manifest{detail}, so it is incomplete, overwriting"
+            )
+            shutil.rmtree(resource_dir)
+        if resource_dir.exists():
+            try:
+                loaded = self.load(resource_dir, require_manifest=False)
+                if loaded.checksums == checksums:
+                    if metadata_allowlist is not None:
+                        self.metadata.save(resource_dir, allowlist=metadata_allowlist)
+                    return loaded
+                elif overwrite or (
+                    overwrite is None and self.newer_than_or_equal(loaded)
+                ):
+                    logger.warning(
+                        f"Resource '{self.name}' already exists in '{dest_dir}', overwriting"
+                    )
+                else:
+                    if overwrite is None:
+                        msg = "and the files are not older than the ones to be be saved"
+                    else:
+                        msg = ""
+                    raise FileExistsError(
+                        f"Resource '{self.name}' already exists in '{dest_dir}'{msg}, set "
+                        "'overwrite' to True to overwrite regardless of file times"
+                    )
+            except DifferingCheckumsException:
+                logger.warning(
+                    f"Resource '{self.name}' already exists in '{dest_dir}', but it is "
+                    "incomplete, overwriting"
+                )
+            except FormatMismatchError as exc:
+                # The manifest cannot be read, or the files do not match the
+                # format it names. A producer killed while it wrote the manifest
+                # left this behind (before the manifest was published in one
+                # step). Nothing in the directory can be verified and this save
+                # holds the complete resource, so replace the directory. Stages
+                # that only load (package, upload) still refuse such a resource.
+                # The publish below moves the old directory aside, so no
+                # removal is needed here.
+                logger.warning(
+                    f"Resource '{self.name}' already exists in '{dest_dir}', but it "
+                    f"cannot be loaded ({exc}), overwriting"
+                )
+        collation = FileSet.CopyCollation.any
+        if collation_map:
+            for dtype, coll_level in collation_map.items():
+                if isinstance(fileset, dtype):
+                    collation = coll_level
+                    break
+        # If a conversion is requested for this resource's type, run it now
+        if conversion_map:
+            for src_type, (tgt_type, options) in conversion_map.items():
+                if isinstance(fileset, src_type):
+                    logger.info(
+                        "Converting resource '%s' from %s to %s",
+                        self.name,
+                        src_type.mime_like,
+                        tgt_type.mime_like,
+                    )
+                    # Call the target format's convert() method with the saved fileset
+                    # The convert implementation is expected to return a FileSet for the converted data.
+                    fileset = tgt_type.convert(fileset, **options)
+                    break
+        # Keep the previous resource readable while the replacement is built.
+        # Publish files, manifest and metadata together. Replacement of an
+        # existing directory has a brief absence window, but never exposes a
+        # partly copied file. This is not a transaction across resources.
+        build_dir = build_dir if build_dir is not None else dest_dir
+        build_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if build_dir.stat().st_dev != dest_dir.stat().st_dev:
+            raise ValueError("Resource build and destination must share a filesystem")
+        with tempfile.TemporaryDirectory(prefix=".resource-", dir=build_dir) as tmp:
+            temporary = Path(tmp)
+            built = temporary / "new"
+            saved_fileset = fileset.copy(
+                built, mode=copy_mode, trim=True, collation=collation
+            )
+            saved_checksums = saved_fileset.hash_files(
+                crypto=hashlib.md5, relative_to=built
+            )
+            manifest = {"datatype": fileset.mime_like, "checksums": saved_checksums}
+            self.write_manifest(built, manifest)
+            self.metadata.save(built, allowlist=metadata_allowlist)
+            relative_paths = [p.relative_to(built) for p in saved_fileset.fspaths]
+            backup = temporary / "previous"
+            if resource_dir.exists():
+                os.replace(resource_dir, backup)
+            try:
+                os.replace(built, resource_dir)
+            except OSError:
+                if backup.exists():
+                    os.replace(backup, resource_dir)
+                raise
+            saved_fileset = type(saved_fileset)(
+                resource_dir / p for p in relative_paths
+            )
+        return type(self)(
+            name=self.name, fileset=saved_fileset, checksums=saved_checksums
+        )
+
+    @classmethod
+    def write_manifest(cls, resource_dir: Path, manifest: dict[str, ty.Any]) -> None:
+        """Publish the manifest in one step. The file is written beside its final
+        name and moved into place with os.replace, which is atomic on one file
+        system, so a reader never finds a truncated manifest when this process
+        dies mid-write. A process that dies before the move leaves the data files
+        and ``MANIFEST_TMP_FNAME``, but no manifest. A load that requires a
+        manifest refuses that directory. Readers ignore this publication file,
+        including when a staging copy contains both it and a valid manifest.
+        The producer's next save replaces a directory without a manifest,
+        whatever the file times."""
+        fspath = resource_dir / cls.MANIFEST_FNAME
+        tmp = resource_dir / cls.MANIFEST_TMP_FNAME
+        with open(tmp, "w") as f:
+            json.dump(manifest, f)
+            f.flush()
+            os.fsync(f.fileno())  # on disk before it gets the final name
+        os.replace(tmp, fspath)
+
+    @classmethod
+    def load(
+        cls,
+        resource_dir: Path,
+        require_manifest: bool = True,
+        check_checksums: bool = True,
+    ) -> Self:
+        """Load a resource from a directory, reading the manifest file if it exists.
+        If the manifest file doesn't exist and 'require_manifest' is True then an
+        exception is raised, if it is False, then a generic FileSet object is loaded
+        from the files that were found
+        """
+        manifest_file = cls.manifest_fpath(resource_dir)
+        fspaths = [
+            p
+            for p in resource_dir.rglob("*")
+            if p.is_file()
+            # Only the publisher's temporary file at the resource root is
+            # metadata. Other .tmp names, and this name inside a data directory,
+            # still participate in the checksum checks.
+            and p != resource_dir / cls.MANIFEST_TMP_FNAME
+            and p.name
+            not in (cls.MANIFEST_FNAME, cls.OLD_MANIFEST_FNAME, Metadata.FNAME)
+        ]
+        if manifest_file.exists():
+            manifest = Json(manifest_file).load()
+            checksums = manifest["checksums"]
+            datatype: ty.Type[FileSet] = FileSet.from_mime(manifest["datatype"])  # type: ignore[assignment]
+            if missing := set(checksums) - set(
+                str(p.relative_to(resource_dir)) for p in fspaths
+            ):
+                raise IncompleteCheckumsException(
+                    f"Files listed in manifest for '{resource_dir}' resource are not present in the directory: "
+                    + "\n".join(missing)
+                )
+        elif require_manifest:
+            raise FileNotFoundError(
+                f"Manifest file not found in '{resource_dir}' resource, set "
+                "'require_manifest' to False to ignore and load as a generic FileSet object"
+            )
+        else:
+            checksums = None
+            datatype = FileSet
+        if issubclass(datatype, Directory):
+            # Directory formats are saved inside the resource directory. The
+            # individual files are used for checksum verification, but the
+            # format must be reconstructed from its directory path.
+            roots = {path.relative_to(resource_dir).parts[0] for path in fspaths}
+            if len(roots) != 1:
+                raise ValueError(
+                    f"Expected one data directory in '{resource_dir}', found {sorted(roots)}"
+                )
+            data_dir = resource_dir / next(iter(roots))
+            if not data_dir.is_dir():
+                raise ValueError(f"Expected a data directory at '{data_dir}'")
+            fileset = datatype(data_dir)
+        else:
+            fileset = datatype(fspaths)
+        resource = cls(name=resource_dir.name, fileset=fileset, checksums=checksums)
+        if checksums is not None and check_checksums:
+            resource.check_checksums()
+        if (resource_dir / Metadata.FNAME).exists():
+            resource.metadata = Metadata.load(resource_dir, resource)
+        return resource
+
+    def load_metadata(self) -> dict[str, ty.Any]:
+        return self.fileset.metadata
+
+    def check_checksums(self) -> None:
+        calc_checksums = self.calculate_checksums()
+        if calc_checksums != self.checksums:
+            saved_keys = set(self.checksums)
+            calc_keys = set(calc_checksums)
+            if saved_keys != calc_keys:
+                additional = calc_keys - saved_keys
+                missing = saved_keys - calc_keys
+                raise DifferingCheckumsException(
+                    f"Checksum file paths don't match those saved with '{self.name}':\n"
+                    f"Additional paths: {additional}\nMissing paths: {missing}\n"
+                )
+            else:
+                differing = [
+                    k for k in self.checksums if calc_checksums[k] != self.checksums[k]
+                ]
+                raise DifferingCheckumsException(
+                    f"Checksums don't match those saved with '{self.name}' "
+                    f"resource: {differing}"
+                )
+
+    def unlink(self, remove_dir: bool = False) -> None:
+        """Remove all files in the file-set, the object will be unusable after this
+
+        Parameters
+        ----------
+        remove_dir : bool, optional
+            if True, remove the resource's directory in its entirety, including its
+            own manifest and metadata files, rather than just the underlying data
+            files. Only safe to use on a directory that this resource exclusively
+            owns (e.g. a staged ``<scan_dir>/<resource_name>`` directory) — never on
+            a resource loaded from a shared source directory, since the whole parent
+            directory is removed, by default False
+        """
+        if remove_dir:
+            shutil.rmtree(self.fileset.parent)
+            return
+        for fspath in self.fileset.fspaths:
+            if fspath.is_file():
+                fspath.unlink()
+            else:
+                shutil.rmtree(fspath)
+
+    @property
+    def path(self) -> str:
+        if self.scan is None:
+            return self.name
+        return self.scan.path + ":" + self.name
+
+    @classmethod
+    def manifest_fpath(cls, resource_dir: Path) -> Path:
+        """Return the path to the manifest file within a resource directory, falling
+        back to the legacy filename if the current one isn't present, for backwards
+        compatibility with resources saved by older versions of accessionflow"""
+        manifest_file = resource_dir / cls.MANIFEST_FNAME
+        if not manifest_file.exists():
+            old_manifest_file = resource_dir / cls.OLD_MANIFEST_FNAME
+            if old_manifest_file.exists():
+                return old_manifest_file
+        return manifest_file
+
+    MANIFEST_FNAME = "__MANIFEST__.json"
+    MANIFEST_TMP_FNAME = MANIFEST_FNAME + ".tmp"
+    OLD_MANIFEST_FNAME = "MANIFEST.json"

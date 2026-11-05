@@ -1,6 +1,6 @@
 import timeit
 
-import xnat_ingest.dicom  # noqa
+import accessionflow.dicom  # noqa
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.mri.dwi.siemens.skyra.syngo_d13c import get_image
 

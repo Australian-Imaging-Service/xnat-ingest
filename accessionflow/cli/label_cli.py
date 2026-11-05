@@ -1,0 +1,227 @@
+import time
+import typing as ty
+from pathlib import Path
+
+import click
+from fileformats.core import FileSet
+
+from accessionflow.cli.base import cli
+
+from ..api.label_api import label
+from ..helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
+from ..helpers.logging import logger, set_logger_handling
+
+
+@cli.command(
+    name="label",
+    help="""Assigns project, subject and session IDs, extracted from session
+metadata, to sessions that have already been collated into scans/resources
+
+INPUT_DIR is the path to the directory containing the collated-but-not-yet-labelled
+sessions (the output of the 'collate' command)
+
+OUTPUT_DIR is the directory that the labelled sessions will be written to
+
+If a project/subject/session ID can't be resolved from a session's metadata, it is
+labelled a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder instead of being
+dropped, and the whole session is saved under an '__invalid__' subdirectory of
+OUTPUT_DIR instead of alongside normally-labelled ones, so it can be found and
+manually reviewed/reprocessed rather than silently lost.
+""",
+)
+@click.argument(
+    "input_dir",
+    type=click.Path(exists=True, path_type=Path),
+    envvar="XINGEST_INPUT_DIR",
+)
+@click.argument(
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+)
+@click.option(
+    "--project",
+    "project_field",
+    type=str,
+    default="StudyComments",
+    envvar="XINGEST_PROJECT",
+    help=(
+        "The keyword of the metadata field to extract the XNAT project ID from, or "
+        "a Python format string over several fields, e.g. "
+        "'{PatientID}_{StudyDate:%Y%m%d}', to compose one (XINGEST_PROJECT env. var)"
+    ),
+)
+@click.option(
+    "--subject",
+    "subject_field",
+    type=str,
+    default="PatientID",
+    envvar="XINGEST_SUBJECT",
+    help=(
+        "The keyword of the metadata field to extract the XNAT subject ID from, or "
+        "a Python format string over several fields (see --project) "
+        "(XINGEST_SUBJECT env. var)"
+    ),
+)
+@click.option(
+    "--session",
+    "session_field",
+    type=str,
+    default="AccessionNumber",
+    envvar="XINGEST_SESSION",
+    help=(
+        "The keyword of the metadata field to extract the XNAT session ID from, or "
+        "a Python format string over several fields (see --project) "
+        "(XINGEST_SESSION env. var)"
+    ),
+)
+@click.option(
+    "--scan",
+    "scan_field",
+    type=str,
+    default="SeriesDescription",
+    envvar="XINGEST_SCAN",
+    help=(
+        "The keyword of the metadata field to extract a description for each scan from. "
+        "Scans for which the field can't be resolved are left without a description "
+        "(XINGEST_SCAN env. var)"
+    ),
+)
+@click.option(
+    "--constant-project-id",
+    type=str,
+    default=None,
+    envvar="XINGEST_CONSTANT_PROJECT_ID",
+    help=(
+        "Fix the project ID as a constant for all data matched by this command "
+        "(XINGEST_CONSTANT_PROJECT_ID env. var)"
+    ),
+)
+@click.option(
+    "--include",
+    "include_types",
+    type=MimeType.cli_type,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_INCLUDE",
+    metavar="<mime-type>",
+    help=(
+        "Only label resources matching this fileformats MIME-like datatype. May "
+        "be repeated to include multiple datatypes (XINGEST_INCLUDE env. var)"
+    ),
+)
+@click.option(
+    "--loop",
+    type=int,
+    default=-1,
+    envvar="XINGEST_LOOP",
+    help="Run the label process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+)
+@click.option(
+    "--copy-mode",
+    type=CopyModeParamType(),
+    default=FileSet.CopyMode.hardlink_or_copy,
+    envvar="XINGEST_COPY_MODE",
+    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+)
+@click.option(
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
+    help=(
+        "Whether to unlink the collated session directories after they have been "
+        "labelled. 'all' removes the whole collated session directory; "
+        "'keep-metadata' removes the resource data but leaves the session/scan-"
+        "level metadata behind, so a lightweight skeleton of the session survives "
+        "(e.g. for 'attach' to use later). If not set, the collated directories "
+        "are left in place (XINGEST_UNLINK_SOURCE env. var)"
+    ),
+)
+@click.option(
+    "--logger",
+    "loggers",
+    multiple=True,
+    type=LoggerConfig.cli_type,
+    envvar="XINGEST_LOGGERS",
+    nargs=3,
+    default=(),
+    metavar="<logtype> <loglevel> <location>",
+    help=(
+        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
+    ),
+)
+@click.option(
+    "--additional-logger",
+    "additional_loggers",
+    type=str,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    help=(
+        "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
+        "But additional loggers can be included (e.g. 'xnat') can be "
+        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+    ),
+)
+@click.option(
+    "--raise-errors/--dont-raise-errors",
+    default=False,
+    type=bool,
+    help="Whether to raise errors instead of logging them (typically for debugging)",
+)
+def label_cmd(
+    input_dir: Path,
+    output_dir: Path,
+    project_field: str,
+    subject_field: str,
+    session_field: str,
+    constant_project_id: str | None,
+    include_types: tuple[MimeType, ...],
+    scan_field: str | None,
+    unlink_source: str | None,
+    loggers: ty.List[LoggerConfig],
+    additional_loggers: ty.List[str],
+    raise_errors: bool,
+    loop: int,
+    copy_mode: FileSet.CopyMode,
+) -> None:
+
+    if raise_errors and loop >= 0:
+        raise ValueError(
+            "Cannot use --raise-errors and --loop together as the loop will "
+            "continue to run even if an error occurs"
+        )
+
+    set_logger_handling(
+        logger_configs=loggers,
+        additional_loggers=additional_loggers,
+    )
+
+    # Run the label process in a loop if loop is set to a positive value, otherwise just run it once
+    while True:
+        start_time = time.monotonic()
+        label(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            project_field=project_field,
+            subject_field=subject_field,
+            session_field=session_field,
+            project_id=constant_project_id,
+            scan_field=scan_field,
+            unlink_source=unlink_source,
+            raise_errors=raise_errors,
+            copy_mode=copy_mode,
+            include=[include_type.datatype for include_type in include_types],
+        )
+        if loop < 0:
+            break
+        end_time = time.monotonic()
+        elapsed_seconds = end_time - start_time
+        sleep_time = max(loop - elapsed_seconds, 0)
+        logger.info(
+            "Label took %s seconds, waiting another %s seconds before running "
+            "again (loop every %s seconds)",
+            elapsed_seconds,
+            sleep_time,
+            loop,
+        )
+        time.sleep(sleep_time)

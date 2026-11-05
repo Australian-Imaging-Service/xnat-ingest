@@ -3,8 +3,8 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "xnat-ingest"
-description = "Uploads exported DICOM and raw data to XNAT, parsing metadata from DICOMs"
+name = "accessionflow"
+description = "Accessions exported DICOM and raw data, parsing metadata from DICOMs and uploading them to XNAT"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -86,29 +86,30 @@ docs = [
     "numpydoc>=0.6.0",
 ]
 # Aliases
-tests = ["xnat-ingest[test]"]
-all = ["xnat-ingest[dev,test]"]
+tests = ["accessionflow[test]"]
+all = ["accessionflow[dev,test]"]
 
 [project.urls]
 repository = "https://github.com/Australian-Imaging-Service/xnat_ingest"
 
 [project.scripts]
-xnat-ingest = "xnat_ingest.cli:cli"
+accessionflow = "accessionflow.cli:cli"
+acflow = "accessionflow.cli:cli"
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "xnat_ingest/_version.py"
+version-file = "accessionflow/_version.py"
 
 [tool.hatch.build]
-packages = ["xnat_ingest"]
+packages = ["accessionflow"]
 exclude = ["/tests"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-exclude = ["xnat_ingest/_version.py"]
+exclude = ["accessionflow/_version.py"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "W", "I"]
@@ -128,5 +129,5 @@ exclude = [
     "docs",
     "build",
     "dist",
-    "xnat_ingest/_version.py",
+    "accessionflow/_version.py",
 ]

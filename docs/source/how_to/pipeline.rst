@@ -2,32 +2,32 @@ Basic ingest workflow
 =====================
 
 This walks through the minimum needed to get files from a directory on disk into an
-XNAT project: **group** the raw files into scans/resources, **assign** each session a
+XNAT project: **collate** the raw files into scans/resources, **label** each session a
 project/subject/session ID, then **upload** to XNAT. Each stage is a separate CLI
 sub-command and writes its output to a directory that the next stage reads from, so
 they can be run as a chain, on separate schedules, or repeatedly with ``--loop``.
 
 (:doc:`De-identification <deidentify>`, :doc:`linking in files that don't carry their
-own sorting metadata <associate>`, and site-specific steps like linking sessions to an
+own sorting metadata <attach>`, and site-specific steps like linking sessions to an
 external records database, are separate concerns layered on top of this — covered in
 their own guides.)
 
-1. Group files into sessions/scans/resources
+1. Collate files into sessions/scans/resources
 -----------------------------------------------
 
-``group`` scans one or more input paths, reads each file's metadata (DICOM tags by
+``collate`` scans one or more input paths, reads each file's metadata (DICOM tags by
 default), and collates files into a directory structure of
 ``<session>/<scan>/<resource>`` under ``OUTPUT_DIR``, ready for the next stage.
 
 .. code-block:: console
 
-    $ xnat-ingest group /data/incoming/*.dcm /data/staging/grouped
+    $ accessionflow collate /data/incoming/*.dcm /data/staging/collated
 
 * ``INPUT_PATHS`` — one or more directories or glob patterns pointing at the raw files
   (``XINGEST_INPUT_PATHS``)
-* ``OUTPUT_DIR`` — where grouped sessions are written (``XINGEST_OUTPUT_DIR``)
+* ``OUTPUT_DIR`` — where collated sessions are written (``XINGEST_OUTPUT_DIR``)
 
-For DICOM collections, sessions are grouped by ``StudyInstanceUID`` and
+For DICOM collections, sessions are collated by ``StudyInstanceUID`` and
 scans by ``SeriesNumber`` by default. No defaults are provided for other formats.
 If no ``--resource`` spec matches a fileset, its resource is named after the
 fileset's type (``dicom-series``, ``vectra-export``, ...); if no ``--scan``
@@ -59,13 +59,13 @@ doesn't write it anywhere in the file:
 
 .. code-block:: console
 
-    $ xnat-ingest group /data/incoming/cohort-A /data/staging/grouped \
+    $ accessionflow collate /data/incoming/cohort-A /data/staging/collated \
         --path-metadata-regex '.*/(?P<cohort>[^/]+)$' medimage/dicom-series
 
 Here, anything found under a ``.../cohort-A/...`` directory gets a ``cohort``
 metadata field set to ``cohort-A``, alongside whatever's read from its DICOM headers —
 usable anywhere a metadata field is, e.g. as part of a ``--project``/``--session``
-specifier in ``assign``, or in the compound ``{...}`` format strings below.
+specifier in ``label``, or in the compound ``{...}`` format strings below.
 
 * the regex is matched (via ``re.match``, so from the start of the string, but not
   necessarily the whole thing unless you anchor it with ``$`` as above) against the
@@ -76,7 +76,7 @@ specifier in ``assign``, or in the compound ``{...}`` format strings below.
   matches ``medimage/dicom-series``)
 * can be repeated for different datatypes/patterns
 * if a resource matches the datatype but its path doesn't actually match the regex,
-  that's a hard error — it aborts the whole ``group`` run rather than just skipping
+  that's a hard error — it aborts the whole ``collate`` run rather than just skipping
   that one session, so keep the pattern narrow enough that it only applies to data
   you know follows the convention
 
@@ -84,13 +84,13 @@ Composing IDs from more than one field
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A field specifier (``--session``/``--scan``/``--resource`` here; ``--project``/
-``--subject``/``--session``/``--scan`` in ``assign``, below) doesn't have to name a
+``--subject``/``--session``/``--scan`` in ``label``, below) doesn't have to name a
 single metadata field. It can instead be a Python format string over several fields,
 to compose an ID from more than one and/or apply formatting:
 
 .. code-block:: console
 
-    $ xnat-ingest group ... --session '{PatientID}_{StudyDate:%Y%m%d}' all
+    $ accessionflow collate ... --session '{PatientID}_{StudyDate:%Y%m%d}' all
 
 This is detected automatically (a specifier is treated as a format string if it
 contains a ``{``, and as a plain field name otherwise, so existing specifiers like
@@ -100,7 +100,7 @@ value or has become a plain string (e.g. after being reloaded from a
 ``__METADATA__.json`` file written by an earlier stage) — a plain string is parsed as
 a date first if the format spec looks like it wants one. If a field referenced in the
 specifier can't be resolved at all, that part of the ID falls back to the same
-placeholder mechanism described below for ``assign``.
+placeholder mechanism described below for ``label``.
 
 Recursing into nested directory formats
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -115,7 +115,7 @@ larger vendor export:
 
 .. code-block:: console
 
-    $ xnat-ingest group /data/incoming /data/staging/grouped --recursive \
+    $ accessionflow collate /data/incoming /data/staging/collated --recursive \
         --datatype medimage/vnd.canfield.whole-body-analysis-dir \
         --datatype medimage/vnd.canfield.dexi-data-dir \
         --exclude-path '*/*/*.png'
@@ -161,24 +161,24 @@ always raises — tighten ``--scan``/``--resource`` so the two don't collide, or
 scope that deliberately covers both.
 
 
-Grouping straight from an Orthanc server
+Collating straight from an Orthanc server
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If your scanner pushes to an `Orthanc <https://www.orthanc-server.com/>`_ instance
-rather than exporting to a plain directory, ``group-orthanc`` replaces the ``group``
-step: it queries Orthanc's REST API for studies and stages them into the same grouped
-layout that ``assign`` reads, hardlinking the DICOM files straight out of Orthanc's
+rather than exporting to a plain directory, ``collate-orthanc`` replaces the ``collate``
+step: it queries Orthanc's REST API for studies and stages them into the same collated
+layout that ``label`` reads, hardlinking the DICOM files straight out of Orthanc's
 storage area rather than copying them.
 
 .. code-block:: console
 
-    $ xnat-ingest group-orthanc http://localhost:8042 /var/lib/orthanc/db \
-        /data/staging/grouped orthanc-user orthanc-password
+    $ accessionflow collate-orthanc http://localhost:8042 /var/lib/orthanc/db \
+        /data/staging/collated orthanc-user orthanc-password
 
 * ``URL`` — the Orthanc REST endpoint (``XINGEST_ORTHANC_URL``)
 * ``STORE_DIR`` — Orthanc's ``StorageDirectory``, as seen from wherever the command
   runs (``XINGEST_ORTHANC_STORE_DIR``)
-* ``OUTPUT_DIR`` — where grouped sessions are written, same as for ``group``
+* ``OUTPUT_DIR`` — where collated sessions are written, same as for ``collate``
 * ``USER``/``PASSWORD`` — Orthanc credentials
   (``XINGEST_ORTHANC_USER``/``XINGEST_ORTHANC_PASSWORD``)
 
@@ -187,14 +187,14 @@ same filesystem, and Orthanc's storage must be uncompressed. Compression is off 
 default, so this only matters if you've enabled ``StorageCompression`` in the Orthanc
 configuration.
 
-Sessions are grouped by ``StudyInstanceUID``, scans by ``SeriesNumber`` (described by
+Sessions are collated by ``StudyInstanceUID``, scans by ``SeriesNumber`` (described by
 ``SeriesDescription``) and resources by ``ImageType``, following Orthanc's own
 study/series/instance hierarchy. These groupings are currently fixed, there are no
-``--session``/``--scan``/``--resource`` overrides like ``group``'s. What
-*metadata* is available for the later ``assign`` stage can be extended through the
+``--session``/``--scan``/``--resource`` overrides like ``collate``'s. What
+*metadata* is available for the later ``label`` stage can be extended through the
 Orthanc configuration however (see below).
 
-Like ``group``, ``--convert <src-mime-like> <tgt-spec>`` converts matching series as
+Like ``collate``, ``--convert <src-mime-like> <tgt-spec>`` converts matching series as
 they are staged, e.g. ``--convert medimage/dicom-series medimage/nifti-gz-x``. The
 source is always ``medimage/dicom-series``. Conversion happens before the processed
 label is applied, so a study whose conversion fails is retried on the next run.
@@ -214,11 +214,11 @@ Which studies are staged (and staged only once) is controlled through Orthanc
 
 Removing the processed label from a study (e.g. through the Orthanc web UI) makes it
 eligible for re-staging. Note that ``--unlink-source`` is not yet implemented for
-``group-orthanc`` — the source studies always stay in Orthanc, and the processed
+``collate-orthanc`` — the source studies always stay in Orthanc, and the processed
 label is what stops them being staged again.
 
 A series that arrives after its study was staged is staged again without a manual
-step. When ``group-orthanc`` applies the processed label, it also applies a
+step. When ``collate-orthanc`` applies the processed label, it also applies a
 *snapshot label*, ``<processed-label>-<LastUpdate>-<digest>``: the ``LastUpdate``
 of the study at the time it was staged, and a digest of the instance IDs it
 exported. On every run, a processed study whose ``LastUpdate`` no longer matches
@@ -234,7 +234,7 @@ was staged.
 Missing series display tags
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``group-orthanc`` does not refuse a study solely because ``SeriesDescription`` or
+``collate-orthanc`` does not refuse a study solely because ``SeriesDescription`` or
 ``SeriesNumber`` is missing, empty or whitespace. A missing number becomes
 ``SeriesInstanceUID`` with dots replaced by underscores, matching XNAT's header
 importer so it updates the same scan. If that UID is not in Orthanc's indexed tags,
@@ -243,17 +243,17 @@ has not been verified against XNAT's header importer. Both fallbacks are stable
 across retries on the same source. A missing description becomes
 ``Series_<scan-id>``: FrameTree resource selection keys entries by scan type and
 resource name, so two types named ``unknown`` would collide. The following
-``assign`` stage retains this fallback when the description is missing or empty,
+``label`` stage retains this fallback when the description is missing or empty,
 without treating an optional display tag as a missing patient routing field.
 A numeric zero remains a valid number. Each fallback emits
 ``series_metadata_fallback`` with ``orthanc_series_id``. Normal series keep their
 current labels. These labels do not repair missing study or patient identity.
 
-The generic DICOM-files ``group`` path still requires its configured ``--scan``
+The generic DICOM-files ``collate`` path still requires its configured ``--scan``
 expression to resolve. Its default ``SeriesNumber`` therefore needs an explicit
 ``--scan SeriesInstanceUID,medimage/dicom-collection`` for sources without numbers.
 Automatic number fallback on that configurable path is a separate follow-up;
-missing optional descriptions in the shared ``assign`` path are handled above.
+missing optional descriptions in the shared ``label`` path are handled above.
 
 A study that cannot be staged does not stop the others. Two series of one study
 that map to one scan directory and resource (the same ``SeriesNumber`` and
@@ -269,10 +269,10 @@ warning and staged again on a later run.
 Available metadata fields
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Unlike ``group``, which reads each file's full DICOM header, ``group-orthanc`` only
+Unlike ``collate``, which reads each file's full DICOM header, ``collate-orthanc`` only
 sees the tags Orthanc itself indexes: the study-level ``MainDicomTags`` and
 ``PatientMainDicomTags``. These are what end up in the session's
-``__METADATA__.json``, and therefore what ``assign``'s
+``__METADATA__.json``, and therefore what ``label``'s
 ``--project``/``--subject``/``--session`` specifiers can draw on:
 
 * study tags — ``StudyInstanceUID``, ``StudyID``, ``StudyDate``, ``StudyTime``,
@@ -283,27 +283,27 @@ sees the tags Orthanc itself indexes: the study-level ``MainDicomTags`` and
   ``PatientSex``, ``OtherPatientIDs``
 * ``Modality``, aggregated across the study's series
 
-If the field you need isn't in that list (e.g. ``StudyComments``, ``assign``'s
-default project field), either point ``assign`` at one that is (e.g. ``--project
+If the field you need isn't in that list (e.g. ``StudyComments``, ``label``'s
+default project field), either point ``label`` at one that is (e.g. ``--project
 RequestedProcedureDescription``), or add the tag to Orthanc's index via
 ``"ExtraMainDicomTags"`` in its configuration. This only applies to
 studies received after the setting is in place, unless the existing ones are
 reconstructed.
 
 
-2. Assign project/subject/session IDs
+2. Label project/subject/session IDs
 -----------------------------------------
 
-``assign`` reads the grouped sessions and works out which XNAT project/subject/session
+``label`` reads the collated sessions and works out which XNAT project/subject/session
 each one belongs to, from metadata fields, writing the result under
 ``<project>.<subject>.<session>`` directories in ``OUTPUT_DIR``.
 
 .. code-block:: console
 
-    $ xnat-ingest assign /data/staging/grouped /data/staging/assigned
+    $ accessionflow label /data/staging/collated /data/staging/labelled
 
-* ``INPUT_DIR`` — the ``group`` output directory (``XINGEST_INPUT_DIR``)
-* ``OUTPUT_DIR`` — where assigned sessions are written (``XINGEST_OUTPUT_DIR``)
+* ``INPUT_DIR`` — the ``collate`` output directory (``XINGEST_INPUT_DIR``)
+* ``OUTPUT_DIR`` — where labelled sessions are written (``XINGEST_OUTPUT_DIR``)
 
 The metadata fields used default to ``StudyComments`` (project), ``PatientID``
 (subject) and ``AccessionNumber`` (session). Override with ``--project``/
@@ -316,11 +316,11 @@ What happens when an ID can't be resolved
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If a project/subject/session field isn't present in a session's metadata at all, that
-session isn't dropped — it's assigned a unique placeholder ID instead
+session isn't dropped — it's labelled a unique placeholder ID instead
 (``INVALID_NOTFOUND_<FIELD>_<random>``), and the whole session is saved under an
 ``__invalid__`` subdirectory of ``OUTPUT_DIR`` (e.g.
-``assigned/__invalid__/INVALID_NOTFOUND_PROJECT_ab12cd34.Session_Label.123/``) instead
-of alongside normally-assigned sessions. This is so a misconfigured field (or a
+``labelled/__invalid__/INVALID_NOTFOUND_PROJECT_ab12cd34.Session_Label.123/``) instead
+of alongside normally-labelled sessions. This is so a misconfigured field (or a
 session that genuinely doesn't have the data it needs) can still be found and manually
 reviewed or reprocessed, rather than only showing up as a line in the logs with
 nothing to act on.
@@ -328,41 +328,41 @@ nothing to act on.
 Cleaning up previous stages
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Add ``--unlink-source`` to clean up the ``group`` output once a session's been
-assigned. Unlike ``group``, this directory is one that xnat-ingest itself created, so
+Add ``--unlink-source`` to clean up the ``collate`` output once a session's been
+labelled. Unlike ``collate``, this directory is one that accessionflow itself created, so
 there are two meaningfully different modes:
 
-* ``--unlink-source all`` removes files present before assign loads the session, then empty directories.
+* ``--unlink-source all`` removes files present before label loads the session, then empty directories.
 * ``--unlink-source keep-metadata`` removes recorded files only inside loaded
   resource directories, then removes empty directories inside them. It keeps the
   session and scan metadata files (``__METADATA__.json``).
-  See :doc:`associate` for how to use this metadata.
+  See :doc:`attach` for how to use this metadata.
 
-Leave it unset (the default) to keep the grouped directory untouched.
+Leave it unset (the default) to keep the collated directory untouched.
 With ``all`` and ``keep-metadata``, files at new paths survive cleanup.
 Published files must remain immutable.
 A replacement at a recorded path is outside this contract.
-With ``keep-metadata``, assign records the resource directories when it loads the
+With ``keep-metadata``, label records the resource directories when it loads the
 session. A new resource directory that arrives after the load stays in place.
 
-Routing datatypes through separate assignment pathways
+Routing datatypes through separate labelling pathways
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use repeatable ``--include`` options when different datatypes from one grouped
-session need different IDs or projects. Each assign process reads the same grouped
+Use repeatable ``--include`` options when different datatypes from one collated
+session need different IDs or projects. Each label process reads the same collated
 source and writes only matching resources:
 
 .. code-block:: console
 
-    $ xnat-ingest assign /data/staging/grouped /data/staging/dicom-assigned \
+    $ accessionflow label /data/staging/collated /data/staging/dicom-labelled \
         --include medimage/dicom-series --constant-project-id DICOM_PROJECT
 
-    $ xnat-ingest assign /data/staging/grouped /data/staging/report-assigned \
+    $ accessionflow label /data/staging/collated /data/staging/report-labelled \
         --include application/pdf --constant-project-id REPORT_PROJECT
 
 Multiple ``--include`` options use OR semantics. Datatype filtering cannot be
-combined with ``--unlink-source``, because the grouped data must remain available
-to every assignment pathway.
+combined with ``--unlink-source``, because the collated data must remain available
+to every labelling pathway.
 
 
 Optional: package one resource into several upload resources
@@ -378,24 +378,24 @@ deidentified DICOM directory can become a zip in XNAT's ``DICOM-zip`` resource a
 single DICOM file in the resource XNAT chooses from its SOP class (``DICOM`` for
 primary images, ``secondary`` for other DICOM) without reopening the zip:
 
-Group this workflow using ``medimage/dicom-dir``. Each input directory must contain
+Collate this workflow using ``medimage/dicom-dir``. Each input directory must contain
 only one series and the files intended for its archive. Use ``--recursive`` if the
 series directories are nested below the input path. The deidentify stage uses a
 ``medimage/dicom-dir`` spec if present, otherwise it reuses the existing
-``medimage/dicom-series`` spec and transforms. The default group datatype remains
+``medimage/dicom-series`` spec and transforms. The default collate datatype remains
 ``medimage/dicom-series`` for other workflows.
 
 .. code-block:: console
 
-    $ xnat-ingest group /data/incoming /data/staging/grouped \
+    $ accessionflow collate /data/incoming /data/staging/collated \
         --datatype medimage/dicom-dir --recursive
 
-After assigning and de-identifying the grouped sessions, package them with the
+After labelling and de-identifying the collated sessions, package them with the
 generic FileFormats ZIP converter:
 
 .. code-block:: console
 
-    $ xnat-ingest package /data/staging/deidentified /data/staging/packaged \
+    $ accessionflow package /data/staging/deidentified /data/staging/packaged \
         medimage/dicom-dir \
         --output-resource DICOM-zip \
             medimage/dicom-dir+zip:compression=ZIP_STORED \
@@ -420,7 +420,7 @@ to show the PNG views of a lesion merged into one resource by
 
 .. code-block:: console
 
-    $ xnat-ingest package /data/staging/assigned /data/staging/packaged \
+    $ accessionflow package /data/staging/labelled /data/staging/packaged \
         image/png+set-of \
         --output-resource photos image/png+set-of \
         --output-resource snapshots medimage/vnd.xnat.snapshots
@@ -444,15 +444,15 @@ snapshots from the command above.
 3. Upload to XNAT
 --------------------
 
-``upload`` takes the assigned sessions and pushes them to an XNAT instance, creating
+``upload`` takes the labelled sessions and pushes them to an XNAT instance, creating
 projects/subjects/sessions/scans/resources as needed.
 
 .. code-block:: console
 
-    $ xnat-ingest upload /data/staging/assigned xnat.example.org \
+    $ accessionflow upload /data/staging/labelled xnat.example.org \
         --user my-upload-user --password my-upload-password
 
-* ``STAGED`` — the ``assign`` output directory, or an S3 bucket URI
+* ``STAGED`` — the ``label`` output directory, or an S3 bucket URI
   (``XINGEST_STAGED``)
 * ``SERVER`` — the XNAT server address (``XINGEST_HOST``)
 * ``--user``/``--password`` — XNAT credentials (``XINGEST_USER``/``XINGEST_PASS``)
@@ -469,7 +469,7 @@ may be named with the session label alone. This works for local and S3 staging. 
 label must match exactly one session accessible to the upload account; no match or
 multiple matches is an error. For example,
 ``000077/radiology-doc-report/report.pdf`` uploads into the
-``radiology-doc-report`` resource of session ``000077``. Assigned
+``radiology-doc-report`` resource of session ``000077``. Labelled
 ``PROJECT.SUBJECT.SESSION`` directories continue to use their project, subject and
 session IDs.
 
@@ -522,6 +522,6 @@ confirm nothing was dropped.
 
 .. code-block:: console
 
-    $ xnat-ingest check-upload /data/staging/assigned xnat.example.org
+    $ accessionflow check-upload /data/staging/labelled xnat.example.org
 
 It takes the same ``STAGED``/``SERVER``/credential options as ``upload``.

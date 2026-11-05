@@ -28,7 +28,7 @@ Clone the repository and install it in editable mode with the ``test``, ``dev`` 
 .. code-block:: console
 
     $ git clone https://github.com/Australian-Imaging-Service/xnat-ingest.git
-    $ cd xnat-ingest
+    $ cd accessionflow
     $ python3 -m pip install -e .[test,dev,docs]
     $ pre-commit install
 

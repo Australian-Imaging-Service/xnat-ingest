@@ -1,0 +1,261 @@
+import time
+import typing as ty
+from pathlib import Path
+
+import click
+from fileformats.core import FileSet
+
+from accessionflow.cli.base import cli
+
+from ..api.deidentify_api import deidentify
+from ..helpers.arg_types import (
+    ON_RESOURCE_CLASH,
+    CopyModeParamType,
+    LoggerConfig,
+    OnResourceClash,
+)
+from ..helpers.logging import logger, set_logger_handling
+from ..model.session import ImagingSession
+
+DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
+
+
+@cli.command(
+    name="deidentify",
+    help="""Stages images found in the input directories into separate directories for each
+imaging acquisition session
+
+INPUT_DIR is the path to the directory containing the session directories to de-identify.
+Each session directory should be named in the format <project_id>.<subject_id>.<session_id>
+and contain subdirectories for each scan, which in turn contain the resource files for
+each scan.
+
+OUTPUT_DIR is the directory that the files for each session are collated to before they
+are uploaded to XNAT
+
+SPEC_DIR is the directory containing the project-specific deidentification specifications.
+It should contain one subdirectory per project, named <project_id>, plus an optional
+"__default__" subdirectory used as a fallback for projects that don't have their own.
+Within each of these subdirectories, the directory structure mirrors the MIME-like
+hierarchy: a subdirectory per category containing one recipe file per format
+(e.g. 'medimage/dicom-series'). Any file extension (or none) is accepted.
+Side-cars of the recipe format can sit alongside the recipe file, e.g. for DICOM
+a '<format>.transforms.yaml' file (e.g. 'medimage/dicom-series.transforms.yaml')
+declaring the values of the 'var:' and 'func:' references in the recipe (see the deid
+transforms spec in fileformats-medimage), and a '<format>.salt' file with a key the
+transforms can salt hashed values with (only readable by the user running the
+deidentification).
+Formats without a matching recipe file are only deidentified if one is found for a
+broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
+'medimage/dicom-series').
+Metadata side-cars in the deidentified output retain only __uid__, where present.
+Other metadata fields are omitted; source metadata is unchanged.
+
+The re-identification metadata (a mapping from original to de-identified identifiers for
+each resource in the session, plus any DICOM tags modified during de-identification) is
+only written if --reid-dir is given; see that option.
+""",
+)
+@click.argument(
+    "input_dir",
+    type=click.Path(path_type=Path, exists=True),
+    envvar="XINGEST_INPUT_DIR",
+)
+@click.argument(
+    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+)
+@click.argument(
+    "spec_dir",
+    type=click.Path(path_type=Path, exists=True),
+    envvar="XINGEST_SPEC_DIR",
+)
+@click.option(
+    "--reid-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    envvar="XINGEST_REID_DIR",
+    help=(
+        "The directory to save the re-identification metadata to, which can be used to "
+        "re-identify the de-identified data if needed. One JSON file is written per "
+        "session, named <session_id>.json (or <session_id>.json.enc if encrypted with "
+        "--reid-encrypt-key). If this option is not given, the re-identification "
+        "metadata is discarded rather than written to disk, which is the safer default "
+        "when retaining the original<->deidentified mapping would itself be a security "
+        "concern (XINGEST_REID_DIR env. var)"
+    ),
+)
+@click.option(
+    "--unlink-source",
+    type=click.Choice(["all", "keep-metadata"]),
+    default=None,
+    envvar="XINGEST_UNLINK_SOURCE",
+    help=(
+        "Whether to unlink the labelled session directories after they have been "
+        "deidentified. 'all' removes the whole labelled session directory; "
+        "'keep-metadata' removes the resource data but leaves the session/scan-"
+        "level metadata behind, so a lightweight skeleton of the session survives "
+        "(e.g. for 'attach' to use later). If not set, the labelled "
+        "directories are left in place (XINGEST_UNLINK_SOURCE env. var)"
+    ),
+)
+@click.option(
+    "--logger",
+    "loggers",
+    multiple=True,
+    type=LoggerConfig.cli_type,
+    envvar="XINGEST_LOGGERS",
+    nargs=3,
+    default=(),
+    metavar="<logtype> <loglevel> <location>",
+    help=(
+        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
+    ),
+)
+@click.option(
+    "--additional-logger",
+    "additional_loggers",
+    type=str,
+    multiple=True,
+    default=(),
+    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    help=(
+        "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
+        "But additional loggers can be included (e.g. 'xnat') can be "
+        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+    ),
+)
+@click.option(
+    "--raise-errors/--dont-raise-errors",
+    default=False,
+    help="Whether to raise errors instead of logging them (typically for debugging)",
+)
+@click.option(
+    "--require-manifest/--no-require-manifest",
+    default=True,
+    envvar="XINGEST_REQUIRE_MANIFEST",
+    help=(
+        "Whether to require a MANIFEST.json file in each resource directory. "
+        "If False, resources are loaded as generic FileSets without checksum validation "
+        "(XINGEST_REQUIRE_MANIFEST env. var)"
+    ),
+)
+@click.option(
+    "--copy-mode",
+    type=CopyModeParamType(),
+    default=FileSet.CopyMode.hardlink_or_copy,
+    envvar="XINGEST_COPY_MODE",
+    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+)
+@click.option(
+    "--loop",
+    type=int,
+    default=-1,
+    envvar="XINGEST_LOOP",
+    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+)
+@click.option(
+    "--on-resource-clash",
+    type=click.Choice(ON_RESOURCE_CLASH),
+    default="error",
+    envvar="XINGEST_ON_RESOURCE_CLASH",
+    help=(
+        "Determines the behavior when a resource with the same name already exists in the scan. "
+        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "Default: 'error'"
+    ),
+)
+@click.option(
+    "--reid-encrypt-key",
+    type=str,
+    default=None,
+    envvar="XINGEST_REID_ENCRYPT_KEY",
+    help=(
+        "An optional encryption key to use for encrypting the re-identification metadata "
+        "(XINGEST_REID_ENCRYPT_KEY env. var). This should be a URL-safe base64-encoded 32-byte key, "
+        "e.g. generated using `Fernet.generate_key()` from the cryptography package"
+    ),
+)
+@click.option(
+    "--metadata-allowlist",
+    type=str,
+    default=ImagingSession.UID_METADATA_KEY,
+    envvar="XINGEST_METADATA_ALLOWLIST",
+    callback=lambda context, param, value: tuple(
+        key.strip() for key in value.split(",") if key.strip()
+    ),
+    help=(
+        "Comma-separated metadata keys to retain in output sidecars "
+        "(XINGEST_METADATA_ALLOWLIST env. var). Defaults to __uid__."
+    ),
+)
+def deidentify_cmd(
+    input_dir: Path,
+    output_dir: Path,
+    spec_dir: Path,
+    reid_dir: Path | None,
+    loggers: ty.List[LoggerConfig],
+    additional_loggers: ty.List[str],
+    require_manifest: bool,
+    raise_errors: bool,
+    copy_mode: FileSet.CopyMode,
+    loop: int,
+    on_resource_clash: OnResourceClash,
+    unlink_source: str | None,
+    reid_encrypt_key: str | None,
+    metadata_allowlist: ty.Collection[str],
+) -> None:
+
+    if raise_errors and loop >= 0:
+        raise ValueError(
+            "Cannot use --raise-errors and --loop together as the loop will "
+            "continue to run even if an error occurs"
+        )
+
+    set_logger_handling(
+        logger_configs=loggers,
+        additional_loggers=additional_loggers,
+    )
+
+    encrypt_key_bytes: bytes | None = (
+        reid_encrypt_key.encode() if reid_encrypt_key is not None else None
+    )
+
+    # Run the staging process in a loop if loop is set to a positive value, otherwise
+    # just run it once
+    while True:
+        start_time = time.monotonic()
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            on_resource_clash=on_resource_clash,
+            raise_errors=raise_errors,
+            copy_mode=copy_mode,
+            require_manifest=require_manifest,
+            unlink_source=unlink_source,
+            reid_encrypt_key=encrypt_key_bytes,
+            metadata_allowlist=metadata_allowlist,
+        )
+        # The return value was previously discarded, so a session that failed or was
+        # left incomplete produced no signal above this function at all. collate_cmd and
+        # upload_cmd both summarise it the same way.
+        if errors:
+            logger.error(
+                "Deidentification completed with %s errors:\n\n%s",
+                len(errors),
+                "\n".join(errors),
+            )
+        if loop < 0:
+            break
+        end_time = time.monotonic()
+        elapsed_seconds = end_time - start_time
+        sleep_time = max(loop - elapsed_seconds, 0)
+        logger.info(
+            "Deidentify took %s seconds, waiting another %s seconds before running "
+            "again (loop every %s seconds)",
+            elapsed_seconds,
+            sleep_time,
+            loop,
+        )
+        time.sleep(sleep_time)
