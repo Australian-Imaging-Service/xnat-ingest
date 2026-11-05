@@ -2270,3 +2270,52 @@ def transfer_to_source(
         return f"s3://{s3_bucket}/{s3_prefix}"
     else:
         return str(source_dir)
+
+
+def test_deidentify_cmd_metadata_allowlist(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("XINGEST_METADATA_ALLOWLIST", raising=False)
+
+    input_dir = tmp_path / "input"
+    spec_dir = tmp_path / "spec"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    spec_dir.mkdir()
+
+    with patch(
+        "xnat_ingest.cli.deidentify_cli.deidentify",
+        return_value=[],
+    ) as mock_deidentify:
+        result = cli_runner(
+            deidentify_cmd,
+            [str(input_dir), str(output_dir), str(spec_dir), "--loop", "-1"],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert set(mock_deidentify.call_args.kwargs["metadata_allowlist"]) == {"__uid__"}
+
+    with patch(
+        "xnat_ingest.cli.deidentify_cli.deidentify",
+        return_value=[],
+    ) as mock_deidentify:
+        result = cli_runner(
+            deidentify_cmd,
+            [
+                str(input_dir),
+                str(output_dir),
+                str(spec_dir),
+                "--loop",
+                "-1",
+                "--metadata-allowlist",
+                "__uid__,Modality",
+            ],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert set(mock_deidentify.call_args.kwargs["metadata_allowlist"]) == {
+        "__uid__",
+        "Modality",
+    }
