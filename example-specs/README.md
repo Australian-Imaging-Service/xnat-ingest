@@ -1,12 +1,12 @@
-# `xnat-ingest workflow` example specs
+# `accessionflow workflow` example specs
 
 Run any of these with:
 
 ```console
-$ xnat-ingest workflow check <spec>.yaml            # validate, print declared params + resolved stage order
-$ xnat-ingest workflow run   <spec>.yaml             # run once (needs `pip install xnat-ingest[workflow]`)
-$ xnat-ingest workflow serve <spec>.yaml             # long-running local Prefect deployment, honours 'schedule:'
-$ xnat-ingest workflow deploy example-specs/         # register every spec in a directory as a Prefect deployment
+$ accessionflow workflow check <spec>.yaml            # validate, print declared params + resolved stage order
+$ accessionflow workflow run   <spec>.yaml             # run once (needs `pip install accessionflow[workflow]`)
+$ accessionflow workflow serve <spec>.yaml             # long-running local Prefect deployment, honours 'schedule:'
+$ accessionflow workflow deploy example-specs/         # register every spec in a directory as a Prefect deployment
 ```
 
 Every spec here declares a top-level `params:` block naming what it needs
@@ -16,7 +16,7 @@ mounted via `env:`/`envFrom:` reaches it) or `-p name=value` on the CLI, which
 always wins if both are given:
 
 ```console
-$ xnat-ingest workflow check minimal-dicom.yaml \
+$ accessionflow workflow check minimal-dicom.yaml \
     -p input_dir=/data/scanner-export \
     -p xnat_server=https://xnat.example.org \
     -p xnat_user=scanner-uploader \
@@ -32,11 +32,11 @@ Copy the closest one and adjust.
 
 | Spec | Shows |
 | --- | --- |
-| [`minimal-dicom.yaml`](minimal-dicom.yaml) | The smallest useful pipeline: `group` → `assign` → `upload`, every default left in place (plain DICOM). Start here. |
-| [`dicom-deidentify.yaml`](dicom-deidentify.yaml) | Adds a `deidentify` stage between `assign` and `upload`, with `--reid-dir` deliberately omitted (mapping discarded, not written to disk). |
+| [`minimal-dicom.yaml`](minimal-dicom.yaml) | The smallest useful pipeline: `collate` → `label` → `upload`, every default left in place (plain DICOM). Start here. |
+| [`dicom-deidentify.yaml`](dicom-deidentify.yaml) | Adds a `deidentify` stage between `label` and `upload`, with `--reid-dir` deliberately omitted (mapping discarded, not written to disk). |
 | [`acemid-lesion.yaml`](acemid-lesion.yaml) | The full non-DICOM case: composite `session`/`scan`/`resource`/`on_resource_clash`/`path_metadata_regex`/`metadata_tables` args as real YAML structure, and a disabled `deidentify` stage forwarding straight through to `upload`. |
 | [`acemid-wholebody-internal.yaml`](acemid-wholebody-internal.yaml) | A second, independent workflow, deployed alongside `acemid-lesion.yaml` from the same directory - the "several workflows on one host" case. |
-| [`associate-sidecars.yaml`](associate-sidecars.yaml) | `group` → `associate` → `assign` → `upload`, for files that arrive without their own sorting metadata (e.g. a loose sidecar dropped next to a session after the fact). |
+| [`attach-sidecars.yaml`](attach-sidecars.yaml) | `collate` → `attach` → `label` → `upload`, for files that arrive without their own sorting metadata (e.g. a loose sidecar dropped next to a session after the fact). |
 | [`scheduled-scanner-drop.yaml`](scheduled-scanner-drop.yaml) | `schedule:` for a continuously-running clinical-scanner drop folder, with per-stage `retries:` - runnable via `serve` (local) or `deploy` (registered on a Prefect server, needs a worker polling its work pool). |
 
 Each spec is fully self-contained (no `common.yaml`/`extends:` between them) - the
@@ -60,23 +60,23 @@ own YAML - there's no `work_dir:`/`${work_dir}` anywhere above. `--work-dir` on
 `run`/`serve`/`deploy` sets the scratch root, namespaced per workflow
 (`<work-dir>/<spec-name>/<stage-name>`) so several specs can share one root - e.g.
 everything deployed from this directory - without their outputs colliding. Left
-unset, it defaults to `.xnat-ingest-<name>` next to the spec file.
+unset, it defaults to `.accessionflow-<name>` next to the spec file.
 
 ## Deploying to a Prefect server
 
 ```console
-$ xnat-ingest workflow deploy example-specs/ \
+$ accessionflow workflow deploy example-specs/ \
     --prefect-api-url https://prefect.example.org/api \
-    --work-pool xnat-ingest \
-    --work-dir /var/lib/xnat-ingest/work \
+    --work-pool accessionflow \
+    --work-dir /var/lib/accessionflow/work \
     -p xnat_server=https://xnat.example.org \
     -p xnat_user=scanner-uploader \
     -p xnat_password="$XNAT_PASSWORD"
 ```
 
 This registers every `*.yaml` spec in the directory as a Prefect deployment
-against the `xnat-ingest` work pool - it does **not** start a worker. A Prefect
-worker (`prefect worker start --pool xnat-ingest`) must be running against that
+against the `accessionflow` work pool - it does **not** start a worker. A Prefect
+worker (`prefect worker start --pool accessionflow`) must be running against that
 same work pool, somewhere with network access to the input/work/XNAT paths, for a
 deployment to actually execute anything.
 

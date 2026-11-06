@@ -13,9 +13,9 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from xnat_ingest.workflow.runner import resolve_work_dir
-from xnat_ingest.workflow.spec import StageSpec, WorkflowSpec, load_spec
-from xnat_ingest.workflow.stages import STAGES
+from accessionflow.workflow.runner import resolve_work_dir
+from accessionflow.workflow.spec import StageSpec, WorkflowSpec, load_spec
+from accessionflow.workflow.stages import STAGES
 
 
 def _write_spec(tmp_path: Path, content: dict) -> Path:
@@ -33,12 +33,12 @@ def test_resolve_work_dir_override_namespaced_by_spec_name(tmp_path: Path) -> No
 
 def test_resolve_work_dir_defaults_next_to_spec_file(tmp_path: Path) -> None:
     spec = WorkflowSpec(name="acemid-lesion", stages=[], source=tmp_path / "spec.yaml")
-    assert resolve_work_dir(spec, None) == tmp_path / ".xnat-ingest-acemid-lesion"
+    assert resolve_work_dir(spec, None) == tmp_path / ".accessionflow-acemid-lesion"
 
 
 def test_resolve_work_dir_defaults_to_cwd_without_source(tmp_path: Path) -> None:
     spec = WorkflowSpec(name="acemid-lesion", stages=[])
-    assert resolve_work_dir(spec, None) == Path.cwd() / ".xnat-ingest-acemid-lesion"
+    assert resolve_work_dir(spec, None) == Path.cwd() / ".accessionflow-acemid-lesion"
 
 
 class _FakeTask:
@@ -107,35 +107,35 @@ def test_run_workflow_calls_stages_in_order_and_wires_dirs(
     calls: list[str] = []
 
     def fake_group(input_paths, output_dir, **kw):  # type: ignore[no-untyped-def]
-        calls.append(("group", tuple(input_paths), output_dir))
+        calls.append(("collate", tuple(input_paths), output_dir))
         return []
 
     def fake_assign(input_dir, output_dir, **kw):  # type: ignore[no-untyped-def]
-        calls.append(("assign", input_dir, output_dir))
+        calls.append(("label", input_dir, output_dir))
         return []
 
     stages = [
         StageSpec(
-            name="grp", command="group", args={"input_paths": [str(tmp_path / "raw")]}
+            name="grp", command="collate", args={"input_paths": [str(tmp_path / "raw")]}
         ),
-        StageSpec(name="asn", command="assign", input="grp"),
+        StageSpec(name="asn", command="label", input="grp"),
     ]
     spec = _spec(tmp_path, stages)
 
     with (
-        patch.object(STAGES["group"], "api_fn", fake_group),
-        patch.object(STAGES["assign"], "api_fn", fake_assign),
+        patch.object(STAGES["collate"], "api_fn", fake_group),
+        patch.object(STAGES["label"], "api_fn", fake_assign),
     ):
-        from xnat_ingest.workflow.runner import run_workflow
+        from accessionflow.workflow.runner import run_workflow
 
         errors = run_workflow(spec, work_dir=tmp_path / "work")
 
     assert errors == {}
-    assert [c[0] for c in calls] == ["group", "assign"]
+    assert [c[0] for c in calls] == ["collate", "label"]
     grp_output = calls[0][2]
     asn_input = calls[1][1]
     assert grp_output == tmp_path / "work" / "test-wf" / "grp"
-    assert asn_input == grp_output  # assign's input is group's output dir
+    assert asn_input == grp_output  # label's input is collate's output dir
 
 
 def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
@@ -144,7 +144,7 @@ def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
     calls: list[tuple] = []
 
     def fake_assign(input_dir, output_dir, **kw):  # type: ignore[no-untyped-def]
-        calls.append(("assign", input_dir, output_dir))
+        calls.append(("label", input_dir, output_dir))
         return []
 
     def fake_deidentify(input_dir, output_dir, spec_dir, **kw):  # type: ignore[no-untyped-def]
@@ -157,7 +157,7 @@ def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
 
     stages = [
         StageSpec(
-            name="asn", command="assign", args={"input_dir": str(tmp_path / "in")}
+            name="asn", command="label", args={"input_dir": str(tmp_path / "in")}
         ),
         StageSpec(
             name="deid",
@@ -176,17 +176,17 @@ def test_run_workflow_disabled_middle_stage_forwards_input_to_dependent(
     spec = _spec(tmp_path, stages)
 
     with (
-        patch.object(STAGES["assign"], "api_fn", fake_assign),
+        patch.object(STAGES["label"], "api_fn", fake_assign),
         patch.object(STAGES["deidentify"], "api_fn", fake_deidentify),
         patch.object(STAGES["upload"], "api_fn", fake_upload),
-        patch("xnat_ingest.workflow.stages._build_xnat_repo", return_value=object()),
-        patch("xnat_ingest.workflow.stages._close_xnat_repo"),
+        patch("accessionflow.workflow.stages._build_xnat_repo", return_value=object()),
+        patch("accessionflow.workflow.stages._close_xnat_repo"),
     ):
-        from xnat_ingest.workflow.runner import run_workflow
+        from accessionflow.workflow.runner import run_workflow
 
         run_workflow(spec)
 
-    assert [c[0] for c in calls] == ["assign", "upload"]  # 'deid' skipped entirely
+    assert [c[0] for c in calls] == ["label", "upload"]  # 'deid' skipped entirely
     asn_output = calls[0][2]
     upload_input = calls[1][1]
     assert upload_input == str(asn_output)  # forwarded straight through 'deid'
@@ -198,35 +198,35 @@ def test_run_workflow_skips_disabled_stage(
     calls: list[str] = []
 
     def fake_group(input_paths, output_dir, **kw):  # type: ignore[no-untyped-def]
-        calls.append("group")
+        calls.append("collate")
         return []
 
     def fake_assign(input_dir, output_dir, **kw):  # type: ignore[no-untyped-def]
-        calls.append("assign")
+        calls.append("label")
         return []
 
     stages = [
         StageSpec(
             name="grp",
-            command="group",
+            command="collate",
             args={"input_paths": [str(tmp_path / "raw")]},
             enabled=False,
         ),
         StageSpec(
-            name="asn", command="assign", args={"input_dir": str(tmp_path / "in")}
+            name="asn", command="label", args={"input_dir": str(tmp_path / "in")}
         ),
     ]
     spec = _spec(tmp_path, stages)
 
     with (
-        patch.object(STAGES["group"], "api_fn", fake_group),
-        patch.object(STAGES["assign"], "api_fn", fake_assign),
+        patch.object(STAGES["collate"], "api_fn", fake_group),
+        patch.object(STAGES["label"], "api_fn", fake_assign),
     ):
-        from xnat_ingest.workflow.runner import run_workflow
+        from accessionflow.workflow.runner import run_workflow
 
         run_workflow(spec)
 
-    assert calls == ["assign"]
+    assert calls == ["label"]
 
 
 def test_run_workflow_raises_workflow_run_error_on_stage_errors(
@@ -237,13 +237,13 @@ def test_run_workflow_raises_workflow_run_error_on_stage_errors(
 
     stages = [
         StageSpec(
-            name="grp", command="group", args={"input_paths": [str(tmp_path / "raw")]}
+            name="grp", command="collate", args={"input_paths": [str(tmp_path / "raw")]}
         )
     ]
     spec = _spec(tmp_path, stages)
 
-    with patch.object(STAGES["group"], "api_fn", failing_group):
-        from xnat_ingest.workflow.runner import WorkflowRunError, run_workflow
+    with patch.object(STAGES["collate"], "api_fn", failing_group):
+        from accessionflow.workflow.runner import WorkflowRunError, run_workflow
 
         with pytest.raises(WorkflowRunError) as exc_info:
             run_workflow(spec)
@@ -259,7 +259,7 @@ def test_serve_workflow_passes_schedule_as_cron(
 
     stages = [
         StageSpec(
-            name="grp", command="group", args={"input_paths": [str(tmp_path / "raw")]}
+            name="grp", command="collate", args={"input_paths": [str(tmp_path / "raw")]}
         )
     ]
     spec = WorkflowSpec(
@@ -269,8 +269,8 @@ def test_serve_workflow_passes_schedule_as_cron(
         source=tmp_path / "spec.yaml",
     )
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
-        from xnat_ingest.workflow.runner import build_flow, serve_workflow
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
+        from accessionflow.workflow.runner import build_flow, serve_workflow
 
         flow = build_flow(spec, work_dir=tmp_path / "work")
         serve_workflow(spec, work_dir=tmp_path / "work")
@@ -286,14 +286,14 @@ def test_missing_prefect_raises_clear_import_error(
     )  # simulate 'import prefect' failing
     stages = [
         StageSpec(
-            name="grp", command="group", args={"input_paths": [str(tmp_path / "raw")]}
+            name="grp", command="collate", args={"input_paths": [str(tmp_path / "raw")]}
         )
     ]
     spec = _spec(tmp_path, stages)
 
-    from xnat_ingest.workflow.runner import run_workflow
+    from accessionflow.workflow.runner import run_workflow
 
-    with pytest.raises(ImportError, match="xnat-ingest\\[workflow\\]"):
+    with pytest.raises(ImportError, match="accessionflow\\[workflow\\]"):
         run_workflow(spec)
 
 
@@ -313,7 +313,7 @@ def test_build_flow_declares_one_parameter_per_deferred_default(
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["${input_dir}"],
                         "unlink_source": "${xnat_server}",
@@ -324,7 +324,7 @@ def test_build_flow_declares_one_parameter_per_deferred_default(
     )
     spec = load_spec(spec_path, param_overrides={"xnat_server": "https://x"})
 
-    from xnat_ingest.workflow.runner import build_flow
+    from accessionflow.workflow.runner import build_flow
 
     flow = build_flow(spec)
     sig = inspect.signature(flow.fn)
@@ -349,7 +349,7 @@ def test_run_workflow_substitutes_deferred_param_into_stage_args(
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {"input_paths": ["${input_dir}"]},
                 }
             ],
@@ -357,8 +357,8 @@ def test_run_workflow_substitutes_deferred_param_into_stage_args(
     )
     spec = load_spec(spec_path, param_overrides={"input_dir": "/real/data"})
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
-        from xnat_ingest.workflow.runner import run_workflow
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
+        from accessionflow.workflow.runner import run_workflow
 
         run_workflow(spec, work_dir=tmp_path / "work")
 
@@ -381,7 +381,7 @@ def test_run_workflow_required_deferred_param_raises_before_running(
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {"input_paths": ["${input_dir}"]},
                 }
             ],
@@ -389,8 +389,8 @@ def test_run_workflow_required_deferred_param_raises_before_running(
     )
     spec = load_spec(spec_path)  # no override/env - input_dir stays required
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
-        from xnat_ingest.workflow.runner import run_workflow
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
+        from accessionflow.workflow.runner import run_workflow
 
         with pytest.raises(ValueError, match="input_dir"):
             run_workflow(spec, work_dir=tmp_path / "work")
@@ -414,7 +414,7 @@ def test_serve_workflow_passes_resolved_deferred_params_only(
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["${input_dir}"],
                         "wait_period": "${extra_required}",
@@ -425,8 +425,8 @@ def test_serve_workflow_passes_resolved_deferred_params_only(
     )
     spec = load_spec(spec_path)  # 'extra_required' left with no resolvable value
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
-        from xnat_ingest.workflow.runner import serve_workflow
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
+        from accessionflow.workflow.runner import serve_workflow
 
         serve_workflow(spec)
 

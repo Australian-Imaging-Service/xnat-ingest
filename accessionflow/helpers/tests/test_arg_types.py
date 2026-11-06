@@ -439,7 +439,6 @@ def test_semicolon_list_option_accepts_repeated_flags_and_env_var() -> None:
 
 
 # ── rows_converter ─────────────────────────────────────────────────────────
-# ── rows_converter ────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("freq", ["session", "scan", "resource"])

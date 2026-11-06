@@ -4,16 +4,15 @@ from pathlib import Path
 
 import click
 
-from xnat_ingest.cli.base import cli
-
-from ..api.workflow_api import check as check_workflow
-from ..api.workflow_api import deploy as deploy_workflow
-from ..api.workflow_api import run as run_workflow
-from ..api.workflow_api import serve as serve_workflow
-from ..helpers.arg_types import LoggerConfig
-from ..helpers.logging import logger, set_logger_handling
-from ..workflow.dag import dependencies, resolve_order
-from ..workflow.errors import WorkflowSpecError
+from accessionflow.api.workflow_api import check as check_workflow
+from accessionflow.api.workflow_api import deploy as deploy_workflow
+from accessionflow.api.workflow_api import run as run_workflow
+from accessionflow.api.workflow_api import serve as serve_workflow
+from accessionflow.cli.base import cli
+from accessionflow.helpers.arg_types import LoggerConfig
+from accessionflow.helpers.logging import logger, set_logger_handling
+from accessionflow.workflow.dag import dependencies, resolve_order
+from accessionflow.workflow.errors import WorkflowSpecError
 
 _PARAM_OPTION = click.option(
     "--param",
@@ -42,7 +41,7 @@ _WORK_DIR_OPTION = click.option(
         "(e.g. everything deployed from one directory) without colliding. Not "
         "part of the spec's own YAML - a runtime concern, so the same spec runs "
         "on a different host with a different --work-dir unmodified. Defaults "
-        "to '.xnat-ingest-<name>' next to the spec file (XINGEST_WORK_DIR env. "
+        "to '.accessionflow-<name>' next to the spec file (XINGEST_WORK_DIR env. "
         "var)"
     ),
 )
@@ -64,7 +63,7 @@ def _parse_params(params: ty.Sequence[str]) -> ty.Dict[str, str]:
 @cli.group(
     name="workflow",
     help=(
-        "Run a multi-stage xnat-ingest pipeline (group/assign/deidentify/upload) "
+        "Run a multi-stage accessionflow pipeline (collate/label/deidentify/upload) "
         "from a single YAML spec, via Prefect. See docs/source/how_to/workflow.rst "
         "and example-specs/ for the spec format."
     ),
@@ -137,7 +136,7 @@ def run_cmd(
 ) -> None:
     set_logger_handling(logger_configs=loggers)
     overrides = _parse_params(params)
-    from ..workflow.runner import WorkflowRunError
+    from accessionflow.workflow.runner import WorkflowRunError
 
     try:
         run_workflow(spec_path, param_overrides=overrides, work_dir=work_dir)
@@ -194,7 +193,7 @@ def serve_cmd(
     name="deploy",
     help=(
         "Deploy every workflow spec in a directory as a Prefect deployment "
-        "(e.g. 'xnat-ingest workflow deploy example-specs/'). Registers each "
+        "(e.g. 'accessionflow workflow deploy example-specs/'). Registers each "
         "with the target Prefect server/work pool for scheduled or on-demand "
         "runs - a Prefect worker must be running against that work pool to "
         "actually execute them; see docs/source/how_to/workflow.rst."
@@ -223,7 +222,7 @@ def serve_cmd(
 )
 @click.option(
     "--work-pool",
-    default="xnat-ingest",
+    default="accessionflow",
     envvar="XINGEST_WORK_POOL",
     help=(
         "The Prefect work pool each deployment is registered against; a worker "

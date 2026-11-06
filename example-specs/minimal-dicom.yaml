@@ -1,13 +1,13 @@
-# The smallest useful xnat-ingest workflow: group-orthanc -> assign -> upload,
+# The smallest useful accessionflow workflow: collate-orthanc -> label -> upload,
 # every default left in place. Suits a plain DICOM workflow pulling sessions
 # straight from an Orthanc PACS instance (most DICOM workflows do) where
 # StudyInstanceUID/SeriesNumber/PatientID/AccessionNumber already say everything
 # needed. For a plain filesystem export instead of Orthanc, swap the first
-# stage's 'command: group-orthanc' for 'command: group' with an 'input_paths:'
-# arg - see associate-sidecars.yaml/scheduled-scanner-drop.yaml for that form.
+# stage's 'command: collate-orthanc' for 'command: collate' with an 'input_paths:'
+# arg - see attach-sidecars.yaml/scheduled-scanner-drop.yaml for that form.
 #
 # 'params:' declares exactly what this workflow needs supplied per-deployment -
-# 'xnat-ingest workflow check minimal-dicom.yaml' prints them. A param with no
+# 'accessionflow workflow check minimal-dicom.yaml' prints them. A param with no
 # 'default:' is required: set via a same-named environment variable (e.g. a k8s
 # Secret mounted with env:/envFrom:, which is how the *_password params are
 # meant to reach this) or '--param name=value' on the CLI, which always wins if
@@ -37,8 +37,8 @@ params:
     secret: true
 
 stages:
-  - name: group
-    command: group-orthanc
+  - name: collate
+    command: collate-orthanc
     args:
       url: "${orthanc_url}"
       store_dir: "${orthanc_store_dir}"
@@ -47,9 +47,9 @@ stages:
       # datatypes/session/scan all default to DICOM (medimage/dicom-series,
       # StudyInstanceUID, SeriesNumber) - nothing else needed here.
 
-  - name: assign
-    command: assign
-    input: group
+  - name: label
+    command: label
+    input: collate
     args:
       project: StudyComments
       subject: PatientID
@@ -57,7 +57,7 @@ stages:
 
   - name: upload
     command: upload
-    input: assign
+    input: label
     args:
       # Explicit on the stage that actually needs them, not a shared top-level
       # block - keeps the spec format backend-agnostic for a future non-XNAT

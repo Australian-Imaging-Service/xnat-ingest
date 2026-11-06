@@ -3,8 +3,8 @@ from pathlib import Path
 from fileformats.core import FileSet
 from fileformats.image.raster import Jpeg, Png
 
-from xnat_ingest.helpers.arg_types import ClashSpec, IDSpec
-from xnat_ingest.workflow.stages import STAGES, StageContext
+from accessionflow.helpers.arg_types import ClashSpec, IDSpec
+from accessionflow.workflow.stages import STAGES, StageContext
 
 
 def _ctx(input_path=None, output_path=None) -> StageContext:  # type: ignore[no-untyped-def]
@@ -12,7 +12,7 @@ def _ctx(input_path=None, output_path=None) -> StageContext:  # type: ignore[no-
 
 
 def test_group_kwargs_input_from_context() -> None:
-    kwargs = STAGES["group"].build_kwargs(
+    kwargs = STAGES["collate"].build_kwargs(
         {}, _ctx(input_path=Path("/in"), output_path=Path("/out"))
     )
     assert kwargs["input_paths"] == ["/in"]
@@ -20,14 +20,14 @@ def test_group_kwargs_input_from_context() -> None:
 
 
 def test_group_kwargs_input_from_args_overrides_context() -> None:
-    kwargs = STAGES["group"].build_kwargs(
+    kwargs = STAGES["collate"].build_kwargs(
         {"input_paths": ["/a", "/b"]}, _ctx(output_path=Path("/out"))
     )
     assert kwargs["input_paths"] == ["/a", "/b"]
 
 
 def test_group_orthanc_kwargs_plain_passthrough() -> None:
-    kwargs = STAGES["group-orthanc"].build_kwargs(
+    kwargs = STAGES["collate-orthanc"].build_kwargs(
         {
             "url": "https://orthanc.example.org",
             "store_dir": "/mnt/orthanc",
@@ -46,13 +46,13 @@ def test_group_orthanc_kwargs_plain_passthrough() -> None:
 
 
 def test_group_orthanc_has_no_generic_input_arg() -> None:
-    # group-orthanc is always a pipeline root - it pulls from Orthanc directly,
+    # collate-orthanc is always a pipeline root - it pulls from Orthanc directly,
     # never from a prior stage's output directory.
-    assert STAGES["group-orthanc"].input_arg == "url"
+    assert STAGES["collate-orthanc"].input_arg == "url"
 
 
 def test_group_kwargs_composite_fields() -> None:
-    kwargs = STAGES["group"].build_kwargs(
+    kwargs = STAGES["collate"].build_kwargs(
         {
             "datatypes": ["image/png", "image/jpeg"],
             "session": "{subject_uid}",
@@ -76,7 +76,7 @@ def test_group_kwargs_composite_fields() -> None:
 
 
 def test_group_kwargs_plain_scalars_pass_through() -> None:
-    kwargs = STAGES["group"].build_kwargs(
+    kwargs = STAGES["collate"].build_kwargs(
         {"recursive": True, "wait_period": 30},
         _ctx(input_path=Path("/in"), output_path=Path("/out")),
     )
@@ -85,7 +85,7 @@ def test_group_kwargs_plain_scalars_pass_through() -> None:
 
 
 def test_assign_kwargs_field_renames() -> None:
-    kwargs = STAGES["assign"].build_kwargs(
+    kwargs = STAGES["label"].build_kwargs(
         {
             "project": "StudyComments",
             "subject": "SubjectID",
@@ -100,13 +100,13 @@ def test_assign_kwargs_field_renames() -> None:
     assert kwargs["project_field"] == "StudyComments"
     assert kwargs["subject_field"] == "SubjectID"
     assert kwargs["session_field"] == "{SubjectID}_{CaptureDate:%Y%m%d}"
-    assert kwargs["scan_field"] == "SeriesDescription"
+    assert kwargs["acquisition_field"] == "SeriesDescription"
     assert kwargs["project_id"] == "ACEMID"
     assert "project" not in kwargs and "subject" not in kwargs
 
 
 def test_assign_kwargs_include() -> None:
-    kwargs = STAGES["assign"].build_kwargs(
+    kwargs = STAGES["label"].build_kwargs(
         {"include": ["image/png"]},
         _ctx(input_path=Path("/in"), output_path=Path("/out")),
     )
@@ -138,7 +138,7 @@ def test_deidentify_kwargs_reid_encrypt_key_encoded() -> None:
 
 
 def test_associate_kwargs_datatype() -> None:
-    kwargs = STAGES["associate"].build_kwargs(
+    kwargs = STAGES["attach"].build_kwargs(
         {"datatype": "image/png", "glob": "*.png", "identity_pattern": r"(\w+)"},
         _ctx(input_path=Path("/in"), output_path=Path("/out")),
     )
@@ -171,7 +171,7 @@ def test_upload_kwargs_connection_from_own_args() -> None:
 
 
 def test_copy_mode_string_conversion() -> None:
-    kwargs = STAGES["group"].build_kwargs(
+    kwargs = STAGES["collate"].build_kwargs(
         {"copy_mode": "copy"}, _ctx(input_path=Path("/in"), output_path=Path("/out"))
     )
     assert kwargs["copy_mode"] == FileSet.CopyMode.copy

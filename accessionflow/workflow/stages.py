@@ -1,10 +1,10 @@
-"""Registry mapping a workflow stage's ``command`` to the ``xnat_ingest.api``
+"""Registry mapping a workflow stage's ``command`` to the ``accessionflow.api``
 function it calls and the ``args:`` -> kwargs adaptation for that function.
 
 Each ``_build_*`` function is deliberately explicit (mirroring the corresponding
 ``*_cli.py`` command body) rather than table-driven, since every stage has its own
-small quirks: ``group`` folds ``collate_resources``/``convert`` lists into the
-``collation_map``/``conversion_map`` dicts its API wants, ``assign`` renames
+small quirks: ``collate`` folds ``collate_resources``/``convert`` lists into the
+``collation_map``/``conversion_map`` dicts its API wants, ``label`` renames
 ``project``/``subject``/``session``/``scan`` to the API's ``*_field`` parameters,
 and ``upload`` needs a live ``Xnat`` connection built (from its own ``server``/
 ``user``/``password`` args, not a shared workflow-level block) and closed around
@@ -19,17 +19,24 @@ from pathlib import Path
 
 import attrs
 
-from ..api.assign_api import assign
-from ..api.associate_api import associate
-from ..api.deidentify_api import deidentify
-from ..api.group_api import group, group_orthanc
-from ..api.upload_api import upload
+from accessionflow.api.attach_api import attach
+from accessionflow.api.collate_api import collate, collate_orthanc
+from accessionflow.api.deidentify_api import deidentify
+from accessionflow.api.label_api import label
+from accessionflow.repositories.xnat import REPOSITORY as XNAT_REPOSITORY
+from accessionflow.repositories.xnat.api.upload_api import upload
+
 from . import coerce
 
 if ty.TYPE_CHECKING:
     from frametree.xnat import Xnat
 
     from .spec import StageSpec
+
+
+# The repository that 'label' and 'upload' stages label for and upload to. XNAT is the
+# only repository plugin so far
+LABEL_REPOSITORY = XNAT_REPOSITORY
 
 
 @attrs.define
@@ -45,7 +52,7 @@ class StageContext:
     output_path: ty.Optional[Path]
 
 
-def _build_group(args: dict, ctx: StageContext) -> dict:
+def _build_collate(args: dict, ctx: StageContext) -> dict:
     args = dict(args)
     input_paths = args.pop(
         "input_paths", [str(ctx.input_path)] if ctx.input_path is not None else []
@@ -86,8 +93,8 @@ def _build_group(args: dict, ctx: StageContext) -> dict:
     return kwargs
 
 
-def _build_group_orthanc(args: dict, ctx: StageContext) -> dict:
-    """Unlike 'group', this has no 'input:' notion at all - it's always the root
+def _build_collate_orthanc(args: dict, ctx: StageContext) -> dict:
+    """Unlike 'collate', this has no 'input:' notion at all - it's always the root
     of a pipeline, pulling DICOM sessions straight from an Orthanc instance
     rather than a mounted directory (see 'url'/'store_dir' below)."""
     args = dict(args)
@@ -100,22 +107,27 @@ def _build_group_orthanc(args: dict, ctx: StageContext) -> dict:
     return kwargs
 
 
-def _build_assign(args: dict, ctx: StageContext) -> dict:
+def _build_label(args: dict, ctx: StageContext) -> dict:
     args = dict(args)
     kwargs: dict[str, ty.Any] = {
         "input_dir": ctx.input_path,
         "output_dir": ctx.output_path,
     }
-    for yaml_key, api_key in (
-        ("project", "project_field"),
-        ("subject", "subject_field"),
-        ("session", "session_field"),
-        ("scan", "scan_field"),
+    # The args are named after the repository's label levels and acquisition, as
+    # the 'label <repository>' CLI options are (e.g. XNAT's project/subject/session
+    # and scan). The model holds the labels as project, subject and session IDs.
+    for level, api_key in zip(
+        LABEL_REPOSITORY.labels, ("project_field", "subject_field", "session_field")
     ):
-        if yaml_key in args:
-            kwargs[api_key] = args.pop(yaml_key)
-    if "constant_project_id" in args:
-        kwargs["project_id"] = args.pop("constant_project_id")
+        if level.name in args:
+            kwargs[api_key] = args.pop(level.name)
+    acquisition = LABEL_REPOSITORY.acquisition
+    if acquisition is not None and acquisition.name in args:
+        kwargs["acquisition_field"] = args.pop(acquisition.name)
+    constant_key = f"constant_{LABEL_REPOSITORY.labels[0].name}_id"
+    if constant_key in args:
+        kwargs["project_id"] = args.pop(constant_key)
+    kwargs["single_resource"] = not LABEL_REPOSITORY.multiple_resources
     if "include" in args:
         kwargs["include"] = coerce.datatypes(args.pop("include"))
     if "copy_mode" in args:
@@ -146,7 +158,7 @@ def _build_deidentify(args: dict, ctx: StageContext) -> dict:
     return kwargs
 
 
-def _build_associate(args: dict, ctx: StageContext) -> dict:
+def _build_attach(args: dict, ctx: StageContext) -> dict:
     args = dict(args)
     kwargs: dict[str, ty.Any] = {
         "input_dir": ctx.input_path,
@@ -169,7 +181,7 @@ def _build_upload(args: dict, ctx: StageContext) -> dict:
     'unknown args' check, and popped back out by run_stage() to build/close a live
     Xnat connection around the actual api_fn() call) rather than built into a
     connection here, so this function stays pure/side-effect-free for dry-run
-    validation (xnat-ingest workflow check)."""
+    validation (accessionflow workflow check)."""
     args = dict(args)
     kwargs: dict[str, ty.Any] = {"input_dir": str(ctx.input_path)}
     server = args.pop("server", None)
@@ -220,10 +232,10 @@ class Stage:
 
 
 STAGES: dict[str, Stage] = {
-    "group": Stage(
-        command="group",
-        api_fn=group,
-        build_kwargs=_build_group,
+    "collate": Stage(
+        command="collate",
+        api_fn=collate,
+        build_kwargs=_build_collate,
         input_arg="input_paths",
         coerced_args=frozenset(
             {
@@ -241,17 +253,17 @@ STAGES: dict[str, Stage] = {
             }
         ),
     ),
-    "group-orthanc": Stage(
-        command="group-orthanc",
-        api_fn=group_orthanc,
-        build_kwargs=_build_group_orthanc,
+    "collate-orthanc": Stage(
+        command="collate-orthanc",
+        api_fn=collate_orthanc,
+        build_kwargs=_build_collate_orthanc,
         input_arg="url",
         coerced_args=frozenset({"copy_mode"}),
     ),
-    "assign": Stage(
-        command="assign",
-        api_fn=assign,
-        build_kwargs=_build_assign,
+    "label": Stage(
+        command="label",
+        api_fn=label,
+        build_kwargs=_build_label,
         coerced_args=frozenset({"include", "copy_mode"}),
     ),
     "deidentify": Stage(
@@ -260,10 +272,10 @@ STAGES: dict[str, Stage] = {
         build_kwargs=_build_deidentify,
         coerced_args=frozenset({"copy_mode"}),
     ),
-    "associate": Stage(
-        command="associate",
-        api_fn=associate,
-        build_kwargs=_build_associate,
+    "attach": Stage(
+        command="attach",
+        api_fn=attach,
+        build_kwargs=_build_attach,
         coerced_args=frozenset({"datatype", "copy_mode"}),
     ),
     "upload": Stage(

@@ -1,7 +1,7 @@
 """Builds and runs a Prefect flow from a WorkflowSpec.
 
 Prefect is imported lazily, only by the functions in this module - ``workflow.spec``
-(and so ``xnat-ingest workflow check``) never touches it. Stages run synchronously in
+(and so ``accessionflow workflow check``) never touches it. Stages run synchronously in
 dependency order (from ``workflow.dag.resolve_order``): each is wrapped in a Prefect
 ``@task`` (so it gets its own retries/observability), but there is no fan-out - a
 workflow spec is a DAG in name, not yet in execution.
@@ -23,7 +23,8 @@ from pathlib import Path
 
 import attrs
 
-from ..helpers.logging import logger
+from accessionflow.helpers.logging import logger
+
 from .dag import resolve_order
 from .spec import (
     NO_DEFAULT,
@@ -53,7 +54,7 @@ def _require_prefect() -> ty.Any:
     except ImportError as e:
         raise ImportError(
             "the 'workflow' command needs Prefect - install it with "
-            "'pip install xnat-ingest[workflow]'"
+            "'pip install accessionflow[workflow]'"
         ) from e
     return prefect
 
@@ -68,13 +69,13 @@ def resolve_work_dir(spec: WorkflowSpec, work_dir: ty.Optional[Path] = None) -> 
     own YAML/``params:`` - it's per-host scratch space, not part of what the
     pipeline does, so the same spec can be run/served/deployed with a different
     ``--work-dir`` on a different host with no edit to the spec itself. With no
-    override, defaults to ``.xnat-ingest-<name>`` next to the spec file (or the
+    override, defaults to ``.accessionflow-<name>`` next to the spec file (or the
     current directory if the spec has no known source path, e.g. in tests).
     """
     if work_dir is not None:
         return Path(work_dir) / spec.name
     base = spec.source.parent if spec.source is not None else Path.cwd()
-    return base / f".xnat-ingest-{spec.name}"
+    return base / f".accessionflow-{spec.name}"
 
 
 def _stage_output_dir(stage: StageSpec, work_dir: Path) -> ty.Optional[Path]:
@@ -176,7 +177,7 @@ def build_flow(spec: WorkflowSpec, work_dir: ty.Optional[Path] = None) -> ty.Any
             if not stage.enabled:
                 # Forward the input unchanged so a dependent stage's 'input:' still
                 # resolves to something - e.g. disabling 'deidentify' between
-                # 'assign' and 'upload' means 'upload' gets 'assign's output
+                # 'label' and 'upload' means 'upload' gets 'label's output
                 # directly, with no code change needed at either of its neighbours.
                 logger.info(
                     "Skipping disabled stage '%s' - forwarding its input unchanged",
@@ -258,7 +259,7 @@ def deploy_flow(
     server.
 
     The caller is responsible for the Prefect server connection context (see
-    ``xnat_ingest.api.workflow_api.deploy``) - this just builds the flow (with
+    ``accessionflow.api.workflow_api.deploy``) - this just builds the flow (with
     every eagerly-resolved ``${NAME}`` placeholder already baked into its closure,
     same as ``run``/``serve``) and deploys it. Deferred params become the
     deployment's default parameter values, same as ``serve_workflow``.

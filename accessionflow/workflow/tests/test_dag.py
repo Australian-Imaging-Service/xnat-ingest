@@ -1,16 +1,16 @@
 import pytest
 
-from xnat_ingest.workflow.dag import resolve_order, validate_stage_inputs
-from xnat_ingest.workflow.errors import WorkflowSpecError
-from xnat_ingest.workflow.spec import StageSpec
+from accessionflow.workflow.dag import resolve_order, validate_stage_inputs
+from accessionflow.workflow.errors import WorkflowSpecError
+from accessionflow.workflow.spec import StageSpec
 
 
-def _stage(name: str, command: str = "assign", **kwargs) -> StageSpec:  # type: ignore[no-untyped-def]
+def _stage(name: str, command: str = "label", **kwargs) -> StageSpec:  # type: ignore[no-untyped-def]
     return StageSpec(name=name, command=command, **kwargs)
 
 
 def test_resolve_order_linear_chain() -> None:
-    a = _stage("a", command="group", args={"input_paths": ["/x"]})
+    a = _stage("a", command="collate", args={"input_paths": ["/x"]})
     b = _stage("b", input="a")
     c = _stage("c", input="b")
     ordered = resolve_order([c, b, a])  # deliberately out of order
@@ -18,8 +18,8 @@ def test_resolve_order_linear_chain() -> None:
 
 
 def test_resolve_order_independent_branches_both_included() -> None:
-    a = _stage("a", command="group", args={"input_paths": ["/x"]})
-    b = _stage("b", command="group", args={"input_paths": ["/y"]})
+    a = _stage("a", command="collate", args={"input_paths": ["/x"]})
+    b = _stage("b", command="collate", args={"input_paths": ["/y"]})
     c = _stage("c", input="a", after=["b"])
     ordered = resolve_order([c, a, b])
     names = [s.name for s in ordered]
@@ -28,8 +28,8 @@ def test_resolve_order_independent_branches_both_included() -> None:
 
 
 def test_resolve_order_after_only_no_input() -> None:
-    a = _stage("a", command="group", args={"input_paths": ["/x"]})
-    b = _stage("b", command="group", args={"input_paths": ["/y"]}, after=["a"])
+    a = _stage("a", command="collate", args={"input_paths": ["/x"]})
+    b = _stage("b", command="collate", args={"input_paths": ["/y"]}, after=["a"])
     ordered = resolve_order([b, a])
     assert [s.name for s in ordered] == ["a", "b"]
 
@@ -46,18 +46,20 @@ def test_validate_stage_inputs_ok_with_input_ref() -> None:
 
 
 def test_validate_stage_inputs_ok_with_explicit_arg() -> None:
-    validate_stage_inputs([_stage("a", command="assign", args={"input_dir": "/x"})])
+    validate_stage_inputs([_stage("a", command="label", args={"input_dir": "/x"})])
 
 
 def test_validate_stage_inputs_group_needs_input_paths() -> None:
-    validate_stage_inputs([_stage("a", command="group", args={"input_paths": ["/x"]})])
+    validate_stage_inputs(
+        [_stage("a", command="collate", args={"input_paths": ["/x"]})]
+    )
 
 
 def test_validate_stage_inputs_missing_raises() -> None:
     with pytest.raises(WorkflowSpecError, match="input_dir"):
-        validate_stage_inputs([_stage("a", command="assign", args={})])
+        validate_stage_inputs([_stage("a", command="label", args={})])
 
 
 def test_validate_stage_inputs_group_missing_raises() -> None:
     with pytest.raises(WorkflowSpecError, match="input_paths"):
-        validate_stage_inputs([_stage("a", command="group", args={})])
+        validate_stage_inputs([_stage("a", command="collate", args={})])

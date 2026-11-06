@@ -11,9 +11,9 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from xnat_ingest.api import workflow_api
-from xnat_ingest.workflow.errors import WorkflowSpecError
-from xnat_ingest.workflow.stages import STAGES
+from accessionflow.api import workflow_api
+from accessionflow.workflow.errors import WorkflowSpecError
+from accessionflow.workflow.stages import STAGES
 
 
 class _FakeTask:
@@ -107,7 +107,7 @@ def _group_only_spec(name: str) -> dict:
     return {
         "name": name,
         "stages": [
-            {"name": "grp", "command": "group", "args": {"input_paths": ["/data/in"]}}
+            {"name": "grp", "command": "collate", "args": {"input_paths": ["/data/in"]}}
         ],
     }
 
@@ -132,7 +132,7 @@ def test_run_executes_stages(tmp_path: Path, fake_prefect: ty.Any) -> None:
         calls.append(input_paths)
         return []
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
         errors = workflow_api.run(spec_path, work_dir=tmp_path / "work")
 
     assert errors == {}
@@ -188,7 +188,7 @@ def test_deploy_applies_param_overrides_uniformly(
                 "stages": [
                     {
                         "name": "grp",
-                        "command": "group",
+                        "command": "collate",
                         "args": {"input_paths": ["${input_dir}"]},
                     }
                 ],

@@ -1,4 +1,4 @@
-# Like minimal-dicom.yaml, with a deidentify stage inserted between assign and
+# Like minimal-dicom.yaml, with a deidentify stage inserted between label and
 # upload. deidentify() (this branch) requires a reid_dir to write the original
 # <-> deidentified mapping to - see docs/source/how_to/deidentify.rst. Add
 # reid_encrypt_key too if that mapping should be encrypted at rest.
@@ -17,7 +17,7 @@ params:
     secret: true
   spec_dir:
     description: "Directory of project-specific deidentification specs"
-    default: /etc/xnat-ingest/deid-specs
+    default: /etc/accessionflow/deid-specs
   reid_dir:
     description: "Directory to write the original<->deidentified mapping to"
   reid_encrypt_key:
@@ -32,17 +32,17 @@ params:
     secret: true
 
 stages:
-  - name: group
-    command: group-orthanc
+  - name: collate
+    command: collate-orthanc
     args:
       url: "${orthanc_url}"
       store_dir: "${orthanc_store_dir}"
       user: "${orthanc_user}"
       password: "${orthanc_password}"
 
-  - name: assign
-    command: assign
-    input: group
+  - name: label
+    command: label
+    input: collate
     args:
       project: StudyComments
       subject: PatientID
@@ -50,7 +50,7 @@ stages:
 
   - name: deidentify
     command: deidentify
-    input: assign
+    input: label
     args:
       spec_dir: "${spec_dir}"
       reid_dir: "${reid_dir}"

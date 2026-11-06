@@ -27,8 +27,8 @@ params:
     secret: true
 
 stages:
-  - name: group
-    command: group
+  - name: collate
+    command: collate
     args:
       input_paths: ["${input_dir}"]
       recursive: true
@@ -76,11 +76,11 @@ stages:
           joins:
             ImagePath: '=HYPERLINK("{subject_uid}/{filename}")'
 
-  - name: assign
-    command: assign
-    input: group
+  - name: label
+    command: label
+    input: collate
     args:
-      # assign() still requires a project field even when constant_project_id
+      # label() still requires a project field even when constant_project_id
       # overrides the actual project assigned below - it's otherwise unused.
       project: "all"
       subject: SubjectID
@@ -89,15 +89,15 @@ stages:
 
   - name: deidentify
     command: deidentify
-    input: assign
+    input: label
     # The PNG/JPEG/whole-body-analysis/dexi data uploaded here carry no PHI, so
-    # this stage is disabled - it forwards 'assign's output straight through to
+    # this stage is disabled - it forwards 'label's output straight through to
     # 'upload' unchanged. Flip to true (and point spec_dir somewhere real) if
     # that ever stops being true, with no change needed to either neighbour.
     enabled: false
     args:
-      spec_dir: /etc/xnat-ingest/deid-specs
-      reid_dir: /var/lib/xnat-ingest/reid
+      spec_dir: /etc/accessionflow/deid-specs
+      reid_dir: /var/lib/accessionflow/reid
 
   - name: upload
     command: upload

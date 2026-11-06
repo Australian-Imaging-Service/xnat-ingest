@@ -1,8 +1,8 @@
 from fileformats.core import FileSet
 from fileformats.image.raster import Jpeg, Png
 
-from xnat_ingest.helpers.arg_types import ClashSpec, IDSpec, PathMetadataRegex
-from xnat_ingest.workflow import coerce
+from accessionflow.helpers.arg_types import ClashSpec, IDSpec, PathMetadataRegex
+from accessionflow.workflow import coerce
 
 
 def test_construct_from_mapping() -> None:

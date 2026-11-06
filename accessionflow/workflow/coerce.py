@@ -1,4 +1,4 @@
-"""Shared YAML -> xnat-ingest-object coercion for the ``workflow`` command.
+"""Shared YAML -> accessionflow-object coercion for the ``workflow`` command.
 
 Every composite CLI type in ``helpers.arg_types`` (``IDSpec``, ``ClashSpec``,
 ``PathMetadataRegex``, ``MetadataTable``, ...) is an ``attrs`` class whose fields
@@ -16,7 +16,7 @@ import typing as ty
 
 from fileformats.core import FileSet
 
-from ..helpers.arg_types import (
+from accessionflow.helpers.arg_types import (
     ClashSpec,
     CollationSpec,
     Convert,
@@ -25,9 +25,9 @@ from ..helpers.arg_types import (
     OnResourceClash,
     PathMetadataRegex,
     StoreCredentials,
-    UploadMethod,
     datatype_converter,
 )
+from accessionflow.repositories.xnat.arg_types import UploadMethod
 
 
 def construct(cls: type, value: ty.Any) -> ty.Any:
@@ -67,8 +67,8 @@ def path_metadata_regexes(value: ty.Any) -> list[PathMetadataRegex]:
 
 def on_resource_clash(value: ty.Any) -> "OnResourceClash | list[ClashSpec]":
     """A bare policy string ('error'/'avoid'/'merge'/'overwrite') applies to any
-    clash; a list of {policy, datatype} entries is datatype-scoped (``group`` only -
-    ``deidentify``/``associate`` only accept the bare-string form)."""
+    clash; a list of {policy, datatype} entries is datatype-scoped (``collate`` only -
+    ``deidentify``/``attach`` only accept the bare-string form)."""
     if value is None:
         return "error"
     if isinstance(value, str):

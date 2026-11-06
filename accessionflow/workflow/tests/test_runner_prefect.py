@@ -1,5 +1,5 @@
 """Integration checks against a *real* Prefect install (skipped where the optional
-``xnat-ingest[workflow]`` extra isn't present). The rest of the runner tests use a
+``accessionflow[workflow]`` extra isn't present). The rest of the runner tests use a
 fake ``prefect`` module - these lock in the two things that fake can't vouch for:
 that Prefect's own parameter-schema introspection honours the dynamically-built
 ``__signature__``, and that ``serve``/``deploy`` accept ``parameters=``.
@@ -14,9 +14,9 @@ import yaml
 
 prefect = pytest.importorskip("prefect")
 
-from xnat_ingest.workflow.runner import build_flow, run_workflow  # noqa: E402
-from xnat_ingest.workflow.spec import load_spec  # noqa: E402
-from xnat_ingest.workflow.stages import STAGES  # noqa: E402
+from accessionflow.workflow.runner import build_flow, run_workflow  # noqa: E402
+from accessionflow.workflow.spec import load_spec  # noqa: E402
+from accessionflow.workflow.stages import STAGES  # noqa: E402
 
 
 def _spec(tmp_path: Path, content: dict) -> Path:
@@ -37,7 +37,7 @@ def _deferred_params_spec(tmp_path: Path) -> Path:
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["${input_dir}"],
                         "unlink_source": "${xnat_server}",
@@ -86,6 +86,6 @@ def test_real_prefect_run_required_deferred_param_raises_before_server_starts(
     def fake_group(*a, **kw):  # type: ignore[no-untyped-def]
         raise AssertionError("stage should never run")
 
-    with patch.object(STAGES["group"], "api_fn", fake_group):
+    with patch.object(STAGES["collate"], "api_fn", fake_group):
         with pytest.raises(ValueError, match="xnat_server"):
             run_workflow(spec, work_dir=tmp_path / "work")

@@ -44,7 +44,7 @@ def resolve_order(stages: ty.List["StageSpec"]) -> ty.List["StageSpec"]:
 
 def validate_stage_inputs(stages: ty.List["StageSpec"]) -> None:
     """Every stage must either chain from another stage via 'input:', or supply its
-    command's input argument (e.g. 'input_paths' for group, 'input_dir' for the
+    command's input argument (e.g. 'input_paths' for collate, 'input_dir' for the
     rest) directly under 'args:'."""
     from .stages import STAGES
 

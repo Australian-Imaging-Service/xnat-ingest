@@ -1,12 +1,12 @@
-"""Loading and validating ``xnat-ingest workflow`` YAML specs.
+"""Loading and validating ``accessionflow workflow`` YAML specs.
 
 Deliberately NOT a general orchestration language: no expressions, no shell steps,
 no templating beyond ``${NAME}`` placeholders resolved against declared ``params:``,
 ``--param``/``-p`` CLI overrides, and the environment - see :func:`_resolve_param`
-for the exact precedence. A spec is a flat list of xnat-ingest stages (one of
-``group``/``assign``/``deidentify``/``associate``/``upload``) chained by
+for the exact precedence. A spec is a flat list of accessionflow stages (one of
+``collate``/``label``/``deidentify``/``attach``/``upload``) chained by
 ``input:``/``after:`` references; everything else under a stage's ``args:`` is
-exactly the keyword arguments of the matching ``xnat_ingest.api.*`` function,
+exactly the keyword arguments of the matching ``accessionflow.api.*`` function,
 expressed as YAML instead of CLI tokens or ``;``-packed env vars - see
 ``workflow.coerce`` for how each YAML shape maps onto the underlying (mostly
 ``attrs``) argument types.
@@ -31,7 +31,7 @@ through Prefect's parameter store. See :func:`_resolve_stage_args`.
 placeholders, stage dependency cycles, unknown stage references, and (by
 dry-running each stage's kwarg builder) unknown/malformed ``args:`` - without
 touching Prefect or the filesystem beyond reading the YAML file(s) themselves.
-That's what backs ``xnat-ingest workflow check``.
+That's what backs ``accessionflow workflow check``.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ NO_DEFAULT: ty.Any = object()
 
 # Dummy paths used only to dry-run a stage's kwarg builder at validation time - never
 # touched on disk, since build_kwargs functions are pure (no I/O of their own).
-_DUMMY_INPUT = Path("__xnat_ingest_check__/input")
-_DUMMY_OUTPUT = Path("__xnat_ingest_check__/output")
+_DUMMY_INPUT = Path("__accessionflow_check__/input")
+_DUMMY_OUTPUT = Path("__accessionflow_check__/output")
 
 
 @attrs.define
@@ -478,8 +478,7 @@ def load_spec(
         for ref, field in refs:
             if ref is not None and ref not in names:
                 raise WorkflowSpecError(
-                    f"stages ('{stage.name}').{field}: refers to unknown stage "
-                    f"'{ref}'"
+                    f"stages ('{stage.name}').{field}: refers to unknown stage '{ref}'"
                 )
 
     dag.validate_stage_inputs(stages)

@@ -1,7 +1,7 @@
 Running a whole pipeline from one spec
 =======================================
 
-:ref:`Deployment tips` chains ``group``/``assign``/``deidentify``/``upload`` as
+:ref:`Deployment tips` chains ``collate``/``label``/``deidentify``/``upload`` as
 separate long-running processes (containers, Compose services, ...), each wired to
 the next by mounting one stage's output directory as the next stage's input. That
 works well, but every composite option (``--session``, ``--scan``,
@@ -9,12 +9,12 @@ works well, but every composite option (``--session``, ``--scan``,
 CLI tokens or packed into a ``;``-separated env var, and the chain itself has to be
 maintained by hand across however many container definitions.
 
-``xnat-ingest workflow`` runs the whole chain from a single YAML spec instead, via
+``accessionflow workflow`` runs the whole chain from a single YAML spec instead, via
 `Prefect <https://www.prefect.io/>`_: one process, one file, and every composite
 option expressed as real YAML structure rather than a packed string. It is
 deliberately **not** a general orchestration language — no expressions, no shell
 steps, no templating beyond ``${NAME}`` placeholders resolved against declared
-parameters. A spec is a flat list of xnat-ingest stages chained by data dependencies;
+parameters. A spec is a flat list of accessionflow stages chained by data dependencies;
 everything else under a stage's ``args:`` is exactly the keyword arguments of the
 matching :doc:`../api` function, just spelled in YAML.
 
@@ -23,7 +23,7 @@ Prefect:
 
 .. code-block:: console
 
-    $ python3 -m pip install xnat-ingest[workflow]
+    $ python3 -m pip install accessionflow[workflow]
 
 A minimal spec — see ``example-specs/`` in the repository for more, including the
 full non-DICOM case with every composite argument:
@@ -44,14 +44,14 @@ full non-DICOM case with every composite argument:
         secret: true
 
     stages:
-      - name: group
-        command: group
+      - name: collate
+        command: collate
         args:
           input_paths: ["${input_dir}"]
 
-      - name: assign
-        command: assign
-        input: group
+      - name: label
+        command: label
+        input: collate
         args:
           project: StudyComments
           subject: PatientID
@@ -59,7 +59,7 @@ full non-DICOM case with every composite argument:
 
       - name: upload
         command: upload
-        input: assign
+        input: label
         args:
           server: "${xnat_server}"
           user: "${xnat_user}"
@@ -67,13 +67,13 @@ full non-DICOM case with every composite argument:
 
 .. code-block:: console
 
-    $ xnat-ingest workflow check minimal-dicom.yaml \
+    $ accessionflow workflow check minimal-dicom.yaml \
         -p input_dir=/data/scanner-export \
         -p xnat_server=https://xnat.example.org \
         -p xnat_user=scanner-uploader \
         -p xnat_password="$XNAT_PASSWORD"
-    $ xnat-ingest workflow run   minimal-dicom.yaml   # run once, synchronously
-    $ xnat-ingest workflow serve minimal-dicom.yaml   # long-running local deployment
+    $ accessionflow workflow run   minimal-dicom.yaml   # run once, synchronously
+    $ accessionflow workflow serve minimal-dicom.yaml   # long-running local deployment
 
 ``check`` never requires Prefect (or the parameters to resolve to anything real —
 just to resolve at all); ``run``/``serve``/``deploy`` do.
@@ -87,7 +87,7 @@ supplied per-deployment — the same idea as a GitHub Actions ``workflow_dispatc
 param is a plain string. Each entry takes:
 
 ``description``
-    Shown by ``xnat-ingest workflow check``.
+    Shown by ``accessionflow workflow check``.
 
 ``default``
     If given, the param is optional and falls back to this when nothing else
@@ -132,7 +132,7 @@ above (or the declared default) as its default:
 
 .. code-block:: console
 
-    $ xnat-ingest workflow check minimal-dicom.yaml -p ... | grep prefect-param
+    $ accessionflow workflow check minimal-dicom.yaml -p ... | grep prefect-param
         - input_dir (required) [prefect-param] - Root directory of the scanner export to ingest
         - xnat_server (required) [prefect-param] - URL of the XNAT server to upload to
 
@@ -194,13 +194,13 @@ accept it:
 
 .. code-block:: console
 
-    $ xnat-ingest workflow run minimal-dicom.yaml --work-dir /var/lib/xnat-ingest/work
+    $ accessionflow workflow run minimal-dicom.yaml --work-dir /var/lib/accessionflow/work
 
 Every stage without its own ``args.output_dir`` gets a subdirectory under
 ``<work-dir>/<workflow-name>/<stage-name>`` — namespaced by workflow name so several
 specs (e.g. everything ``deploy``ed from one directory) can share one ``--work-dir``
 root without their outputs colliding. Left unset, it defaults to
-``.xnat-ingest-<name>`` next to the spec file.
+``.accessionflow-<name>`` next to the spec file.
 
 Spec format
 -----------
@@ -224,13 +224,13 @@ Spec format
         Unique within the spec; referenced by other stages' ``input``/``after``.
 
     ``command``
-        One of ``group``, ``assign``, ``deidentify``, ``associate``, ``upload``.
+        One of ``collate``, ``label``, ``deidentify``, ``attach``, ``upload``.
 
     ``input``
         The name of another stage whose *output directory* becomes this stage's
         input — the data-dependency edge; implies ordering too. Omit it only on a
         stage whose ``args`` supply its input directly (typically the first
-        ``group`` in the pipeline).
+        ``collate`` in the pipeline).
 
     ``after``
         Pure ordering with no data flow — a list of stage names this one must
@@ -242,8 +242,8 @@ Spec format
     ``enabled``
         Defaults ``true``. A ``false`` stage is skipped entirely and forwards its
         own input straight through unchanged, so a dependent's ``input:`` still
-        resolves — e.g. disabling ``deidentify`` between ``assign`` and ``upload``
-        means ``upload`` reads ``assign``'s output directly, with no edit needed at
+        resolves — e.g. disabling ``deidentify`` between ``label`` and ``upload``
+        means ``upload`` reads ``label``'s output directly, with no edit needed at
         either neighbour.
 
     ``retries`` / ``retry_delay_seconds``
@@ -284,8 +284,8 @@ of small mappings; a single-field flag can stay a bare string or a list:
 
 Each entry is built the same way the CLI's own composite flags are (a mapping as
 keywords, a list positionally, a bare scalar for a single-field type) — see
-``xnat_ingest.workflow.coerce`` for the full mapping from YAML shape to argument
-type, one function per composite kind. ``xnat-ingest workflow check`` dry-runs this
+``accessionflow.workflow.coerce`` for the full mapping from YAML shape to argument
+type, one function per composite kind. ``accessionflow workflow check`` dry-runs this
 conversion (and validates every ``args:`` key against the target function's actual
 parameters) without touching the filesystem or network, so a typo'd datatype or an
 unknown argument is caught before anything runs.
@@ -299,26 +299,26 @@ proper Prefect deployment against a remote server:
 
 .. code-block:: console
 
-    $ xnat-ingest workflow deploy example-specs/ \
+    $ accessionflow workflow deploy example-specs/ \
         --prefect-api-url https://prefect.example.org/api \
-        --work-pool xnat-ingest \
-        --work-dir /var/lib/xnat-ingest/work \
+        --work-pool accessionflow \
+        --work-dir /var/lib/accessionflow/work \
         -p xnat_server=https://xnat.example.org \
         -p xnat_user=scanner-uploader \
         -p xnat_password="$XNAT_PASSWORD"
 
 This is registration only — it does **not** start anything. A Prefect worker
-(``prefect worker start --pool xnat-ingest``), running somewhere with network
+(``prefect worker start --pool accessionflow``), running somewhere with network
 access to the relevant input/work/XNAT paths, must be polling that same work pool
 for a deployment to ever actually execute. Create the work pool ahead of time if it
-doesn't already exist (e.g. ``prefect work-pool create xnat-ingest --type process``
+doesn't already exist (e.g. ``prefect work-pool create accessionflow --type process``
 for a worker that runs flows as local subprocesses).
 
 ``--prefect-api-url``/``--prefect-api-key`` (also settable via the standard
 ``PREFECT_API_URL``/``PREFECT_API_KEY`` environment variables) point ``deploy`` at
 the target server explicitly, rather than relying on whatever Prefect profile
 happens to be active. They're accepted by both the CLI and the
-``xnat_ingest.api.workflow_api.deploy`` function directly.
+``accessionflow.api.workflow_api.deploy`` function directly.
 
 Secrets (``xnat_password`` above) are resolved once, at deploy time, from
 ``--param``/the environment, and baked into that deployment's flow closure — never

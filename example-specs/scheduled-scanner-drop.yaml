@@ -1,4 +1,4 @@
-# A continuously-running clinical-scanner drop folder: 'xnat-ingest workflow serve
+# A continuously-running clinical-scanner drop folder: 'accessionflow workflow serve
 # scheduled-scanner-drop.yaml' (or 'workflow deploy' against a Prefect server)
 # runs this on the 'schedule:' cron below rather than each stage looping
 # independently (contrast with the plain CLI's per-command --loop). Per-stage
@@ -29,8 +29,8 @@ params:
 schedule: "*/10 * * * *"
 
 stages:
-  - name: group
-    command: group-orthanc
+  - name: collate
+    command: collate-orthanc
     retries: 2
     retry_delay_seconds: 30
     args:
@@ -44,9 +44,9 @@ stages:
       wait_period: 300
       unlink_source: all
 
-  - name: assign
-    command: assign
-    input: group
+  - name: label
+    command: label
+    input: collate
     retries: 2
     retry_delay_seconds: 30
     args:
@@ -57,7 +57,7 @@ stages:
 
   - name: upload
     command: upload
-    input: assign
+    input: label
     retries: 3
     retry_delay_seconds: 60
     args:

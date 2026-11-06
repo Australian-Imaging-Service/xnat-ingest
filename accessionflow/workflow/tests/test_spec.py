@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from xnat_ingest.workflow.errors import WorkflowSpecError
-from xnat_ingest.workflow.spec import load_spec
+from accessionflow.workflow.errors import WorkflowSpecError
+from accessionflow.workflow.spec import load_spec
 
 
 def _write(tmp_path: Path, name: str, content: dict) -> Path:
@@ -17,12 +17,12 @@ def _minimal_stages() -> list:
     return [
         {
             "name": "grp",
-            "command": "group",
+            "command": "collate",
             "args": {"input_paths": ["/data/in"]},
         },
         {
             "name": "asn",
-            "command": "assign",
+            "command": "label",
             "input": "grp",
             "args": {
                 "project": "StudyComments",
@@ -75,7 +75,7 @@ def test_load_defaults_name_to_filename(tmp_path: Path) -> None:
             "stages": [
                 {
                     "name": "asn",
-                    "command": "assign",
+                    "command": "label",
                     "args": {
                         "input_dir": "/x",
                         "project": "StudyComments",
@@ -105,7 +105,7 @@ def test_stage_missing_name_raises(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
         "spec.yaml",
-        {"stages": [{"command": "assign", "args": {"input_dir": "/x"}}]},
+        {"stages": [{"command": "label", "args": {"input_dir": "/x"}}]},
     )
     with pytest.raises(WorkflowSpecError, match="missing required 'name'"):
         load_spec(path)
@@ -127,8 +127,8 @@ def test_duplicate_stage_names_raise(tmp_path: Path) -> None:
         "spec.yaml",
         {
             "stages": [
-                {"name": "a", "command": "assign", "args": {"input_dir": "/x"}},
-                {"name": "a", "command": "assign", "args": {"input_dir": "/y"}},
+                {"name": "a", "command": "label", "args": {"input_dir": "/x"}},
+                {"name": "a", "command": "label", "args": {"input_dir": "/y"}},
             ]
         },
     )
@@ -140,7 +140,7 @@ def test_unknown_input_reference_raises(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
         "spec.yaml",
-        {"stages": [{"name": "a", "command": "assign", "input": "nonexistent"}]},
+        {"stages": [{"name": "a", "command": "label", "input": "nonexistent"}]},
     )
     with pytest.raises(WorkflowSpecError, match="unknown stage 'nonexistent'"):
         load_spec(path)
@@ -152,8 +152,8 @@ def test_dependency_cycle_raises(tmp_path: Path) -> None:
         "spec.yaml",
         {
             "stages": [
-                {"name": "a", "command": "assign", "input": "b"},
-                {"name": "b", "command": "assign", "input": "a"},
+                {"name": "a", "command": "label", "input": "b"},
+                {"name": "b", "command": "label", "input": "a"},
             ]
         },
     )
@@ -163,7 +163,7 @@ def test_dependency_cycle_raises(tmp_path: Path) -> None:
 
 def test_missing_stage_input_raises(tmp_path: Path) -> None:
     path = _write(
-        tmp_path, "spec.yaml", {"stages": [{"name": "a", "command": "assign"}]}
+        tmp_path, "spec.yaml", {"stages": [{"name": "a", "command": "label"}]}
     )
     with pytest.raises(WorkflowSpecError, match="input_dir"):
         load_spec(path)
@@ -208,7 +208,7 @@ def test_upload_with_server_does_not_flag_xnat_repo_as_missing(
 
 
 def test_missing_required_stage_arg_raises_clearly(tmp_path: Path) -> None:
-    # group-orthanc's 'store_dir' has no default in group_orthanc() - omitting
+    # collate-orthanc's 'store_dir' has no default in collate_orthanc() - omitting
     # it should be caught at check/load time, not just at actual run time.
     path = _write(
         tmp_path,
@@ -217,7 +217,7 @@ def test_missing_required_stage_arg_raises_clearly(tmp_path: Path) -> None:
             "stages": [
                 {
                     "name": "g",
-                    "command": "group-orthanc",
+                    "command": "collate-orthanc",
                     "args": {
                         "url": "https://orthanc.example.org",
                         "user": "u",
@@ -239,7 +239,7 @@ def test_bad_composite_arg_raises_with_stage_context(tmp_path: Path) -> None:
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["/x"],
                         "on_resource_clash": [
@@ -262,7 +262,7 @@ def test_unknown_arg_key_raises(tmp_path: Path) -> None:
             "stages": [
                 {
                     "name": "grp",
-                    "command": "group",
+                    "command": "collate",
                     "args": {"input_paths": ["/x"], "not_a_real_arg": 123},
                 }
             ]
@@ -477,7 +477,7 @@ def test_undeclared_placeholder_resolves_via_param_override(tmp_path: Path) -> N
 
 
 def test_secret_param_parsed() -> None:
-    from xnat_ingest.workflow.spec import ParamSpec
+    from accessionflow.workflow.spec import ParamSpec
 
     p = ParamSpec(name="xnat_password", secret=True)
     assert p.required is True
@@ -580,7 +580,7 @@ def test_retries_parsed(tmp_path: Path) -> None:
             "stages": [
                 {
                     "name": "a",
-                    "command": "assign",
+                    "command": "label",
                     "args": {
                         "input_dir": "/x",
                         "project": "StudyComments",
@@ -645,7 +645,7 @@ def test_deferred_param_missing_value_does_not_raise_at_load_time(
         ),
     )
     spec = load_spec(path)
-    from xnat_ingest.workflow.spec import NO_DEFAULT
+    from accessionflow.workflow.spec import NO_DEFAULT
 
     assert spec.deferred_defaults["xnat_server"] is NO_DEFAULT
 
@@ -697,7 +697,7 @@ def test_deferred_param_default_resolved_from_environment(
 def test_composite_arg_placeholder_stays_eager_even_if_non_secret(
     tmp_path: Path,
 ) -> None:
-    # a placeholder inside a *coerced* arg (group's 'datatypes' is parsed into
+    # a placeholder inside a *coerced* arg (collate's 'datatypes' is parsed into
     # FileSet types) can't be deferred without losing check-time validation - it
     # always resolves eagerly, whatever the backing param's secret: flag.
     path = _write(
@@ -708,7 +708,7 @@ def test_composite_arg_placeholder_stays_eager_even_if_non_secret(
             "stages": [
                 {
                     "name": "g",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["/data"],
                         "datatypes": ["${the_datatype}"],
@@ -763,7 +763,7 @@ def test_deferred_placeholder_in_nested_list_still_deferred(tmp_path: Path) -> N
             "stages": [
                 {
                     "name": "g",
-                    "command": "group",
+                    "command": "collate",
                     "args": {"input_paths": ["${input_dir}"]},
                 }
             ],
@@ -788,7 +788,7 @@ def test_check_dry_run_tolerates_deferred_param_with_no_value(
             "stages": [
                 {
                     "name": "g",
-                    "command": "group",
+                    "command": "collate",
                     "args": {
                         "input_paths": ["${input_dir}"],
                         "datatypes": ["not-a-real-mime-type"],

@@ -2,7 +2,7 @@
 # directory plus its sidecar SQLite .db as single resources (no --recursive -
 # nothing here is pulled apart), converting the export to a .zip on the way in.
 # Deployed alongside acemid-lesion.yaml (e.g. both via
-# 'xnat-ingest workflow deploy example-specs/') but a fully separate
+# 'accessionflow workflow deploy example-specs/') but a fully separate
 # spec/deployment - each redeployable independently, each declaring its own
 # xnat_server/xnat_user/xnat_password (the small duplication between the two
 # files is deliberate: it keeps each spec self-contained and independently
@@ -15,10 +15,10 @@ params:
     description: "Root of this site's Canfield Vectra export"
   spec_dir:
     description: "Directory of project-specific deidentification specs"
-    default: /etc/xnat-ingest/deid-specs
+    default: /etc/accessionflow/deid-specs
   reid_dir:
     description: "Directory to write the original<->deidentified mapping to"
-    default: /var/lib/xnat-ingest/reid
+    default: /var/lib/accessionflow/reid
   xnat_server:
     description: "URL of the XNAT server to upload to"
   xnat_user:
@@ -28,8 +28,8 @@ params:
     secret: true
 
 stages:
-  - name: group
-    command: group
+  - name: collate
+    command: collate
     args:
       input_paths: ["${input_dir}"]
       datatypes:
@@ -49,11 +49,11 @@ stages:
         - source: medimage/vnd.canfield.vectra-export
           target: medimage/vnd.canfield.vectra-export+zip
 
-  - name: assign
-    command: assign
-    input: group
+  - name: label
+    command: label
+    input: collate
     args:
-      # assign() still requires a project field even when constant_project_id
+      # label() still requires a project field even when constant_project_id
       # overrides the actual project assigned below - it's otherwise unused.
       project: "all"
       subject: SubjectID
@@ -62,7 +62,7 @@ stages:
 
   - name: deidentify
     command: deidentify
-    input: assign
+    input: label
     args:
       spec_dir: "${spec_dir}"
       reid_dir: "${reid_dir}"

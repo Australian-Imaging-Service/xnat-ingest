@@ -296,7 +296,6 @@ class OutputResource(MultiCliTyped):
 
 @attrs.define
 class PathMetadataRegex(MultiCliTyped):
-
     pattern: str
     datatype: ty.Type[FileSet] = attrs.field(converter=datatype_converter)
 
@@ -747,8 +746,7 @@ def rows_converter(
             return from_mime(mime_like)  # type: ignore[return-value]
         except FormatRecognitionError as e:
             raise ValueError(
-                f"Invalid rows '{value}'. Could not recognise mime type "
-                f"'{mime_like}'"
+                f"Invalid rows '{value}'. Could not recognise mime type '{mime_like}'"
             ) from e
     if isinstance(value, types.UnionType) or (
         isinstance(value, type) and issubclass(value, FileSet)

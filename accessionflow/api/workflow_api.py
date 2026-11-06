@@ -1,9 +1,9 @@
-"""API for loading, running and deploying ``xnat-ingest workflow`` YAML specs -
-the plain-Python layer ``xnat_ingest.cli.workflow_cli`` is a thin wrapper around,
+"""API for loading, running and deploying ``accessionflow workflow`` YAML specs -
+the plain-Python layer ``accessionflow.cli.workflow_cli`` is a thin wrapper around,
 same as every other ``*_api.py``/``*_cli.py`` pair in this package.
 
 Prefect itself is only ever imported lazily, inside ``run``/``serve``/``deploy``
-(via ``workflow.runner``) - ``check`` (and so ``xnat-ingest workflow check``) needs
+(via ``workflow.runner``) - ``check`` (and so ``accessionflow workflow check``) needs
 only PyYAML, which is a core dependency.
 """
 
@@ -13,15 +13,15 @@ import contextlib
 import typing as ty
 from pathlib import Path
 
-from ..helpers.logging import logger
+from accessionflow.helpers.logging import logger
 
 if ty.TYPE_CHECKING:
-    from ..workflow.spec import WorkflowSpec
+    from accessionflow.workflow.spec import WorkflowSpec
 
 __all__ = ["check", "run", "serve", "deploy"]
 
 # NB: ``..workflow.spec``/``..workflow.runner`` are imported lazily inside each
-# function below, not at module level - ``xnat_ingest.workflow.stages`` imports
+# function below, not at module level - ``accessionflow.workflow.stages`` imports
 # from this package (``..api.assign_api`` etc.), so an eager import here would be
 # circular (this module <-> workflow.spec <-> workflow.stages <-> this package).
 
@@ -32,7 +32,7 @@ def check(
 ) -> "WorkflowSpec":
     """Load and fully validate a workflow spec without running it. See
     ``workflow.spec.load_spec`` for exactly what's checked."""
-    from ..workflow.spec import load_spec
+    from accessionflow.workflow.spec import load_spec
 
     return load_spec(spec_path, param_overrides=param_overrides)
 
@@ -44,8 +44,8 @@ def run(
 ) -> ty.Dict[str, ty.List[str]]:
     """Run a workflow spec once, synchronously. Raises
     ``workflow.runner.WorkflowRunError`` if any stage reported errors."""
-    from ..workflow.runner import run_workflow
-    from ..workflow.spec import load_spec
+    from accessionflow.workflow.runner import run_workflow
+    from accessionflow.workflow.spec import load_spec
 
     spec = load_spec(spec_path, param_overrides=param_overrides)
     return run_workflow(spec, work_dir=work_dir)
@@ -58,8 +58,8 @@ def serve(
 ) -> None:
     """Serve a workflow spec as a long-running local Prefect deployment (blocks
     until interrupted) - see ``workflow.runner.serve_workflow``."""
-    from ..workflow.runner import serve_workflow
-    from ..workflow.spec import load_spec
+    from accessionflow.workflow.runner import serve_workflow
+    from accessionflow.workflow.spec import load_spec
 
     spec = load_spec(spec_path, param_overrides=param_overrides)
     serve_workflow(spec, work_dir=work_dir)
@@ -86,7 +86,7 @@ def _prefect_server_context(
     except ImportError as e:
         raise ImportError(
             "the 'workflow deploy' command needs Prefect - install it with "
-            "'pip install xnat-ingest[workflow]'"
+            "'pip install accessionflow[workflow]'"
         ) from e
     updates: ty.Dict[ty.Any, ty.Any] = {}
     if prefect_api_url:
@@ -101,7 +101,7 @@ def deploy(
     specs_dir: ty.Union[str, Path],
     prefect_api_url: ty.Optional[str] = None,
     prefect_api_key: ty.Optional[str] = None,
-    work_pool: str = "xnat-ingest",
+    work_pool: str = "accessionflow",
     param_overrides: ty.Optional[ty.Dict[str, str]] = None,
     work_dir: ty.Optional[Path] = None,
     pattern: str = "*.yaml",
@@ -150,8 +150,8 @@ def deploy(
         One error message per spec that failed to deploy; empty if every spec in
         ``specs_dir`` deployed successfully.
     """
-    from ..workflow.runner import deploy_flow
-    from ..workflow.spec import load_spec
+    from accessionflow.workflow.runner import deploy_flow
+    from accessionflow.workflow.spec import load_spec
 
     specs_dir = Path(specs_dir)
     spec_paths = sorted(specs_dir.glob(pattern))
