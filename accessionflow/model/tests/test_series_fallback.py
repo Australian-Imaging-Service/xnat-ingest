@@ -3,9 +3,13 @@
 import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, MRImageStorage
-from test_from_orthanc import FakeOrthanc, _patch_requests, _publication_kwargs
 
 from accessionflow.model.accession import Accession
+from accessionflow.model.tests.test_from_orthanc import (
+    FakeOrthanc,
+    _patch_requests,
+    _publication_kwargs,
+)
 
 
 def make_fake(tmp_path, number, description, series_uid="1.2.3.4"):

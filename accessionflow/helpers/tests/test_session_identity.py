@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, create_autospec
 
 import pytest
-from test_all_uploaded_completeness import LOCAL, RESOURCE_PATH, FakeXnat
 from xnat.session import BaseXNATSession
 
 from accessionflow.helpers.remotes import (
@@ -13,6 +12,11 @@ from accessionflow.helpers.remotes import (
     LocalSessionListing,
     S3SessionListing,
     get_xnat_session,
+)
+from accessionflow.helpers.tests.test_all_uploaded_completeness import (
+    LOCAL,
+    RESOURCE_PATH,
+    FakeXnat,
 )
 from accessionflow.model.accession import Accession
 

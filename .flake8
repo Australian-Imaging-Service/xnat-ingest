@@ -7,7 +7,7 @@ exclude =
     docs/sphinxext/
     docs/tools/
     docs/conf.py
-    xnat_siemens_export_upload/_version.py
+    accessionflow/helpers/_version.py
     docs/source/conf.py
 max-line-length = 88
 select = C,E,F,W,B,B950

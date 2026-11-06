@@ -100,7 +100,7 @@ acflow = "accessionflow.cli:cli"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "accessionflow/_version.py"
+version-file = "accessionflow/helpers/_version.py"
 
 [tool.hatch.build]
 packages = ["accessionflow"]
@@ -109,7 +109,7 @@ exclude = ["/tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-exclude = ["accessionflow/_version.py"]
+exclude = ["accessionflow/helpers/_version.py"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "W", "I"]
@@ -129,5 +129,5 @@ exclude = [
     "docs",
     "build",
     "dist",
-    "accessionflow/_version.py",
+    "accessionflow/helpers/_version.py",
 ]

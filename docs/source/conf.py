@@ -23,7 +23,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-from accessionflow import __version__  # noqa
+from accessionflow.helpers import __version__  # noqa
 
 with open(Path(__file__).parents[2] / "pyproject.toml", "rb") as f:
     pyproject = tomllib.load(f)
