@@ -42,9 +42,9 @@ OUTPUT_DIR is the directory that the files for each session are collated to befo
 are uploaded to XNAT
 """,
 )
-@click.argument("input_paths", type=str, nargs=-1, envvar="XINGEST_INPUT_PATHS")
+@click.argument("input_paths", type=str, nargs=-1, envvar="ACFLOW_INPUT_PATHS")
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="ACFLOW_OUTPUT_DIR"
 )
 @click.option(
     "--session",
@@ -52,10 +52,10 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=DEFAULT_SESSION_FIELD,
-    envvar="XINGEST_SESSION",
+    envvar="ACFLOW_SESSION",
     help=(
         "The metadata field used to collate files into the same session before IDs are extracted "
-        "(XINGEST_SESSION env. var). Defaults to 'StudyInstanceUID' for DICOM collections; other "
+        "(ACFLOW_SESSION env. var). Defaults to 'StudyInstanceUID' for DICOM collections; other "
         "fileset types need an explicit spec. Can also be a Python format string over several "
         "fields, e.g. '{PatientID}_{StudyDate:%Y%m%d}', to compose one."
     ),
@@ -67,12 +67,12 @@ are uploaded to XNAT
     multiple=True,
     default=DEFAULT_SCAN_FIELD,
     metavar="<specifier> <datatype>",
-    envvar="XINGEST_SCAN",
+    envvar="ACFLOW_SCAN",
     help=(
         "The keyword of the metadata field to extract the XNAT imaging scan ID from, or a "
         "Python format string over several fields (see --session). Defaults to 'SeriesNumber' "
         "for DICOM collections (one scan per acquisition series); for any fileset type not "
-        "matched by a --scan spec the scan is named after the resource. (XINGEST_SCAN env. var)"
+        "matched by a --scan spec the scan is named after the resource. (ACFLOW_SCAN env. var)"
     ),
 )
 @click.option(
@@ -82,13 +82,13 @@ are uploaded to XNAT
     multiple=True,
     default=DEFAULT_RESOURCE_FIELD,
     metavar="<specifier> <datatype>",
-    envvar="XINGEST_RESOURCE",
+    envvar="ACFLOW_RESOURCE",
     help=(
         "The keywords of the metadata field to extract the XNAT imaging resource ID from "
         "for different datatypes (use `generic/file-set` as a catch-all if required), or a "
         "Python format string over several fields (see --session). If not given, each "
         "resource is labelled with the mime-like rendering of its fileset type name, "
-        "e.g. 'vectra-export', 'sqlite3-db'. (XINGEST_RESOURCE env. var)"
+        "e.g. 'vectra-export', 'sqlite3-db'. (ACFLOW_RESOURCE env. var)"
     ),
 )
 @click.option(
@@ -97,7 +97,7 @@ are uploaded to XNAT
     metavar="<mime-type>",
     multiple=True,
     default=["medimage/dicom-series"],
-    envvar="XINGEST_DATATYPES",
+    envvar="ACFLOW_DATATYPES",
     help=(
         'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
         "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
@@ -112,7 +112,7 @@ are uploaded to XNAT
     multiple=True,
     nargs=2,
     metavar="<regex> <datatype>",
-    envvar="XINGEST_PATH_METADATA_REGEX",
+    envvar="ACFLOW_PATH_METADATA_REGEX",
     default=(),
     help=(
         'Regular expressions to extract "metadata" values from resource file paths as named groups. '
@@ -128,13 +128,13 @@ are uploaded to XNAT
     multiple=True,
     default=(),
     metavar="<policy> <scope>",
-    envvar="XINGEST_ON_RESOURCE_CLASH",
+    envvar="ACFLOW_ON_RESOURCE_CLASH",
     help=(
         "How to handle two filesets resolving to the same scan/resource name: a <policy> "
         "('avoid' appends a _2/_3 suffix, 'merge' folds both into one SetOf, 'overwrite' "
         "replaces) plus the datatype <scope> it applies to (a mime-like, a '|'-union, or "
         "'all'). Repeatable. A clash is resolved by the first spec whose scope covers BOTH "
-        "filesets; a clash no spec covers raises. (XINGEST_ON_RESOURCE_CLASH env. var)"
+        "filesets; a clash no spec covers raises. (ACFLOW_ON_RESOURCE_CLASH env. var)"
     ),
 )
 @click.option(
@@ -144,12 +144,12 @@ are uploaded to XNAT
     type=SEMICOLON_LIST,
     default=(),
     multiple=True,
-    envvar="XINGEST_ALLOW_UNRECOGNISED",
+    envvar="ACFLOW_ALLOW_UNRECOGNISED",
     help=(
         "Regular expressions matched against the basename of any input path that no --datatype "
         "recognised; matches are skipped instead of raising. Use '.*' to tolerate all "
         "unrecognised files. Does not affect recognised filesets. Repeatable; the "
-        "XINGEST_ALLOW_UNRECOGNISED env. var takes a ';'-separated list."
+        "ACFLOW_ALLOW_UNRECOGNISED env. var takes a ';'-separated list."
     ),
 )
 @click.option(
@@ -158,12 +158,12 @@ are uploaded to XNAT
     type=SEMICOLON_LIST,
     default=(),
     multiple=True,
-    envvar="XINGEST_EXCLUDE_PATH",
+    envvar="ACFLOW_EXCLUDE_PATH",
     help=(
         "Glob patterns matched against each input path relative to <input-dir>, applied before "
         "classification so a match is dropped even if a --datatype would claim it (e.g. a vendor "
         "thumbnail that is a valid image/png). '*' does not cross '/', '**' does. Repeatable; the "
-        "XINGEST_EXCLUDE_PATH env. var takes a ';'-separated list."
+        "ACFLOW_EXCLUDE_PATH env. var takes a ';'-separated list."
     ),
 )
 @click.option(
@@ -172,57 +172,57 @@ are uploaded to XNAT
     type=MimeType.cli_type,
     default=(),
     multiple=True,
-    envvar="XINGEST_IGNORE_DATATYPE",
+    envvar="ACFLOW_IGNORE_DATATYPE",
     help=(
         "Datatypes expected in the input but not wanted: recognised files of these types are "
         "dropped instead of raising, and with --recursive a matching directory is skipped "
         "without descending into it. A path matching neither --datatype nor --ignore-datatype "
-        "nor --allow-unrecognised/--exclude-path still raises. (XINGEST_IGNORE_DATATYPE env. var)"
+        "nor --allow-unrecognised/--exclude-path still raises. (ACFLOW_IGNORE_DATATYPE env. var)"
     ),
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    envvar="ACFLOW_LOOP",
+    help="Run the staging process continuously every LOOP seconds (ACFLOW_LOOP env. var). ",
 )
 @click.option(
     "--wait-period",
     type=click.IntRange(min=0),
     default=0,
-    envvar="XINGEST_WAIT_PERIOD",
+    envvar="ACFLOW_WAIT_PERIOD",
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
+        "avoid uploading partial sessions (ACFLOW_WAIT_PERIOD env. var)."
     ),
 )
 @click.option(
     "--recursive/--not-recursive",
     type=bool,
     default=False,
-    envvar="XINGEST_RECURSIVE",
+    envvar="ACFLOW_RECURSIVE",
     help=("Whether to recursively search input directories for input files"),
 )
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+    envvar="ACFLOW_COPY_MODE",
+    help="The method to use for copying files (ACFLOW_COPY_MODE env. var)",
 )
 @click.option(
     "--unlink-source",
     type=click.Choice(["all", "keep-metadata"]),
     default=None,
-    envvar="XINGEST_UNLINK_SOURCE",
+    envvar="ACFLOW_UNLINK_SOURCE",
     help=(
         "Whether to unlink the source files after they have been successfully "
         "collated. 'all' and 'keep-metadata' behave the same here (individual "
         "source files are removed one by one) since 'collate's source isn't a "
         "directory tree that accessionflow owns and can't have a metadata skeleton "
-        "left behind in it (XINGEST_UNLINK_SOURCE env. var)"
+        "left behind in it (ACFLOW_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -230,13 +230,11 @@ are uploaded to XNAT
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
-    help=(
-        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
-    ),
+    help=("Setup handles to capture logs that are generated (ACFLOW_LOGGERS env. var)"),
 )
 @click.option(
     "--additional-logger",
@@ -244,11 +242,11 @@ are uploaded to XNAT
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+        "specified here (ACFLOW_ADDITIONAL_LOGGERS env. var)"
     ),
 )
 @click.option(
@@ -264,7 +262,7 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=(),
-    envvar="XINGEST_COLLATE_RESOURCES",
+    envvar="ACFLOW_COLLATE_RESOURCES",
     help=(
         "Flatten files of the given datatype into the resource directory during collation, "
         "regardless of source directory structure (e.g. when collating from Orthanc). "
@@ -279,7 +277,7 @@ are uploaded to XNAT
     nargs=2,
     multiple=True,
     default=(),
-    envvar="XINGEST_CONVERT",
+    envvar="ACFLOW_CONVERT",
     help=(
         "Convert resources of <src-mime-like> to <tgt-spec> during save. "
         "<tgt-spec> may be either '<tgt-mime-like>' or "
@@ -292,12 +290,12 @@ are uploaded to XNAT
     "metadata_tables",
     multiple=True,
     type=MetadataTable.cli_type,
-    envvar="XINGEST_METADATA_TABLES",
+    envvar="ACFLOW_METADATA_TABLES",
     nargs=3,
     default=(),
     metavar="<path> <row-frequency> <join-exprs>",
     help=(
-        "Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var). "
+        "Specify metadata tables to extract and join metadata from input files (ACFLOW_METADATA_TABLES env. var). "
         "The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or "
         "TSV from the file extension; a different format can be forced by appending its mime-type in square "
         "brackets, e.g. 'path/to/table.dat[text/csv]'. "
@@ -409,7 +407,7 @@ subsequent processing steps.
 URL of the Orthanc instance to connect to
 
 STORE_DIR path to Orthanc's " "StorageDirectory as mounted in pod. DICOM files are hardlinked from the storage "
-"directory directly to the staging directory. (XINGEST_ORTHANC_STORE_DIR env. var)"
+"directory directly to the staging directory. (ACFLOW_ORTHANC_STORE_DIR env. var)"
 
 OUTPUT_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
@@ -419,84 +417,82 @@ USERNAME for the Orthanc user
 PASSWORD for the Orthanc user
 """,
 )
-@click.argument("url", type=str, envvar="XINGEST_ORTHANC_URL")
+@click.argument("url", type=str, envvar="ACFLOW_ORTHANC_URL")
 @click.argument(
     "store_dir",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
-    envvar="XINGEST_ORTHANC_STORE_DIR",
+    envvar="ACFLOW_ORTHANC_STORE_DIR",
 )
 @click.argument("output_dir", type=click.Path(path_type=Path))
-@click.argument("user", type=str, envvar="XINGEST_ORTHANC_USER")
-@click.argument("password", type=str, envvar="XINGEST_ORTHANC_PASSWORD")
+@click.argument("user", type=str, envvar="ACFLOW_ORTHANC_USER")
+@click.argument("password", type=str, envvar="ACFLOW_ORTHANC_PASSWORD")
 @click.option(
     "--to-process-label",
     type=str,
     default=None,
-    envvar="XINGEST_ORTHANC_TO_PROCESS",
+    envvar="ACFLOW_ORTHANC_TO_PROCESS",
     help=(
         "Label applied to Orthanc studies after staging to prevent re-processing. "
         "Can be removed via the Orthanc UI "
-        "(XINGEST_ORTHANC_TO_PROCESS env. var)"
+        "(ACFLOW_ORTHANC_TO_PROCESS env. var)"
     ),
 )
 @click.option(
     "--processed-label",
     type=str,
     default=None,
-    envvar="XINGEST_ORTHANC_PROCESSED",
+    envvar="ACFLOW_ORTHANC_PROCESSED",
     help=(
         "Label applied to Orthanc studies after staging to prevent re-processing. "
         "Can be removed via the Orthanc UI "
-        "(XINGEST_ORTHANC_PROCESSED env. var)"
+        "(ACFLOW_ORTHANC_PROCESSED env. var)"
     ),
 )
 @click.option(
     "--unlink-source",
     type=click.Choice(["all", "keep-metadata"]),
     default=None,
-    envvar="XINGEST_UNLINK_SOURCE",
+    envvar="ACFLOW_UNLINK_SOURCE",
     help=(
         "Whether to unlink the source studies in Orthanc after they have been "
-        "successfully collated. Not yet implemented (XINGEST_UNLINK_SOURCE env. var)"
+        "successfully collated. Not yet implemented (ACFLOW_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    envvar="ACFLOW_LOOP",
+    help="Run the staging process continuously every LOOP seconds (ACFLOW_LOOP env. var). ",
 )
 @click.option(
     "--wait-period",
     type=int,
     default=0,
-    envvar="XINGEST_WAIT_PERIOD",
+    envvar="ACFLOW_WAIT_PERIOD",
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
+        "avoid uploading partial sessions (ACFLOW_WAIT_PERIOD env. var)."
     ),
 )
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+    envvar="ACFLOW_COPY_MODE",
+    help="The method to use for copying files (ACFLOW_COPY_MODE env. var)",
 )
 @click.option(
     "--logger",
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
-    help=(
-        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
-    ),
+    help=("Setup handles to capture logs that are generated (ACFLOW_LOGGERS env. var)"),
 )
 @click.option(
     "--additional-logger",
@@ -504,11 +500,11 @@ PASSWORD for the Orthanc user
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+        "specified here (ACFLOW_ADDITIONAL_LOGGERS env. var)"
     ),
 )
 @click.option(
@@ -519,12 +515,12 @@ PASSWORD for the Orthanc user
     nargs=2,
     multiple=True,
     default=(),
-    envvar="XINGEST_CONVERT",
+    envvar="ACFLOW_CONVERT",
     help=(
         "Convert resources of <src-mime-like> to <tgt-spec> during staging. "
         "<tgt-spec> may be either '<tgt-mime-like>' or "
         "'<tgt-mime-like>:key=value[,key=value...]', e.g. "
-        "'application/zip:compression=ZIP_STORED' (XINGEST_CONVERT env. var)."
+        "'application/zip:compression=ZIP_STORED' (ACFLOW_CONVERT env. var)."
     ),
 )
 @click.option(

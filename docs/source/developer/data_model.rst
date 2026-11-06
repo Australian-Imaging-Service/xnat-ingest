@@ -35,7 +35,7 @@ rest of the pipeline:
 Terms
 -----
 
-The model is named so that it isn't specific to imaging or to one repository:
+The model is named so that it isn't specific to imaging or to one store:
 
 Accession
     Everything received from one subject on one occasion and handed from stage to

@@ -113,7 +113,7 @@ def label(
         Only stage resources matching at least one of these datatypes. An empty
         sequence stages all resources.
     single_resource: bool
-        If True, the repository holds a single resource per acquisition, so a session
+        If True, the store holds a single resource per acquisition, so a session
         with an acquisition that would be saved with more than one resource (after
         filtering by `include`) is an error, and is left in place to be reprocessed
         (e.g. with `include` set to select one).
@@ -197,7 +197,7 @@ def label(
                 several := _acquisitions_with_several_resources(session, include)
             ):
                 raise ValueError(
-                    f"Cannot label '{session_listing.name}' as the repository expects "
+                    f"Cannot label '{session_listing.name}' as the store expects "
                     "a single resource per acquisition, but some acquisitions have "
                     f"several: {several}. Select one with the include option"
                 )

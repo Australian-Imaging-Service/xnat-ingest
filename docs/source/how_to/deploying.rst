@@ -15,7 +15,7 @@ once and left running, rather than needing a process supervisor to restart it af
 every transient failure (though a restart policy is still good practice as a
 backstop — see below).
 
-A published Docker image (``ghcr.io/australian-imaging-service/xnat-ingest``) wraps
+A published Docker image (``ghcr.io/australian-imaging-service/accessionflow``) wraps
 the CLI as its entrypoint, so each stage becomes a single long-running container:
 
 .. code-block:: console
@@ -23,7 +23,7 @@ the CLI as its entrypoint, so each stage becomes a single long-running container
     $ docker run -d \
         -v /data/incoming:/input \
         -v /data/staging:/staging \
-        ghcr.io/australian-imaging-service/xnat-ingest \
+        ghcr.io/australian-imaging-service/accessionflow \
         collate /input /staging/collated --loop 300
 
 Repeat with ``label``, optionally ``deidentify``, and ``upload`` as separate
@@ -41,7 +41,7 @@ a service sharing a named volume for the staging directories:
 
     services:
       collate:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: collate /input /staging/collated --loop 300
         volumes:
           - /data/incoming:/input
@@ -49,18 +49,18 @@ a service sharing a named volume for the staging directories:
         restart: unless-stopped
 
       label:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: label /staging/collated /staging/labelled --loop 300
         volumes:
           - staging:/staging
         restart: unless-stopped
 
       upload:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: upload /staging/labelled xnat.example.org --loop 300
         environment:
-          XINGEST_USER: my-upload-user
-          XINGEST_PASS: my-upload-password
+          ACFLOW_USER: my-upload-user
+          ACFLOW_PASS: my-upload-password
         volumes:
           - staging:/staging
         restart: unless-stopped
@@ -74,7 +74,7 @@ Kubernetes
 The same shape maps onto a Kubernetes ``Deployment`` per stage (one replica each,
 ``restartPolicy: Always``), with the staging directories on a shared
 ``PersistentVolumeClaim`` mounted into each Pod, and connection details (XNAT host,
-user, password) injected via a ``ConfigMap``/``Secret`` as ``XINGEST_*`` environment
+user, password) injected via a ``ConfigMap``/``Secret`` as ``ACFLOW_*`` environment
 variables rather than passed as command-line flags. ``check-upload`` doesn't support
 ``--loop``, so it's a natural fit for a ``CronJob`` instead, run periodically to audit
 what has and hasn't made it to XNAT rather than as an always-on service.

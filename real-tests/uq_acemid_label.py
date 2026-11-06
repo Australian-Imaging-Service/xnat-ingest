@@ -31,7 +31,7 @@ result = runner.invoke(
         "{SubjectID}_{CaptureDate:%Y%m%d}",
         "--constant-project-id",
         "ACEMID",
-    ],  # XINGEST_DIR
+    ],  # ACFLOW_DIR
     catch_exceptions=False,
 )
 

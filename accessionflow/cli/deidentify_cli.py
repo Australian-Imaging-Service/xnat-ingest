@@ -60,21 +60,21 @@ only written if --reid-dir is given; see that option.
 @click.argument(
     "input_dir",
     type=click.Path(path_type=Path, exists=True),
-    envvar="XINGEST_INPUT_DIR",
+    envvar="ACFLOW_INPUT_DIR",
 )
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="ACFLOW_OUTPUT_DIR"
 )
 @click.argument(
     "spec_dir",
     type=click.Path(path_type=Path, exists=True),
-    envvar="XINGEST_SPEC_DIR",
+    envvar="ACFLOW_SPEC_DIR",
 )
 @click.option(
     "--reid-dir",
     type=click.Path(path_type=Path),
     default=None,
-    envvar="XINGEST_REID_DIR",
+    envvar="ACFLOW_REID_DIR",
     help=(
         "The directory to save the re-identification metadata to, which can be used to "
         "re-identify the de-identified data if needed. One JSON file is written per "
@@ -82,21 +82,21 @@ only written if --reid-dir is given; see that option.
         "--reid-encrypt-key). If this option is not given, the re-identification "
         "metadata is discarded rather than written to disk, which is the safer default "
         "when retaining the original<->deidentified mapping would itself be a security "
-        "concern (XINGEST_REID_DIR env. var)"
+        "concern (ACFLOW_REID_DIR env. var)"
     ),
 )
 @click.option(
     "--unlink-source",
     type=click.Choice(["all", "keep-metadata"]),
     default=None,
-    envvar="XINGEST_UNLINK_SOURCE",
+    envvar="ACFLOW_UNLINK_SOURCE",
     help=(
         "Whether to unlink the labelled session directories after they have been "
         "deidentified. 'all' removes the whole labelled session directory; "
         "'keep-metadata' removes the resource data but leaves the session/scan-"
         "level metadata behind, so a lightweight skeleton of the session survives "
         "(e.g. for 'attach' to use later). If not set, the labelled "
-        "directories are left in place (XINGEST_UNLINK_SOURCE env. var)"
+        "directories are left in place (ACFLOW_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -104,13 +104,11 @@ only written if --reid-dir is given; see that option.
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
-    help=(
-        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
-    ),
+    help=("Setup handles to capture logs that are generated (ACFLOW_LOGGERS env. var)"),
 )
 @click.option(
     "--additional-logger",
@@ -118,11 +116,11 @@ only written if --reid-dir is given; see that option.
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+        "specified here (ACFLOW_ADDITIONAL_LOGGERS env. var)"
     ),
 )
 @click.option(
@@ -133,35 +131,35 @@ only written if --reid-dir is given; see that option.
 @click.option(
     "--require-manifest/--no-require-manifest",
     default=True,
-    envvar="XINGEST_REQUIRE_MANIFEST",
+    envvar="ACFLOW_REQUIRE_MANIFEST",
     help=(
         "Whether to require a MANIFEST.json file in each resource directory. "
         "If False, resources are loaded as generic FileSets without checksum validation "
-        "(XINGEST_REQUIRE_MANIFEST env. var)"
+        "(ACFLOW_REQUIRE_MANIFEST env. var)"
     ),
 )
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+    envvar="ACFLOW_COPY_MODE",
+    help="The method to use for copying files (ACFLOW_COPY_MODE env. var)",
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    envvar="ACFLOW_LOOP",
+    help="Run the staging process continuously every LOOP seconds (ACFLOW_LOOP env. var). ",
 )
 @click.option(
     "--on-resource-clash",
     type=click.Choice(ON_RESOURCE_CLASH),
     default="error",
-    envvar="XINGEST_ON_RESOURCE_CLASH",
+    envvar="ACFLOW_ON_RESOURCE_CLASH",
     help=(
         "Determines the behavior when a resource with the same name already exists in the scan. "
-        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)."
+        "Options are 'merge', 'avoid', 'error' (ACFLOW_ON_RESOURCE_CLASH env. var)."
         "Default: 'error'"
     ),
 )
@@ -169,10 +167,10 @@ only written if --reid-dir is given; see that option.
     "--reid-encrypt-key",
     type=str,
     default=None,
-    envvar="XINGEST_REID_ENCRYPT_KEY",
+    envvar="ACFLOW_REID_ENCRYPT_KEY",
     help=(
         "An optional encryption key to use for encrypting the re-identification metadata "
-        "(XINGEST_REID_ENCRYPT_KEY env. var). This should be a URL-safe base64-encoded 32-byte key, "
+        "(ACFLOW_REID_ENCRYPT_KEY env. var). This should be a URL-safe base64-encoded 32-byte key, "
         "e.g. generated using `Fernet.generate_key()` from the cryptography package"
     ),
 )
@@ -180,21 +178,21 @@ only written if --reid-dir is given; see that option.
     "--metadata-allowlist",
     type=str,
     default=Accession.UID_METADATA_KEY,
-    envvar="XINGEST_METADATA_ALLOWLIST",
+    envvar="ACFLOW_METADATA_ALLOWLIST",
     callback=lambda context, param, value: tuple(
         key.strip() for key in value.split(",") if key.strip()
     ),
     help=(
         "Comma-separated metadata keys to retain in output sidecars "
-        "(XINGEST_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
-        "__repository__ are always retained, as they are needed to identify a session."
+        "(ACFLOW_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
+        "__store__ are always retained, as they are needed to identify a session."
     ),
 )
 @click.option(
     "--hash-uid-key",
     type=str,
     default=None,
-    envvar="XINGEST_HASH_UID_KEY",
+    envvar="ACFLOW_HASH_UID_KEY",
     help=(
         "Secret key used to replace each session's UID (by default its DICOM "
         "StudyInstanceUID) with a keyed hash of it in the output. The original and hashed "
@@ -203,7 +201,7 @@ only written if --reid-dir is given; see that option.
         "it is uploaded again. Sessions already on XNAT hold their previous UID, see "
         "--no-uid-check of the upload stage. If not given, the original UID is kept. "
         "Prefer the env. var so that the key isn't visible in the process list "
-        "(XINGEST_HASH_UID_KEY env. var)"
+        "(ACFLOW_HASH_UID_KEY env. var)"
     ),
 )
 def deidentify_cmd(

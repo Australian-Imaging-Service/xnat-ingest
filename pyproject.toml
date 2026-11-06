@@ -119,7 +119,7 @@ per-file-ignores = { "__init__.py" = ["F401"] }
 [tool.ruff.lint.isort]
 known-first-party = ["accessionflow"]
 # xnatpy's 'xnat' package is otherwise taken to be first-party, as it shares its name
-# with the 'accessionflow/repositories/xnat' plugin
+# with the 'accessionflow/stores/xnat' plugin
 known-third-party = ["xnat"]
 
 [tool.codespell]

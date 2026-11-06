@@ -17,7 +17,7 @@ class StopLoop(Exception):
 # looked up in
 XNAT_COMMANDS = {
     "label": "accessionflow.cli.label_cli",
-    "upload": "accessionflow.repositories.xnat.cli.upload_cli",
+    "upload": "accessionflow.stores.xnat.cli.upload_cli",
 }
 
 CASES = [
@@ -50,7 +50,7 @@ def test_loop_interval(
         # plugin's or the core one
         command = getattr(
             importlib.import_module(
-                "accessionflow.repositories.xnat.cli." + module_name + "_cli"
+                "accessionflow.stores.xnat.cli." + module_name + "_cli"
             ),
             module_name + "_cmd",
         )
@@ -92,10 +92,10 @@ def test_loop_interval(
     monkeypatch.setattr(module, "logger", log)
     if api_name == "upload":
         monkeypatch.setattr(module, "Xnat", MagicMock())
-    # Keep a developer's XINGEST_* environment out of this CLI invocation.
+    # Keep a developer's ACFLOW_* environment out of this CLI invocation.
     import os
 
-    env = {key: None for key in os.environ if key.startswith("XINGEST_")}
+    env = {key: None for key in os.environ if key.startswith("ACFLOW_")}
     result = CliRunner().invoke(command, args, env=env)
     assert getattr(module, api_name).call_count == 1, result.output
     if expected_sleep is None:

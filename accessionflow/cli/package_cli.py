@@ -34,13 +34,13 @@ reopening the archive.
 @click.argument(
     "input_dir",
     type=click.Path(exists=True, path_type=Path),
-    envvar="XINGEST_INPUT_DIR",
+    envvar="ACFLOW_INPUT_DIR",
 )
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="ACFLOW_OUTPUT_DIR"
 )
 @click.argument(
-    "source_datatype", type=MimeType.cli_type, envvar="XINGEST_SOURCE_DATATYPE"
+    "source_datatype", type=MimeType.cli_type, envvar="ACFLOW_SOURCE_DATATYPE"
 )
 @click.option(
     "--output-resource",
@@ -50,7 +50,7 @@ reopening the archive.
     required=True,
     nargs=2,
     metavar="<label> <target-spec>",
-    envvar="XINGEST_OUTPUT_RESOURCES",
+    envvar="ACFLOW_OUTPUT_RESOURCES",
     help=(
         "Resource label and target datatype to produce from each matching source. "
         "May be repeated. Target specs accept converter options after ':', e.g. "
@@ -61,14 +61,14 @@ reopening the archive.
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
+    envvar="ACFLOW_COPY_MODE",
     help="How converted and pass-through resources are copied to the output.",
 )
 @click.option(
     "--unlink-source",
     type=click.Choice(["all", "keep-metadata"]),
     default=None,
-    envvar="XINGEST_UNLINK_SOURCE",
+    envvar="ACFLOW_UNLINK_SOURCE",
     help=(
         "Remove the input session after successful packaging, either entirely or "
         "leaving its session/scan metadata skeleton."
@@ -78,27 +78,27 @@ reopening the archive.
     "--on-resource-clash",
     type=click.Choice(ON_RESOURCE_CLASH),
     default="error",
-    envvar="XINGEST_ON_RESOURCE_CLASH",
+    envvar="ACFLOW_ON_RESOURCE_CLASH",
     help="How to handle output labels that clash within the same scan.",
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
     default=True,
-    envvar="XINGEST_REQUIRE_MANIFEST",
+    envvar="ACFLOW_REQUIRE_MANIFEST",
     help="Whether staged input resources must contain manifests.",
 )
 @click.option(
     "--temp-dir",
     type=click.Path(path_type=Path),
     default=None,
-    envvar="XINGEST_TEMPDIR",
+    envvar="ACFLOW_TEMPDIR",
     help="Directory in which converters create temporary data.",
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
+    envvar="ACFLOW_LOOP",
     help="Run repeatedly every LOOP seconds; a negative value runs once.",
 )
 @click.option(
@@ -106,7 +106,7 @@ reopening the archive.
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
@@ -117,7 +117,7 @@ reopening the archive.
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
 )
 @click.option(
     "--raise-errors/--dont-raise-errors",

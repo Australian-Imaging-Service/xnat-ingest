@@ -22,12 +22,12 @@ from .base import cli
 @click.argument(
     "input_dir",
     type=click.Path(exists=True, path_type=Path),
-    envvar="XINGEST_INPUT_DIR",
+    envvar="ACFLOW_INPUT_DIR",
 )
 @click.argument(
     "output_dir",
     type=click.Path(path_type=Path),
-    envvar="XINGEST_OUTPUT_DIR",
+    envvar="ACFLOW_OUTPUT_DIR",
 )
 @click.option(
     "--extract",
@@ -37,19 +37,19 @@ from .base import cli
     required=True,
     nargs=2,
     metavar="<xnat-field> <specifier>",
-    envvar="XINGEST_FIELDS",
+    envvar="ACFLOW_FIELDS",
     help=(
         "Expose session metadata as an XNAT field. May be repeated; separate "
-        "entries with ';' in XINGEST_FIELDS."
+        "entries with ';' in ACFLOW_FIELDS."
     ),
 )
-@click.option("--loop", type=int, default=-1, envvar="XINGEST_LOOP")
+@click.option("--loop", type=int, default=-1, envvar="ACFLOW_LOOP")
 @click.option(
     "--logger",
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
@@ -60,7 +60,7 @@ from .base import cli
     multiple=True,
     type=str,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
 )
 @click.option("--raise-errors/--dont-raise-errors", default=False)
 def fields_cmd(

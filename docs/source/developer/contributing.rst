@@ -27,7 +27,7 @@ Clone the repository and install it in editable mode with the ``test``, ``dev`` 
 
 .. code-block:: console
 
-    $ git clone https://github.com/Australian-Imaging-Service/xnat-ingest.git
+    $ git clone https://github.com/Australian-Imaging-Service/accessionflow.git
     $ cd accessionflow
     $ python3 -m pip install -e .[test,dev,docs]
     $ pre-commit install
@@ -104,6 +104,6 @@ Getting help
 ----------------
 
 If something in these docs doesn't work, or you're not sure where to start, open an
-issue on `GitHub <https://github.com/Australian-Imaging-Service/xnat-ingest/issues>`_
+issue on `GitHub <https://github.com/Australian-Imaging-Service/accessionflow/issues>`_
 — asking a question is a legitimate contribution in its own right, since it usually
 points at a gap in the documentation that's worth fixing for the next person too.

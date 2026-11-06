@@ -737,7 +737,7 @@ def _metadata_table_cli() -> click.Command:
         multiple=True,
         nargs=3,
         default=(),
-        envvar="XINGEST_METADATA_TABLES",
+        envvar="ACFLOW_METADATA_TABLES",
     )
     def cmd(metadata_tables: tuple[MetadataTable, ...]) -> None:
         for mt in metadata_tables:
@@ -789,7 +789,7 @@ def test_metadata_table_env_var_single(
     monkeypatch: pytest.MonkeyPatch, csv_table: Csv
 ) -> None:
     monkeypatch.setenv(
-        "XINGEST_METADATA_TABLES",
+        "ACFLOW_METADATA_TABLES",
         f"{csv_table.fspath} session PatientID=PatientID",
     )
     result = CliRunner().invoke(_metadata_table_cli(), [], catch_exceptions=False)
@@ -800,7 +800,7 @@ def test_metadata_table_env_var_multiple_semicolon_separated(
     monkeypatch: pytest.MonkeyPatch, csv_table: Csv, tsv_table: Tsv
 ) -> None:
     monkeypatch.setenv(
-        "XINGEST_METADATA_TABLES",
+        "ACFLOW_METADATA_TABLES",
         f"{csv_table.fspath} scan A=B;{tsv_table.fspath} resource C=D",
     )
     result = CliRunner().invoke(_metadata_table_cli(), [], catch_exceptions=False)

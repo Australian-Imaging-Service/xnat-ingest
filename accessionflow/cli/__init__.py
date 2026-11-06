@@ -1,5 +1,5 @@
 from .attach_cli import attach_cmd
-from .base import RepositoryGroup, cli, repository_group
+from .base import StoreGroup, cli, store_group
 from .collate_cli import collate_cmd, collate_orthanc_cmd
 from .deidentify_cli import deidentify_cmd
 from .fields_cli import fields_cmd
@@ -18,7 +18,7 @@ __all__ = [
     "label_group",
     "make_label_command",
     "package_cmd",
-    "repository_group",
-    "RepositoryGroup",
+    "store_group",
+    "StoreGroup",
     "upload_group",
 ]
