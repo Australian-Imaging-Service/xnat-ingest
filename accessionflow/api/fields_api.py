@@ -6,10 +6,11 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from ..helpers.arg_types import IDSpec
-from ..helpers.logging import logger
-from ..helpers.remotes import LocalSessionListing, list_session_dirs
-from ..model.accession import Accession
+from accessionflow.helpers.arg_types import IDSpec
+from accessionflow.helpers.logging import logger
+from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
+from accessionflow.model.accession import Accession
+
 from .collate_api import BUILD_NAME_DEFAULT
 
 

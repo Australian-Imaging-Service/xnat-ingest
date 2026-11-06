@@ -7,8 +7,9 @@ import attrs
 from fileformats.core import FileSet
 from typing_extensions import Self
 
-from ..helpers.arg_types import AttachedFiles
-from ..helpers.metadata import Metadata
+from accessionflow.helpers.arg_types import AttachedFiles
+from accessionflow.helpers.metadata import Metadata
+
 from .resource import Resource
 
 logger = logging.getLogger("accessionflow")

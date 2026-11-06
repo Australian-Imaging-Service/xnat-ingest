@@ -5,11 +5,10 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
+from accessionflow.api.label_api import label
 from accessionflow.cli.base import cli
-
-from ..api.label_api import label
-from ..helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
-from ..helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
+from accessionflow.helpers.logging import logger, set_logger_handling
 
 
 @cli.command(

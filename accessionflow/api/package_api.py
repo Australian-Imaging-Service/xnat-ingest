@@ -8,13 +8,14 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomCollection, DicomImage
 from tqdm import tqdm
 
-from ..helpers.arg_types import OnResourceClash
-from ..helpers.logging import logger
-from ..helpers.metadata import Metadata
-from ..helpers.remotes import LocalSessionListing, list_session_dirs
-from ..helpers.xnat_scan_types import xnat_resource_label_from_sop_class
-from ..model.accession import Accession
-from ..model.resource import Resource
+from accessionflow.helpers.arg_types import OnResourceClash
+from accessionflow.helpers.logging import logger
+from accessionflow.helpers.metadata import Metadata
+from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
+from accessionflow.helpers.xnat_scan_types import xnat_resource_label_from_sop_class
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
+
 from .collate_api import BUILD_NAME_DEFAULT
 
 OutputResources = ty.Mapping[str, tuple[type[FileSet], ty.Mapping[str, ty.Any]]]

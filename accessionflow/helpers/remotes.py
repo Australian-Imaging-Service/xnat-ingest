@@ -30,15 +30,16 @@ from fileformats.medimage import DicomCollection, DicomImage
 from fileformats.vendor.xnat.medimage import Snapshots
 from tqdm import tqdm
 
-from ..exceptions import (
+from accessionflow.exceptions import (
     IncompleteCheckumsException,
     SessionIdentityRefused,
     UnknownStudyIdentity,
     UnsupportedModalityError,
 )
-from ..model.accession import Accession
-from ..model.acquisition import Acquisition
-from ..model.resource import Resource
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
+
 from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata

@@ -26,12 +26,13 @@ from fileformats.vendor.openxmlformats_officedocument.application import (
 )
 from pydra.utils import get_fields
 
-from ..exceptions import AccessionParseError
+from accessionflow.exceptions import AccessionParseError
 
 if ty.TYPE_CHECKING:
-    from ..model.accession import Accession
-    from ..model.acquisition import Acquisition
-    from ..model.resource import Resource
+    from accessionflow.model.accession import Accession
+    from accessionflow.model.acquisition import Acquisition
+    from accessionflow.model.resource import Resource
+
     from .metadata import Metadata
 
     MetadataLike: ty.TypeAlias = ty.Union[
@@ -864,9 +865,9 @@ class MetadataTable(MultiCliTyped):
         target : Accession | Acquisition | Resource | FileSet
             The object whose metadata to inject into.
         """
-        from ..model.accession import Accession
-        from ..model.acquisition import Acquisition
-        from ..model.resource import Resource
+        from accessionflow.model.accession import Accession
+        from accessionflow.model.acquisition import Acquisition
+        from accessionflow.model.resource import Resource
 
         rf = self.row_frequency
         if (

@@ -14,8 +14,11 @@ from fileformats.core.exceptions import FormatMismatchError
 from fileformats.generic import Directory
 from typing_extensions import Self
 
-from ..exceptions import DifferingCheckumsException, IncompleteCheckumsException
-from ..helpers.metadata import Metadata
+from accessionflow.exceptions import (
+    DifferingCheckumsException,
+    IncompleteCheckumsException,
+)
+from accessionflow.helpers.metadata import Metadata
 
 logger = logging.getLogger("accessionflow")
 

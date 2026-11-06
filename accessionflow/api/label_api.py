@@ -8,10 +8,11 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
-from ..helpers.logging import logger
-from ..helpers.metadata import Metadata
-from ..helpers.remotes import LocalSessionListing, list_session_dirs
-from ..model.accession import Accession
+from accessionflow.helpers.logging import logger
+from accessionflow.helpers.metadata import Metadata
+from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
+from accessionflow.model.accession import Accession
+
 from .collate_api import BUILD_NAME_DEFAULT
 
 INVALID_DIRNAME = "__invalid__"

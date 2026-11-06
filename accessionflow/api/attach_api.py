@@ -5,11 +5,10 @@ from pathlib import Path
 from fileformats.core import FileSet
 from tqdm import tqdm
 
+from accessionflow.helpers.arg_types import AttachedFiles, OnResourceClash
+from accessionflow.helpers.logging import logger
 from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
-
-from ..helpers.arg_types import AttachedFiles, OnResourceClash
-from ..helpers.logging import logger
-from ..model.accession import Accession
+from accessionflow.model.accession import Accession
 
 
 def attach(

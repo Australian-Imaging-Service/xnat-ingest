@@ -7,15 +7,15 @@ from fileformats.core import FileSet
 from fileformats.medimage import DicomSeries
 from tqdm import tqdm
 
-from ..helpers.arg_types import (
+from accessionflow.helpers.arg_types import (
     ClashSpec,
     IDSpec,
     MetadataTable,
     OnResourceClash,
     PathMetadataRegex,
 )
-from ..helpers.logging import logger
-from ..model.accession import Accession
+from accessionflow.helpers.logging import logger
+from accessionflow.model.accession import Accession
 
 BUILD_NAME_DEFAULT = "__build__"
 

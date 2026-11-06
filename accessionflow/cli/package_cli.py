@@ -7,8 +7,8 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from ..api.package_api import package
-from ..helpers.arg_types import (
+from accessionflow.api.package_api import package
+from accessionflow.helpers.arg_types import (
     ON_RESOURCE_CLASH,
     CopyModeParamType,
     LoggerConfig,
@@ -16,7 +16,8 @@ from ..helpers.arg_types import (
     OnResourceClash,
     OutputResource,
 )
-from ..helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.logging import logger, set_logger_handling
+
 from .base import cli
 
 

@@ -3,12 +3,11 @@ from pathlib import Path
 
 import click
 
+from accessionflow.api import check_upload
 from accessionflow.cli.base import cli
 from accessionflow.helpers.arg_types import LoggerConfig, StoreCredentials
 from accessionflow.helpers.logging import set_logger_handling
 from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS
-
-from ..api import check_upload
 
 
 @cli.command(

@@ -44,12 +44,12 @@ from frametree.core.exceptions import FrameTreeDataMatchError
 from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
-from ..exceptions import (
+from accessionflow.exceptions import (
     AccessionParseError,
     OrthancStudyChangedError,
     StagingError,
 )
-from ..helpers.arg_types import (
+from accessionflow.helpers.arg_types import (
     ON_RESOURCE_CLASH,
     AttachedFiles,
     ClashSpec,
@@ -58,8 +58,9 @@ from ..helpers.arg_types import (
     OnResourceClash,
     PathMetadataRegex,
 )
-from ..helpers.fields import Fields
-from ..helpers.metadata import Metadata
+from accessionflow.helpers.fields import Fields
+from accessionflow.helpers.metadata import Metadata
+
 from .acquisition import Acquisition
 from .resource import Resource
 

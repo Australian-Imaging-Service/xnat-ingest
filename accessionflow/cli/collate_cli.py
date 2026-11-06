@@ -7,16 +7,15 @@ import click
 from dateutil import tz
 from fileformats.core import FileSet
 
-from accessionflow.cli.base import cli
-
-from ..api.collate_api import (
+from accessionflow.api.collate_api import (
     DEFAULT_RESOURCE_FIELD,
     DEFAULT_SCAN_FIELD,
     DEFAULT_SESSION_FIELD,
     collate,
     collate_orthanc,
 )
-from ..helpers.arg_types import (
+from accessionflow.cli.base import cli
+from accessionflow.helpers.arg_types import (
     SEMICOLON_LIST,
     ClashSpec,
     CollationSpec,
@@ -28,7 +27,7 @@ from ..helpers.arg_types import (
     MimeType,
     PathMetadataRegex,
 )
-from ..helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.logging import logger, set_logger_handling
 
 
 @cli.command(

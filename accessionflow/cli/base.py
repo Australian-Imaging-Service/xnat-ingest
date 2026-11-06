@@ -1,6 +1,6 @@
 import click
 
-from ..helpers import __version__
+from accessionflow.helpers import __version__
 
 
 @click.group(help="Checks and uploads scans exported from scanner consoles to XNAT")

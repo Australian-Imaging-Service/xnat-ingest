@@ -16,12 +16,11 @@ import xnat
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
 
+from accessionflow.api import upload
 from accessionflow.cli.base import cli
-
-from ..api import upload
-from ..helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
-from ..helpers.logging import logger, set_logger_handling
-from ..helpers.remotes import DEFAULT_MAX_WORKERS
+from accessionflow.helpers.arg_types import LoggerConfig, StoreCredentials, UploadMethod
+from accessionflow.helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS
 
 
 @cli.command(

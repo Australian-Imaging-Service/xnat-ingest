@@ -5,17 +5,16 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
+from accessionflow.api.deidentify_api import deidentify
 from accessionflow.cli.base import cli
-
-from ..api.deidentify_api import deidentify
-from ..helpers.arg_types import (
+from accessionflow.helpers.arg_types import (
     ON_RESOURCE_CLASH,
     CopyModeParamType,
     LoggerConfig,
     OnResourceClash,
 )
-from ..helpers.logging import logger, set_logger_handling
-from ..model.accession import Accession
+from accessionflow.helpers.logging import logger, set_logger_handling
+from accessionflow.model.accession import Accession
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 

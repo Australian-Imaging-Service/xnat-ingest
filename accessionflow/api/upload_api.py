@@ -17,6 +17,10 @@ from frametree.xnat import Xnat
 from tqdm import tqdm
 from xnat.exceptions import XNATResponseError
 
+from accessionflow.exceptions import IncompleteCheckumsException, SessionIdentityRefused
+from accessionflow.helpers.arg_types import StoreCredentials, UploadMethod
+from accessionflow.helpers.logging import logger
+from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import (
     DEFAULT_MAX_WORKERS,
     LocalSessionListing,
@@ -33,13 +37,8 @@ from accessionflow.helpers.remotes import (
     log_name_only_comparison,
     split_resource_by_modality,
 )
-
-from ..exceptions import IncompleteCheckumsException, SessionIdentityRefused
-from ..helpers.arg_types import StoreCredentials, UploadMethod
-from ..helpers.logging import logger
-from ..helpers.metadata import Metadata
-from ..model.accession import Accession
-from ..model.resource import Resource
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
 
 
 def has_scan_dicom(resources: ty.Iterable[Resource]) -> bool:

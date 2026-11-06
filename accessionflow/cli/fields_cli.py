@@ -4,13 +4,14 @@ from pathlib import Path
 
 import click
 
-from ..api.fields_api import fields
-from ..helpers.arg_types import (
+from accessionflow.api.fields_api import fields
+from accessionflow.helpers.arg_types import (
     FieldMapping,
     IDSpec,
     LoggerConfig,
 )
-from ..helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.logging import logger, set_logger_handling
+
 from .base import cli
 
 

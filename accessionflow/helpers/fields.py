@@ -1,6 +1,7 @@
 import typing as ty
 
-from ..exceptions import AccessionParseError
+from accessionflow.exceptions import AccessionParseError
+
 from .arg_types import IDSpec
 from .logging import logger
 from .metadata import Metadata

@@ -6,13 +6,14 @@ from pathlib import Path
 import click
 from fileformats.core import FileSet
 
-from ..api import attach
-from ..helpers.arg_types import (
+from accessionflow.api import attach
+from accessionflow.helpers.arg_types import (
     ON_RESOURCE_CLASH,
     LoggerConfig,
     OnResourceClash,
 )
-from ..helpers.logging import logger, set_logger_handling
+from accessionflow.helpers.logging import logger, set_logger_handling
+
 from .base import cli
 
 PRE_STAGE_NAME_DEFAULT = "PRE-STAGE"
