@@ -329,7 +329,7 @@ def get_xnat_session(
 
     grouping_uid = read_grouping_uid(session.metadata)
     try:
-        xsession = xproject.experiments[session.session_id]
+        xsession = xproject.experiments[session.labels["session"]]
     except KeyError:
         session_date = (
             _session_date_from_metadata(session, date_field)
@@ -387,9 +387,11 @@ def get_xnat_session(
                         f"{session.name} ({', '.join(session.modalities)}), and no "
                         "'xnat:otherDicomSessionData' type to fall back to"
                     ) from None
-        xsubject = xclasses.SubjectData(label=session.subject_id, parent=xproject)
+        xsubject = xclasses.SubjectData(
+            label=session.labels["subject"], parent=xproject
+        )
         session_kwargs: dict[str, ty.Any] = {
-            "label": session.session_id,
+            "label": session.labels["session"],
             "parent": xsubject,
         }
         if session_date is not None:
@@ -403,7 +405,7 @@ def get_xnat_session(
                 xsession.uri,
                 grouping_uid,
                 xproject.id,
-                session.subject_id,
+                session.labels["subject"],
             )
     else:
         _assert_session_identity(
@@ -411,7 +413,7 @@ def get_xnat_session(
             xsession.uri,
             None if skip_uid_check else grouping_uid,
             xproject.id,
-            session.subject_id,
+            session.labels["subject"],
             adopt=True,
         )
     return xsession
@@ -996,6 +998,19 @@ class XnatSessionListing(SessionListing):
     Mixed into each kind of listing in accessionflow.helpers.remotes, before it in
     the bases, so that a session-only listing can override the lookup.
     """
+
+    @property
+    def project_id(self) -> str:
+        return self.ids[0]
+
+    @property
+    def subject_id(self) -> str:
+        return self.ids[1]
+
+    @property
+    def session_id(self) -> str:
+        # A session-only listing is named by its session label alone
+        return self.name if self.is_session_only else self.ids[2]
 
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
         """Resolve this listing to the XNAT session it belongs to, or None.

@@ -1297,7 +1297,7 @@ def test_allowlist_never_removes_reserved_metadata(tmp_path: Path):
     metadata = Metadata(
         {
             "__uid__": "uid",
-            "__data_store__": "xnat",
+            "__store_type__": "xnat",
             "PatientName": "Source name",
             "Modality": "MR",
         },
@@ -1309,6 +1309,6 @@ def test_allowlist_never_removes_reserved_metadata(tmp_path: Path):
 
     assert json.loads((tmp_path / Metadata.FNAME).read_text()) == {
         "__uid__": "uid",
-        "__data_store__": "xnat",
+        "__store_type__": "xnat",
         "Modality": "MR",
     }

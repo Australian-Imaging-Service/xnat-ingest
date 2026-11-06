@@ -512,17 +512,18 @@ def _is_timestamp(value: str) -> bool:
 
 @attrs.define(slots=False)
 class Accession:
-    """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
-    belong together under the same project/subject/session IDs.
+    """Representation of an accession to be deposited in a data store, which is a set
+    of acquisitions that belong together under the same labels.
 
     Parameters
     ----------
-    project_id: str, optional
-        The project ID of the session
-    subject_id: str, optional
-        The subject ID of the session
-    session_id: str, optional
-        The session (visit) ID of the session
+    labels: dict[str, str]
+        The labels the accession is deposited under in the data store, keyed by the
+        names of the store's label levels in order from the top, e.g.
+        ``{"project": "P1", "subject": "S1", "session": "V1"}`` for XNAT. Empty until
+        the accession is labelled
+    store_type: str, optional
+        The name of the data store the accession was labelled for, e.g. 'xnat'
     scans: ty.Dict[str, Acquisition]
         The scans in the session
     run_uid: ty.Optional[str]
@@ -530,9 +531,8 @@ class Accession:
     """
 
     uid: str
-    project_id: str | None = None
-    subject_id: str | None = None
-    session_id: str | None = None
+    labels: dict[str, str] = attrs.field(factory=dict, converter=dict)
+    store_type: str | None = None
     scans: ty.Dict[str, Acquisition] = attrs.field(
         factory=dict,
         converter=scans_converter,
@@ -555,6 +555,10 @@ class Accession:
     # Metadata key the originating session UID is stashed under when saving, so it can
     # be recovered on reload even after the directory has been renamed to PROJECT.SUBJECT.SESSION
     UID_METADATA_KEY = "__uid__"
+    # Metadata keys the labels (in level order) and the name of the data store they
+    # were assigned for are saved under, so the level names can be recovered on reload
+    LABELS_METADATA_KEY = "__labels__"
+    STORE_TYPE_METADATA_KEY = "__store_type__"
     # Metadata key under which each fileset's resolved fileformats type name (e.g.
     # 'VectraExport', 'Sqlite3Db') is stashed during collation, so it can be
     # referenced from --session/--scan/--resource specs (e.g. '{__datatype__}')
@@ -576,22 +580,18 @@ class Accession:
         return Fields({}, self)
 
     @property
-    def name(self) -> str:
-        if any(i is None for i in (self.project_id, self.subject_id, self.session_id)):
+    def name(self) -> str | None:
+        if not self.labels:
             return None
-        return f"{self.project_id}.{self.subject_id}.{self.session_id}"
+        return ".".join(self.labels.values())
 
     @property
     def invalid_ids(self) -> bool:
-        return (
-            self.project_id.startswith("INVALID")
-            or self.subject_id.startswith("INVALID")
-            or self.session_id.startswith("INVALID")
-        )
+        return any(label.startswith("INVALID") for label in self.labels.values())
 
     @property
     def path(self) -> str:
-        return ":".join([self.project_id, self.subject_id, self.session_id])
+        return ":".join(self.labels.values())
 
     @property
     def staging_relpath(self) -> list[str]:
@@ -646,9 +646,8 @@ class Accession:
         """Return a new empty session with the same IDs as the current session"""
         return type(self)(
             uid=self.uid,
-            project_id=self.project_id,
-            subject_id=self.subject_id,
-            session_id=self.session_id,
+            labels=self.labels,
+            store_type=self.store_type,
             run_uid=self.run_uid,
         )
 
@@ -1059,52 +1058,62 @@ class Accession:
 
     def label(
         self,
-        project_field: str,
-        subject_field: str,
-        session_field: str,
+        label_fields: ty.Mapping[str, str],
         acquisition_field: str | None = None,
-        constant_project_id: str | None = None,
-    ) -> None:
-        """Assigns project, subject and session IDs to the session, extracted from its
-        metadata. Also resolves a description for each scan in the session, if
-        'acquisition_field' is provided.
+        constant_labels: ty.Mapping[str, str] | None = None,
+        store_type: str | None = None,
+    ) -> dict[str, str]:
+        """Assigns the labels the accession is deposited under in a data store,
+        extracted from its metadata. Also resolves a description for each acquisition in
+        the accession, if 'acquisition_field' is provided.
 
         Parameters
         ----------
-        project_field : str
-            metadata field to extract the XNAT project ID from
-        subject_field : str
-            metadata field to extract the XNAT subject ID from
-        session_field: str
-            metadata field to extract the XNAT session ID from
-        constant_project_id : str
-            Override the project ID loaded from the metadata (useful when invoking
-            manually)
+        label_fields : Mapping[str, str]
+            the metadata field (or a format string over several fields) to extract each
+            label from, keyed by the name of its level in the data store, in order from
+            the top level, e.g. ``{"project": "StudyComments", "subject": "PatientID",
+            "session": "AccessionNumber"}`` for XNAT
         acquisition_field : str, optional
-            metadata field to extract a description for each scan from. Scans for which
-            the field can't be resolved are left without a description (saved with a
-            trailing-dot '<scan_id>.' directory name)
+            metadata field to extract a description for each acquisition from.
+            Acquisitions for which the field can't be resolved are left without a
+            description (saved with a trailing-dot '<scan_id>.' directory name)
+        constant_labels : Mapping[str, str], optional
+            labels to use as given rather than extract from the metadata, keyed by level
+            name, e.g. ``{"project": "MYPROJECT"}``
+        store_type : str, optional
+            the name of the data store the labels are for, e.g. 'xnat', recorded so the
+            accession isn't deposited in a different kind of store
+
+        Returns
+        -------
+        dict[str, str]
+            the metadata fields that couldn't be resolved, mapped to the placeholder
+            labels used instead
 
         Notes
         -----
-        If a project/subject/session field can't be resolved from the session's
-        metadata, a unique 'INVALID_MISSING_<FIELD>_<random>' placeholder is used
-        instead of raising, so the session can still be saved (see `invalid_ids`) for
-        manual review/reprocessing rather than being silently dropped.
+        If a label's field can't be resolved from the accession's metadata, a unique
+        'INVALID_MISSING_<FIELD>_<random>' placeholder is used instead of raising, so the
+        accession can still be saved (see `invalid_ids`) for manual review/reprocessing
+        rather than being silently dropped.
         """
-        missing_ids: dict[str, str] = {}
-        if constant_project_id is None:
-            self.project_id = IDSpec(project_field).get_value(
-                self.metadata, missing_ids=missing_ids
+        constant_labels = dict(constant_labels or {})
+        if unknown := set(constant_labels) - set(label_fields):
+            raise ValueError(
+                f"Constant labels {sorted(unknown)} are not label levels "
+                f"{list(label_fields)}"
             )
-        else:
-            self.project_id = constant_project_id
-        self.subject_id = IDSpec(subject_field).get_value(
-            self.metadata, missing_ids=missing_ids
-        )
-        self.session_id = IDSpec(session_field).get_value(
-            self.metadata, missing_ids=missing_ids
-        )
+        missing_ids: dict[str, str] = {}
+        self.labels = {
+            level: (
+                constant_labels[level]
+                if level in constant_labels
+                else IDSpec(field).get_value(self.metadata, missing_ids=missing_ids)
+            )
+            for level, field in label_fields.items()
+        }
+        self.store_type = store_type
 
         if acquisition_field is not None:
             for scan in self.scans.values():
@@ -2040,28 +2049,26 @@ class Accession:
         Parameters
         ----------
         yaml_path : Path
-            path to a YAML file named PROJECT.SUBJECT.SESSION.yaml
+            path to a YAML file named after the accession's labels, joined by '.',
+            e.g. PROJECT.SUBJECT.SESSION.yaml
 
         Returns
         -------
         Accession
             a session with no scans but with metadata populated
         """
-        stem = yaml_path.stem
-        parts = stem.split(".")
-        if len(parts) != 3:
-            raise ValueError(
-                f"Expected metadata YAML filename to have format "
-                f"PROJECT.SUBJECT.SESSION.yaml, got '{yaml_path.name}'"
-            )
-        project_id, subject_id, session_id = parts
         with open(yaml_path) as f:
             metadata = yaml.safe_load(f)
+        labels, run_uid = cls._labels_from_dirname(yaml_path.stem, metadata)
+        if run_uid is not None:
+            raise ValueError(
+                f"Expected metadata YAML filename to be the accession's labels joined by "
+                f"'.', e.g. PROJECT.SUBJECT.SESSION.yaml, got '{yaml_path.name}'"
+            )
         session = cls(
             uid=metadata[cls.UID_METADATA_KEY],
-            project_id=project_id,
-            subject_id=subject_id,
-            session_id=session_id,
+            labels=labels,
+            store_type=metadata.get(cls.STORE_TYPE_METADATA_KEY),
         )
         session.metadata = Metadata(metadata, session)
         return session
@@ -2102,21 +2109,19 @@ class Accession:
             # IDs assigned to it
             session = cls(uid=session_dir.name[len(cls.PRE_LABEL_PREFIX) :])
         else:
-            if "." in session_dir.name:
-                parts = session_dir.name.split(".")
-            else:
-                # Backwards compatibility with old delimiter
-                parts = session_dir.name.split("-")
-            if len(parts) == 4:
-                project_id, subject_id, session_id, run_uid = parts
-            else:
-                project_id, subject_id, session_id = parts
-                run_uid = None
+            # The level names are read from the saved metadata, as the directory name
+            # only holds the labels' values
+            metadata_fpath = session_dir / Metadata.FNAME
+            saved_metadata = (
+                json.loads(metadata_fpath.read_text())
+                if metadata_fpath.exists()
+                else {}
+            )
+            labels, run_uid = cls._labels_from_dirname(session_dir.name, saved_metadata)
             session = cls(
                 uid=session_dir.name,
-                project_id=project_id,
-                subject_id=subject_id,
-                session_id=session_id,
+                labels=labels,
+                store_type=saved_metadata.get(cls.STORE_TYPE_METADATA_KEY),
                 run_uid=run_uid,
             )
         for item in session_dir.iterdir():
@@ -2156,29 +2161,52 @@ class Accession:
             session.fields = Fields.load(session_dir, session)
         return session
 
-    def staging_dirname(self, available_projects: list[str] | None = None) -> str:
+    def staging_dirname(self) -> str:
         """The directory name this session is saved under by :meth:`save`.
 
         Split out of ``save`` so that a caller can work out where the session
         WILL land before saving it. ``deidentify_api`` needs that to decide
         whether an output already exists, and rebuilding the rule at the call
         site would let the two drift: the name is not simply the input
-        directory's, because it is derived from the assigned ids, gains a
-        ``run_uid`` suffix when one is set and an invalid-project prefix when
-        the project is unrecognised.
+        directory's, because it is derived from the assigned labels and gains a
+        ``run_uid`` suffix when one is set.
         """
         if self.name is None:
-            # Project/subject/session IDs haven't been assigned yet, so flag the
-            # directory as not-yet-labelled rather than assuming they're set
+            # Labels haven't been assigned yet, so flag the directory as
+            # not-yet-labelled rather than assuming they're set
             return self.staging_relpath[0]
-        if available_projects is None or self.project_id in available_projects:
-            project_id = self.project_id
-        else:
-            project_id = "INVALID_UNRECOGNISED_" + self.project_id
-        session_dirname = f"{project_id}.{self.subject_id}.{self.session_id}"
+        session_dirname = self.name
         if self.run_uid:
             session_dirname += f".{self.run_uid}"
         return session_dirname
+
+    # The label levels of accessions staged before the levels were named by the data
+    # store, which were always XNAT's
+    LEGACY_LABEL_LEVELS = ("project", "subject", "session")
+
+    @classmethod
+    def _labels_from_dirname(
+        cls, dirname: str, metadata: ty.Mapping[str, ty.Any]
+    ) -> tuple[dict[str, str], str | None]:
+        """The labels (and run UID, if present) of a labelled accession's directory
+        name, which holds the labels' values joined by '.' followed by an optional run
+        UID. The level names are taken from the accession's saved metadata, or are
+        XNAT's project/subject/session for accessions staged before they were saved"""
+        saved = metadata.get(cls.LABELS_METADATA_KEY)
+        levels = list(saved) if saved else list(cls.LEGACY_LABEL_LEVELS)
+        if "." in dirname or saved:
+            parts = dirname.split(".")
+        else:
+            # Backwards compatibility with old delimiter
+            parts = dirname.split("-")
+        if len(parts) not in (len(levels), len(levels) + 1):
+            raise AccessionParseError(
+                f"Expected the name of '{dirname}' to hold the {levels} labels "
+                "joined by '.', optionally followed by a run UID"
+            )
+        labels = dict(zip(levels, parts))
+        run_uid = parts[len(levels)] if len(parts) > len(levels) else None
+        return labels, run_uid
 
     @classmethod
     @contextmanager
@@ -2239,7 +2267,6 @@ class Accession:
     def save(
         self,
         dest_dir: Path,
-        available_projects: list[str] | None = None,
         copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
         collation_map: dict[type[FileSet], FileSet.CopyCollation] | None = None,
         conversion_map: (
@@ -2248,20 +2275,14 @@ class Accession:
         metadata_allowlist: ty.Collection[str] | None = None,
         include: ty.Sequence[type[FileSet]] = (),
     ) -> tuple[Self, Path]:
-        r"""Saves the session to a directory. The session will be saved to a directory
-        with the project, subject and session IDs as subdirectories of this directory,
-        along with the scans manifest
+        r"""Saves the session to a directory, in a subdirectory named after its labels
+        (see :meth:`staging_dirname`), along with the scans manifest
 
         Parameters
         ----------
         dest_dir : Path
-            destination directory to save the deidentified files. The session will be saved
-            to a directory with the project, subject and session IDs as subdirectories of
-            this directory, along with the scans manifest
-        available_projects : list[str], optional
-            list of available project IDs on the XNAT server, if the project ID of the
-            session is not in this list, it will be prefixed with ``INVALID_UNRECOGNISED_``
-            to avoid upload errors, by default None
+            destination directory to save the files to. The session is saved in a
+            subdirectory of it named after its labels (see :meth:`staging_dirname`)
         copy_mode : FileSet.CopyMode, optional
             the mode to use to copy the files that don't need to be deidentified,
             by default FileSet.CopyMode.hardlink_or_copy
@@ -2310,7 +2331,7 @@ class Accession:
             )
 
         saved = self.new_empty()
-        session_dir = dest_dir / self.staging_dirname(available_projects)
+        session_dir = dest_dir / self.staging_dirname()
         session_dir.mkdir(parents=True, exist_ok=True)
         for scan in tqdm(included_scans, f"Staging sessions to {session_dir}"):
             saved_scan = scan.save(
@@ -2334,6 +2355,10 @@ class Accession:
             saved.session_resources[saved_resource.name] = saved_resource
         logger.debug("Saving session metadata")
         self.metadata[self.UID_METADATA_KEY] = self.uid
+        if self.labels:
+            self.metadata[self.LABELS_METADATA_KEY] = dict(self.labels)
+        if self.store_type is not None:
+            self.metadata[self.STORE_TYPE_METADATA_KEY] = self.store_type
         self.metadata.save(session_dir, allowlist=metadata_allowlist)
         if self.fields:
             self.fields.save(session_dir)

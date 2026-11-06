@@ -65,11 +65,10 @@ def _acquisitions_with_several_resources(
 def label(
     input_dir: Path,
     output_dir: Path,
-    project_field: str,
-    subject_field: str,
-    session_field: str,
+    label_fields: ty.Mapping[str, str],
     acquisition_field: str | None = None,
-    project_id: str | None = None,
+    constant_labels: ty.Mapping[str, str] | None = None,
+    store_type: str | None = None,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     unlink_source: str | None = None,
     raise_errors: bool = False,
@@ -84,19 +83,22 @@ def label(
         List of paths to search for input files. Can be local paths or S3 paths.
     output_dir: Path
         Path to the staging directory where the sorted sessions will be saved. This should be a local path.
-    project_field: str
-        Field name to use for extracting the project ID from the input files.
-    subject_field: str
-        Field name to use for extracting the subject ID from the input files.
-    session_field: str
-        Field name to use for extracting the session ID from the input files.
+    label_fields: Mapping[str, str]
+        The metadata field (or a format string over several fields) to extract each
+        label from, keyed by the name of its level in the data store, in order from the
+        top level, e.g. ``{"project": "StudyComments", "subject": "PatientID",
+        "session": "AccessionNumber"}`` for XNAT
     acquisition_field: str | None
         Field name to use for extracting a description for each acquisition (e.g. the
         XNAT scan type). Acquisitions for which the field can't be resolved are left
         without a description.
-    project_id: str | None
-        If provided, this project ID will be used for all sessions instead of extracting it from the input files.
-        Useful for instruments that upload to a single project.
+    constant_labels: Mapping[str, str] | None
+        Labels to use for all sessions instead of extracting them from the metadata,
+        keyed by level name, e.g. ``{"project": "MYPROJECT"}``. Useful for instruments
+        that deposit in a single project.
+    store_type: str | None
+        The name of the data store the labels are for (e.g. 'xnat'), recorded with the
+        session so it isn't deposited in a different kind of store
     copy_mode: FileSet.CopyMode
         The copy mode to use when saving the sessions. This determines whether files are copied, moved or symlinked when
         saving the sessions to the staging directory.
@@ -120,7 +122,7 @@ def label(
 
     Notes
     -----
-    If a session's project/subject/session ID can't be resolved from its metadata, it
+    If any of a session's labels can't be resolved from its metadata, it
     is saved with placeholder IDs (see `Accession.label`) under an
     `INVALID_NAME_DEFAULT` ('__invalid__') subdirectory of `output_dir` instead of the
     regular output location, so it can be found and manually reprocessed rather than
@@ -203,11 +205,10 @@ def label(
                 )
 
             missing_ids = session.label(
-                project_field=project_field,
-                subject_field=subject_field,
-                session_field=session_field,
-                constant_project_id=project_id,
+                label_fields=label_fields,
                 acquisition_field=acquisition_field,
+                constant_labels=constant_labels,
+                store_type=store_type,
             )
 
             if missing_ids:
@@ -221,7 +222,7 @@ def label(
                     )
                     continue
                 msg = (
-                    f"Could not resolve project/subject/session IDs for '{session_listing.name}', "
+                    f"Could not resolve the labels of '{session_listing.name}', "
                     f"due to missing metadata fields {list(missing_ids)}. "
                     f"Saved to '{invalid_dir}/{session.name}' for manual review instead"
                 )
@@ -253,17 +254,15 @@ def label(
             # collate_api does the same thing with move_dir; this is the same
             # guarantee reached with a rename, which is atomic within a
             # directory tree on one filesystem.
-            available_projects = None
             build_dir = dest_dir / BUILD_NAME_DEFAULT
             work_dir = build_dir / f"promote_{session_listing.name}"
             if work_dir.exists():
                 shutil.rmtree(work_dir)
             try:
-                final_dir = dest_dir / session.staging_dirname(available_projects)
+                final_dir = dest_dir / session.staging_dirname()
                 if final_dir.exists():
                     session.save(
                         dest_dir=dest_dir,
-                        available_projects=available_projects,
                         copy_mode=copy_mode,
                         include=include,
                     )
@@ -271,7 +270,6 @@ def label(
                     work_dir.mkdir(parents=True)
                     _, built_dir = session.save(
                         dest_dir=work_dir,
-                        available_projects=available_projects,
                         copy_mode=copy_mode,
                         include=include,
                     )

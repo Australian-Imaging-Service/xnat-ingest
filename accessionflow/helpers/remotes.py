@@ -104,25 +104,15 @@ class SessionListing(metaclass=abc.ABCMeta):
         return read_grouping_uid(metadata)
 
     @property
-    def ids(self):
+    def ids(self) -> list[str]:
+        """The labels of the session, from its directory name. A store plugin's
+        listing names them, e.g. as XNAT's project, subject and session IDs"""
         if "." in self.name:
             ids = self.name.split(".")
         else:
             # For backwards compatibility
             ids = self.name.split("-")[:3]
         return ids
-
-    @property
-    def project_id(self) -> str:
-        return self.ids[0]
-
-    @property
-    def subject_id(self) -> str:
-        return self.ids[1]
-
-    @property
-    def session_id(self) -> str:
-        return self.ids[2]
 
     @property
     def is_session_only(self) -> bool:
@@ -157,10 +147,6 @@ class LocalSessionListing(SessionListing):
     @property
     def name(self) -> str:  # type: ignore[override]  # base declares a plain attr
         return self.fspath.name
-
-    @property
-    def session_id(self) -> str:
-        return self.ids[2]
 
 
 @attrs.define

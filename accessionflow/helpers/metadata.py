@@ -124,7 +124,7 @@ class Metadata(ty.Mapping[str, ty.Any]):
 
     FNAME = "__METADATA__.json"
     # Needed to load and identify a session, so an allowlist never removes these
-    RESERVED_KEYS = frozenset({"__uid__", "__data_store__"})
+    RESERVED_KEYS = frozenset({"__uid__", "__labels__", "__store_type__"})
 
     @classmethod
     def collate(cls, metadata_list: ty.Iterable[ty.Self]) -> dict[str, ty.Any]:

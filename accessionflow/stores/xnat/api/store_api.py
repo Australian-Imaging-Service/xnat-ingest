@@ -319,6 +319,13 @@ def store(
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
                 )
+                # Accessions staged before the data store was recorded have none
+                if session.store_type not in (None, "xnat"):
+                    raise ValueError(
+                        f"'{session_listing.name}' was labelled for a "
+                        f"'{session.store_type}' data store, not XNAT. Label it with "
+                        "'label xnat' to deposit it in XNAT"
+                    )
                 # SIGNAL, DO NOT REFUSE. A staged session with no session-level
                 # __METADATA__.json is one that no completed `save()` produced:
                 # staged by an older version, assembled by hand, or left behind by
@@ -349,17 +356,17 @@ def store(
                 # Create corresponding session on XNAT
                 logger.debug(
                     "Creating XNAT session for '%s' in project '%s'",
-                    session.session_id,
-                    session.project_id,
+                    session.labels["session"],
+                    session.labels["project"],
                 )
-                xproject = xnat_repo.connection.projects[session.project_id]
+                xproject = xnat_repo.connection.projects[session.labels["project"]]
 
                 # Access Arcana frameset associated with project
                 try:
-                    frameset = framesets[session.project_id]
+                    frameset = framesets[session.labels["project"]]
                 except KeyError:
                     try:
-                        frameset = FrameSet.load(session.project_id, xnat_repo)
+                        frameset = FrameSet.load(session.labels["project"], xnat_repo)
                     except Exception as e:
                         if not always_include:
                             logger.error(
@@ -368,13 +375,13 @@ def store(
                                 "the frameset must be defined on XNAT using the `frametree` "
                                 "command line tool (see https://arcanaframework.github.io/frametree/).",
                                 e,
-                                session.project_id,
+                                session.labels["project"],
                                 xnat_repo.server,
                             )
                             continue
                         else:
                             frameset = None
-                    framesets[session.project_id] = frameset
+                    framesets[session.labels["project"]] = frameset
 
                 # Get the XNAT session object (creates it if it does not exist)
                 xsession = get_xnat_session(
