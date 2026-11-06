@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -21,6 +23,12 @@ from .collate_api import BUILD_NAME_DEFAULT
 DEFAULT_SPEC_DIR = "__default__"
 
 
+def _hash_uid(uid: str, key: str) -> str:
+    """A plain hash could be recomputed by anyone holding the original UID, so the hash
+    is keyed. Hexadecimal, so that it is safe to use in a directory name."""
+    return hmac.new(key.encode(), uid.encode(), hashlib.sha256).hexdigest()
+
+
 def deidentify(
     input_dir: Path,
     output_dir: Path,
@@ -34,6 +42,7 @@ def deidentify(
     reid_encrypt_key: bytes | None = None,
     max_workers: int | None = None,
     metadata_allowlist: ty.Collection[str] = {ImagingSession.UID_METADATA_KEY},
+    hash_uid_key: str | None = None,
 ) -> list[str]:
     """
     Parameters
@@ -47,7 +56,15 @@ def deidentify(
         the number of threads handed to a resource's own deidentify implementation to
         parallelise work within that resource (e.g. the per-file loop for a DICOM
         series). Ignored by formats that don't support it.
+    hash_uid_key : str, optional
+        the secret key used to replace each session's UID (by default its DICOM
+        StudyInstanceUID) with a keyed hash of it in the output. The same UID and key
+        always give the same hash, so a session is still recognised when it is uploaded
+        again. If not given, the original UID is kept in the output.
     """
+
+    if hash_uid_key is not None and not hash_uid_key:
+        raise ValueError("The key used to hash session UIDs must not be empty")
 
     if reid_encrypt_key is not None and reid_dir is None:
         logger.warning(
@@ -123,6 +140,7 @@ def deidentify(
                     if stale.exists():
                         shutil.rmtree(stale)
                 scratch_dir.mkdir(parents=True)
+                original_uid = session.uid
                 try:
                     deidentified_session, reid_mdata = session.deidentify(
                         scratch_dir,
@@ -131,6 +149,8 @@ def deidentify(
                         recipe_files=loaded,
                         max_workers=max_workers,
                     )
+                    if hash_uid_key is not None:
+                        deidentified_session.uid = _hash_uid(original_uid, hash_uid_key)
                     available_projects = None
                     final_dir = output_dir / deidentified_session.staging_dirname(
                         available_projects
@@ -155,9 +175,13 @@ def deidentify(
                             shutil.rmtree(temporary)
                 if reid_dir is not None:
                     reid_document = {
-                        "session_uid": session.uid,
+                        "session_uid": original_uid,
                         "changed_fields": reid_mdata,
                     }
+                    if hash_uid_key is not None:
+                        reid_document["deidentified_session_uid"] = (
+                            deidentified_session.uid
+                        )
                     # PersonName and similar metadata values need string conversion.
                     reid_mdata_json = json.dumps(
                         reid_document, indent=2, default=str

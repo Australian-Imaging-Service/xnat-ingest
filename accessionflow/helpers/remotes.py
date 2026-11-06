@@ -273,6 +273,13 @@ class SessionListing(metaclass=abc.ABCMeta):
         return manifests
 
     @property
+    def expected_uid(self) -> str | None:
+        """The UID that a session on XNAT must hold, or None if it isn't to be checked.
+
+        The subject of the session is still checked when this is None."""
+        return None if self.skip_uid_check else self.grouping_uid
+
+    @property
     def grouping_uid(self) -> str | None:
         try:
             metadata = json.loads((self.cache_path / Metadata.FNAME).read_text())
@@ -329,7 +336,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         except KeyError:
             return None
         _assert_session_identity(
-            connection, xsession.uri, self.grouping_uid, xproject.id, self.subject_id
+            connection, xsession.uri, self.expected_uid, xproject.id, self.subject_id
         )
         return xsession
 
@@ -360,7 +367,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         # that is shared into this project.
         uri = f"/data/experiments/{experiment['ID']}"
         _assert_session_identity(
-            connection, uri, self.grouping_uid, project["ID"], self.subject_id
+            connection, uri, self.expected_uid, project["ID"], self.subject_id
         )
         return uri
 
@@ -491,6 +498,7 @@ class SessionListing(metaclass=abc.ABCMeta):
 @attrs.define
 class LocalSessionListing(SessionListing):
     fspath: Path
+    skip_uid_check: bool = attrs.field(default=False, kw_only=True)
 
     @property
     def cache_path(self) -> Path:
@@ -564,6 +572,7 @@ class SessionOnlyListing(SessionListing):
     """
 
     fspath: Path
+    skip_uid_check: bool = attrs.field(default=False, kw_only=True)
 
     @property
     def cache_path(self) -> Path:
@@ -598,7 +607,7 @@ class SessionOnlyListing(SessionListing):
         """
         xsession = _find_xnat_session_by_label(connection, self.session_id)
         if xsession is not None:
-            _assert_session_identity(connection, xsession.uri, self.grouping_uid)
+            _assert_session_identity(connection, xsession.uri, self.expected_uid)
         return xsession
 
     def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
@@ -608,7 +617,7 @@ class SessionOnlyListing(SessionListing):
         """
         uri = _find_xnat_session_uri_by_label(connection, self.session_id)
         if uri is not None:
-            _assert_session_identity(connection, uri, self.grouping_uid)
+            _assert_session_identity(connection, uri, self.expected_uid)
         return uri
 
     # all_uploaded is deliberately NOT defined here. Only the session lookup
@@ -624,6 +633,7 @@ class S3SessionListing(SessionListing):
     objects: ty.List[ty.Tuple[ty.List[str], ty.Any]]
     _cache_path: Path
     max_workers: int = DEFAULT_MAX_WORKERS
+    skip_uid_check: bool = attrs.field(default=False, kw_only=True)
     _downloaded: bool = attrs.field(default=False, init=False)
     _download_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
@@ -754,13 +764,13 @@ class S3SessionOnlyListing(S3SessionListing):
     def find_xnat_session(self, connection: xnat.XNATSession) -> ty.Any:
         xsession = _find_xnat_session_by_label(connection, self.session_id)
         if xsession is not None:
-            _assert_session_identity(connection, xsession.uri, self.grouping_uid)
+            _assert_session_identity(connection, xsession.uri, self.expected_uid)
         return xsession
 
     def find_xnat_session_uri(self, connection: xnat.XNATSession) -> ty.Optional[str]:
         uri = _find_xnat_session_uri_by_label(connection, self.session_id)
         if uri is not None:
-            _assert_session_identity(connection, uri, self.grouping_uid)
+            _assert_session_identity(connection, uri, self.expected_uid)
         return uri
 
 
@@ -770,6 +780,7 @@ def iterate_s3_sessions(
     temp_dir: Path | None,
     wait_period: int,
     max_workers: int | None = None,
+    skip_uid_check: bool = False,
 ) -> ty.Iterator[SessionListing]:
     """Iterate over sessions stored in an S3 bucket
 
@@ -849,6 +860,7 @@ def iterate_s3_sessions(
                     bucket=bucket,
                     cache_path=session_tmp_dir,
                     max_workers=max_workers,
+                    skip_uid_check=skip_uid_check,
                 )
             else:
                 logger.info(
@@ -964,6 +976,7 @@ def get_xnat_session(
     xproject: ty.Any,
     modality: str | None = None,
     date_field: str | None = None,
+    skip_uid_check: bool = False,
 ) -> ty.Any:
     """Get the XNAT session object for the given session
 
@@ -1073,7 +1086,7 @@ def get_xnat_session(
         _assert_session_identity(
             xproject.xnat_session,
             xsession.uri,
-            grouping_uid,
+            None if skip_uid_check else grouping_uid,
             xproject.id,
             session.subject_id,
             adopt=True,

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +16,7 @@ from accessionflow.api.deidentify_api import (
     deidentify,
     load_recipe_files,
 )
+from accessionflow.helpers.metadata import Metadata
 from accessionflow.model.scan import ImagingScan
 from accessionflow.model.session import ImagingSession
 
@@ -1209,3 +1212,105 @@ def test_deidentify_keeps_only_uid_in_output_metadata(
     reloaded = ImagingSession.load(output_session)
     assert reloaded.uid == SESSION_NAME
     assert reloaded.scans["1"].resources["RES"].checksums
+
+
+def _with_uid(session_dir: Path, uid: str) -> None:
+    metadata_path = session_dir / "__METADATA__.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["__uid__"] = uid
+    metadata_path.write_text(json.dumps(metadata))
+
+
+def test_deidentify_hashes_uid_and_records_it_for_reid(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    input_dir, output_dir, spec_dir, reid_dir = dirs
+    original = "1.2.840.original.study.uid"
+    _with_uid(input_dir / SESSION_NAME, original)
+
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        errors = deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            reid_dir=reid_dir,
+            hash_uid_key="site-secret",
+        )
+
+    assert errors == []
+    expected = hmac.new(b"site-secret", original.encode(), hashlib.sha256).hexdigest()
+    output_session = output_dir / SESSION_NAME
+    assert json.loads((output_session / "__METADATA__.json").read_text()) == {
+        "__uid__": expected
+    }
+    assert ImagingSession.load(output_session).uid == expected
+    # The original isn't left in any sidecar of the output
+    for sidecar in output_session.rglob("__METADATA__.json"):
+        assert original not in sidecar.read_text()
+    reid = json.loads((reid_dir / f"{SESSION_NAME}.json").read_text())
+    assert reid["session_uid"] == original
+    assert reid["deidentified_session_uid"] == expected
+
+
+def test_deidentify_uid_hash_is_stable_and_depends_on_the_key(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    input_dir, output_dir, spec_dir, _ = dirs
+    uids = []
+    for key in ("key-a", "key-a", "key-b"):
+        with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+            assert not deidentify(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                spec_dir=spec_dir,
+                hash_uid_key=key,
+            )
+        metadata = (output_dir / SESSION_NAME / "__METADATA__.json").read_text()
+        uids.append(json.loads(metadata)["__uid__"])
+    assert uids[0] == uids[1]
+    assert uids[0] != uids[2]
+
+
+def test_deidentify_keeps_original_uid_without_a_key(
+    dirs: tuple[Path, Path, Path, Path],
+):
+    input_dir, output_dir, spec_dir, _ = dirs
+    _with_uid(input_dir / SESSION_NAME, "original-uid")
+    with patch.object(ImagingSession, "deidentify", _mock_deidentify_passthrough):
+        assert not deidentify(
+            input_dir=input_dir, output_dir=output_dir, spec_dir=spec_dir
+        )
+    metadata = (output_dir / SESSION_NAME / "__METADATA__.json").read_text()
+    assert json.loads(metadata)["__uid__"] == "original-uid"
+
+
+def test_deidentify_refuses_an_empty_hash_key(dirs: tuple[Path, Path, Path, Path]):
+    input_dir, output_dir, spec_dir, _ = dirs
+    with pytest.raises(ValueError, match="must not be empty"):
+        deidentify(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            spec_dir=spec_dir,
+            hash_uid_key="",
+        )
+
+
+def test_allowlist_never_removes_reserved_metadata(tmp_path: Path):
+    metadata = Metadata(
+        {
+            "__uid__": "uid",
+            "__repository__": "xnat",
+            "PatientName": "Source name",
+            "Modality": "MR",
+        },
+        None,
+    )
+    metadata._read = True
+
+    metadata.save(tmp_path, allowlist={"Modality"})
+
+    assert json.loads((tmp_path / Metadata.FNAME).read_text()) == {
+        "__uid__": "uid",
+        "__repository__": "xnat",
+        "Modality": "MR",
+    }

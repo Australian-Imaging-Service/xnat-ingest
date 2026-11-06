@@ -96,7 +96,11 @@ class Metadata(ty.Mapping[str, ty.Any]):
         metadata = (
             self._dct
             if allowlist is None
-            else {key: value for key, value in self._dct.items() if key in allowlist}
+            else {
+                key: value
+                for key, value in self._dct.items()
+                if key in allowlist or key in self.RESERVED_KEYS
+            }
         )
         # 'default=str' handles values that aren't natively JSON-serialisable but
         # have a sensible string representation, e.g. pydicom's PersonName
@@ -119,6 +123,8 @@ class Metadata(ty.Mapping[str, ty.Any]):
         return cls(dct, obj)
 
     FNAME = "__METADATA__.json"
+    # Needed to load and identify a session, so an allowlist never removes these
+    RESERVED_KEYS = frozenset({"__uid__", "__repository__"})
 
     @classmethod
     def collate(cls, metadata_list: ty.Iterable[ty.Self]) -> dict[str, ty.Any]:

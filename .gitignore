@@ -22,6 +22,6 @@ __pycache__
 *.egg-info
 ~*
 *.venv
-/accessionflow/_version.py
+_version.py
 /dicom data
 /associate data

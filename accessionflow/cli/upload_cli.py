@@ -253,6 +253,20 @@ by setting the "XNAT_INGEST_HOST" environment variable.
         "Specify the modality of the sessions to upload (XINGEST_MODALITY env. var)."
     ),
 )
+@click.option(
+    "--no-uid-check",
+    "skip_uid_check",
+    is_flag=True,
+    default=False,
+    envvar="XINGEST_NO_UID_CHECK",
+    help=(
+        "Don't compare a session's UID with the one recorded on an existing XNAT "
+        "session. Only for the transition to hashed UIDs (see --hash-uid-key of the "
+        "deidentify stage), as sessions already on XNAT hold their previous UID. The "
+        "subject of the session is still checked, where it is known, and the UID on XNAT "
+        "isn't changed (XINGEST_NO_UID_CHECK env. var)"
+    ),
+)
 def upload_cmd(
     staged: str,
     server: str,
@@ -277,6 +291,7 @@ def upload_cmd(
     check_checksums: bool,
     dry_run: bool,
     modality: ty.Optional[str],
+    skip_uid_check: bool,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -412,6 +427,7 @@ def upload_cmd(
                     xnat_max_workers=xnat_max_workers,
                     date_field=date_field,
                     modality=modality,
+                    skip_uid_check=skip_uid_check,
                 )
                 if errors:
                     # If the errors are XNAT auth failures, the held session has

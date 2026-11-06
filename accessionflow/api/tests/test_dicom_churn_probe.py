@@ -9,6 +9,8 @@ forever. Generic File.sample() takes the plain-copy path and cannot show this.
 """
 
 import hashlib
+import hmac
+import json
 from pathlib import Path
 
 import pytest
@@ -80,3 +82,37 @@ def test_dicom_deid_is_reproducible_and_does_not_churn(dicom_dir: Path, tmp_path
         print(f"  CHURN {k}")
     assert not content, f"deid is NOT reproducible: {len(content)} file(s) differ"
     assert not mtime, f"{len(mtime)} file(s) rewritten on an unchanged session"
+
+
+def test_dicom_deid_hashes_the_study_uid_in_session_metadata(
+    dicom_dir: Path, tmp_path: Path
+):
+    """Real de-identification keeps the original session UID in the output's metadata
+    unless a key is given to replace it with a hash."""
+    series = DicomSeries(sorted(p for p in dicom_dir.iterdir() if p.is_file()))
+    study_uid = str(series.metadata["StudyInstanceUID"])
+    inp = tmp_path / "in"
+    inp.mkdir()
+    ImagingSession(
+        uid=study_uid,
+        project_id="PROJ",
+        subject_id="SUBJ",
+        session_id="SESS",
+        scans=[ImagingScan(id="1", type="PET", resources={"DICOM": series})],
+    ).save(inp)
+
+    def saved_uid(output: Path, **kwargs) -> str:
+        assert (
+            deidentify(input_dir=inp, output_dir=output, spec_dir=SHIPPED, **kwargs)
+            == []
+        )
+        return json.loads((output / NAME / "__METADATA__.json").read_text())["__uid__"]
+
+    assert saved_uid(tmp_path / "unhashed") == study_uid
+
+    hashed_dir = tmp_path / "hashed"
+    assert saved_uid(hashed_dir, hash_uid_key="site-secret") == (
+        hmac.new(b"site-secret", study_uid.encode(), hashlib.sha256).hexdigest()
+    )
+    for sidecar in (hashed_dir / NAME).rglob("__METADATA__.json"):
+        assert study_uid not in sidecar.read_text()

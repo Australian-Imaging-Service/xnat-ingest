@@ -161,6 +161,7 @@ def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]
         xproject: ty.Any,
         modality: str | None = None,
         date_field: str | None = None,
+        skip_uid_check: bool = False,
     ) -> FakeExperiment:
         if observed_date_fields is not None:
             observed_date_fields.append(date_field)

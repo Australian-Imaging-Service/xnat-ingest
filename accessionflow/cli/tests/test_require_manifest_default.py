@@ -58,3 +58,30 @@ def test_upload_passes_require_manifest(
         )
     assert result.exit_code == 0, show_cli_trace(result)
     assert mock_upload.call_args.kwargs["require_manifest"] is expected
+
+
+@pytest.mark.parametrize(
+    "flags,env_value,expected",
+    [
+        ([], None, False),
+        (["--no-uid-check"], None, True),
+        ([], "1", True),
+    ],
+)
+def test_upload_passes_no_uid_check(
+    cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
+) -> None:
+    with (
+        patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("xnat_ingest.cli.upload_cli.upload") as mock_upload,
+    ):
+        mock_xnat_cls.return_value = MagicMock()
+        mock_upload.return_value = []
+        result = cli_runner(
+            upload_cmd,
+            ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
+            + flags,
+            env={**CLEAN_ENV, "XINGEST_NO_UID_CHECK": env_value},
+        )
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert mock_upload.call_args.kwargs["skip_uid_check"] is expected

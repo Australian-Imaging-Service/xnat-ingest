@@ -49,7 +49,9 @@ Formats without a matching recipe file are only deidentified if one is found for
 broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
 'medimage/dicom-series').
 Metadata side-cars in the deidentified output retain only __uid__, where present.
-Other metadata fields are omitted; source metadata is unchanged.
+Other metadata fields are omitted; source metadata is unchanged. __uid__ holds the
+original session UID (by default the DICOM StudyInstanceUID) and is copied to XNAT by
+the upload stage, unless it is replaced with a keyed hash using --hash-uid-key.
 
 The re-identification metadata (a mapping from original to de-identified identifiers for
 each resource in the session, plus any DICOM tags modified during de-identification) is
@@ -185,7 +187,24 @@ only written if --reid-dir is given; see that option.
     ),
     help=(
         "Comma-separated metadata keys to retain in output sidecars "
-        "(XINGEST_METADATA_ALLOWLIST env. var). Defaults to __uid__."
+        "(XINGEST_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
+        "__repository__ are always retained, as they are needed to identify a session."
+    ),
+)
+@click.option(
+    "--hash-uid-key",
+    type=str,
+    default=None,
+    envvar="XINGEST_HASH_UID_KEY",
+    help=(
+        "Secret key used to replace each session's UID (by default its DICOM "
+        "StudyInstanceUID) with a keyed hash of it in the output. The original and hashed "
+        "UIDs are both recorded in the re-identification metadata if --reid-dir is given. "
+        "Keep the key private and don't change it, as the hash identifies the session if "
+        "it is uploaded again. Sessions already on XNAT hold their previous UID, see "
+        "--no-uid-check of the upload stage. If not given, the original UID is kept. "
+        "Prefer the env. var so that the key isn't visible in the process list "
+        "(XINGEST_HASH_UID_KEY env. var)"
     ),
 )
 def deidentify_cmd(
@@ -203,6 +222,7 @@ def deidentify_cmd(
     unlink_source: str | None,
     reid_encrypt_key: str | None,
     metadata_allowlist: ty.Collection[str],
+    hash_uid_key: str | None,
 ) -> None:
 
     if raise_errors and loop >= 0:
@@ -236,6 +256,7 @@ def deidentify_cmd(
             unlink_source=unlink_source,
             reid_encrypt_key=encrypt_key_bytes,
             metadata_allowlist=metadata_allowlist,
+            hash_uid_key=hash_uid_key,
         )
         # The return value was previously discarded, so a session that failed or was
         # left incomplete produced no signal above this function at all. collate_cmd and

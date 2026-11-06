@@ -39,6 +39,7 @@ def check_upload(
     disable_progress: bool = False,
     s3_max_workers: int = DEFAULT_MAX_WORKERS,
     xnat_max_workers: int = DEFAULT_MAX_WORKERS,
+    skip_uid_check: bool = False,
 ) -> None:
     """Checks the staged sessions against the XNAT server to check for any issues before upload.
 
@@ -117,13 +118,16 @@ def check_upload(
                 temp_dir,
                 wait_period=0,
                 max_workers=s3_max_workers,
+                skip_uid_check=skip_uid_check,
             )
             # bit of a hack: number of sessions is the first item in the iterator
             num_sessions = next(sessions)  # type: ignore[assignment]
         else:
             sessions = []
             for session_dir in Path(input_dir).iterdir():
-                sessions.append(LocalSessionListing(session_dir))
+                sessions.append(
+                    LocalSessionListing(session_dir, skip_uid_check=skip_uid_check)
+                )
             num_sessions = len(sessions)
             logger.info(
                 "Found %d sessions in staging directory to check '%s'",

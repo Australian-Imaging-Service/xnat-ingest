@@ -138,6 +138,20 @@ by setting the "XNAT_INGEST_HOST" environment variable.
     envvar="XINGEST_DISABLE_PROGRESS",
     help=("Disable the progress bar"),
 )
+@click.option(
+    "--no-uid-check",
+    "skip_uid_check",
+    is_flag=True,
+    default=False,
+    envvar="XINGEST_NO_UID_CHECK",
+    help=(
+        "Don't compare a session's UID with the one recorded on an existing XNAT "
+        "session. Only for the transition to hashed UIDs (see --hash-uid-key of the "
+        "deidentify stage), as sessions already on XNAT hold their previous UID. The "
+        "subject of the session is still checked, where it is known, and the UID on XNAT "
+        "isn't changed (XINGEST_NO_UID_CHECK env. var)"
+    ),
+)
 def check_upload_cmd(
     input_dir: str,
     server: str,
@@ -150,6 +164,7 @@ def check_upload_cmd(
     temp_dir: ty.Optional[Path],
     s3_max_workers: int,
     xnat_max_workers: int,
+    skip_uid_check: bool,
     verify_ssl: bool,
     use_curl_jsession: bool,
     disable_progress: bool,
@@ -174,4 +189,5 @@ def check_upload_cmd(
         disable_progress=disable_progress,
         s3_max_workers=s3_max_workers,
         xnat_max_workers=xnat_max_workers,
+        skip_uid_check=skip_uid_check,
     )

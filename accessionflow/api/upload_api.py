@@ -118,6 +118,7 @@ def upload(
     xnat_max_workers: int = DEFAULT_MAX_WORKERS,
     modality: ty.Optional[str] = None,
     date_field: str | None = None,
+    skip_uid_check: bool = False,
 ) -> list[str]:
     """Upload sorted sessions in the given staging directory to XNAT
 
@@ -156,6 +157,9 @@ def upload(
     modality: str, optional
         The modality of the sessions to upload (e.g. 'MR', 'CT'). Defaults to the "Modality" metadata field if present
         otherwise an error is raised.
+    skip_uid_check : bool, optional
+        don't compare a session's UID with the one recorded on an existing XNAT session,
+        for use while moving to hashed UIDs. The subject is still checked where known.
     date_field: str, optional
         Session metadata field to use as the XNAT session date when creating a
         session. Existing XNAT sessions are not modified.
@@ -168,6 +172,12 @@ def upload(
 
     # Note that this context manager doesn't do anything if the connection is
     # already open, so it's safe to use even if the connection is already open
+    if skip_uid_check:
+        logger.warning(
+            "Not comparing session UIDs with those recorded on XNAT, as requested",
+            extra={"event": "xnat_uid_check_skipped"},
+        )
+
     with xnat_repo.connection, ExitStack() as cleanup:
         # DROP THE CLIENT-SIDE VIEW OF XNAT BEFORE DECIDING ANYTHING.
         #
@@ -199,6 +209,7 @@ def upload(
                 s3_cache_dir,
                 wait_period=wait_period,
                 max_workers=s3_max_workers,
+                skip_uid_check=skip_uid_check,
             )
             # Close the iterator when this pass ends, also on an error, so
             # that it removes the session it downloaded.
@@ -210,9 +221,17 @@ def upload(
             for session_dir in list_session_dirs(input_dir):
                 if dir_older_than(session_dir, wait_period):
                     if "." in session_dir.name:
-                        sessions.append(LocalSessionListing(session_dir))
+                        sessions.append(
+                            LocalSessionListing(
+                                session_dir, skip_uid_check=skip_uid_check
+                            )
+                        )
                     else:
-                        sessions.append(SessionOnlyListing(session_dir))
+                        sessions.append(
+                            SessionOnlyListing(
+                                session_dir, skip_uid_check=skip_uid_check
+                            )
+                        )
                 else:
                     logger.info(
                         "Skipping '%s' session as it has been modified recently",
@@ -349,7 +368,11 @@ def upload(
 
                 # Get the XNAT session object (creates it if it does not exist)
                 xsession = get_xnat_session(
-                    session, xproject, modality=modality, date_field=date_field
+                    session,
+                    xproject,
+                    modality=modality,
+                    date_field=date_field,
+                    skip_uid_check=skip_uid_check,
                 )
 
                 # Anonymise DICOMs and save to directory prior to upload

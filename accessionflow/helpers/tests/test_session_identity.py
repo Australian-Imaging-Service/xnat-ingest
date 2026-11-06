@@ -114,6 +114,30 @@ def test_all_uploaded_cannot_skip_other_subject_or_study(tmp_path, subject, uid)
         listing.all_uploaded(IdentityXnat(subject, uid))
 
 
+def test_skip_uid_check_allows_a_different_uid(tmp_path):
+    connection = IdentityXnat("S1", "group-other")
+    assert LocalSessionListing(
+        staged(tmp_path).fspath, skip_uid_check=True
+    ).all_uploaded(connection)
+    xproject = project(connection)
+    assert (
+        get_xnat_session(session(), xproject, skip_uid_check=True)
+        is xproject.experiments["sess"]
+    )
+    # The UID on XNAT is left as it was
+    assert connection.uid == "group-other"
+
+
+def test_skip_uid_check_still_refuses_another_subject(tmp_path):
+    connection = IdentityXnat("S2", "group-001")
+    with pytest.raises(ValueError, match="identity"):
+        LocalSessionListing(staged(tmp_path).fspath, skip_uid_check=True).all_uploaded(
+            connection
+        )
+    with pytest.raises(ValueError, match="identity"):
+        get_xnat_session(session(), project(connection), skip_uid_check=True)
+
+
 def test_matching_identity_and_shared_project_are_allowed(tmp_path):
     connection = IdentityXnat()
     connection.fields["project"] = "owning-project"  # shared subject's ID still matches

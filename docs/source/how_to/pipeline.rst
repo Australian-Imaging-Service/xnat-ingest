@@ -494,6 +494,21 @@ New experiments include it in the custom field ``xnat_ingest_uid`` in the
 creation request, then read it back. This field has no project UI form and is
 hidden from that UI by default. It is not secret storage.
 
+By default ``__uid__`` is the original session UID, which for DICOM is its
+``StudyInstanceUID``, and de-identification keeps it, so it is stored on XNAT. To
+replace it with a keyed hash, give ``deidentify`` a private ``--hash-uid-key``
+(``XINGEST_HASH_UID_KEY``). The same UID and key always give the same hash, so don't
+change the key. With ``--reid-dir``, both values are recorded in the re-identification
+metadata.
+
+Sessions already on XNAT hold their previous value, which a hashed UID won't match.
+While moving to hashed UIDs, pass ``--no-uid-check`` (``XINGEST_NO_UID_CHECK``) to
+``upload`` and ``check-upload``. This skips only the UID comparison: the subject is
+still checked where it is known, and the value on XNAT isn't changed, so these
+sessions will be refused again once the option is removed unless their values are
+updated. Session-only uploads have no known subject, so they aren't checked at all
+with this option.
+
 Before reuse or a completeness decision, the uploader reads this field again.
 A different value, duplicate field or unreadable response refuses the upload
 and keeps the staged copy. Local and S3 checks read only the session metadata;
