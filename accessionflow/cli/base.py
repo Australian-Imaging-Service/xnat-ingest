@@ -1,7 +1,7 @@
 import click
 
 from accessionflow.helpers import __version__
-from accessionflow.model.store_config import load_store_plugins, store_plugins
+from accessionflow.model.store import load_store_plugins, store_plugins
 
 
 @click.group(

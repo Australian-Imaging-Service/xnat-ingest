@@ -2440,7 +2440,7 @@ def fix_long_path(p: str | Path) -> Path:
     return Path(f"\\\\?\\{path_str}")
 
 
-from .store import AccessionMockStore  # noqa: E402
+from .mock_store import AccessionMockStore  # noqa: E402
 
 
 def json_serializer(obj: ty.Any) -> ty.Any:

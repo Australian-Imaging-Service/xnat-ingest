@@ -49,7 +49,7 @@ from accessionflow.model.accession import (
     _load_recipe,
     _metadata_diff,
 )
-from accessionflow.model.store import DummyAxes
+from accessionflow.model.mock_store import DummyAxes
 from conftest import get_raw_data_files
 
 FIRST_NAME = "Given Name"

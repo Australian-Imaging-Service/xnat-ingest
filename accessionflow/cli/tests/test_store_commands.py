@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from accessionflow.cli import cli, label_group, make_label_command
-from accessionflow.model.store_config import (
+from accessionflow.model.store import (
     LabelLevel,
     Store,
     get_store,

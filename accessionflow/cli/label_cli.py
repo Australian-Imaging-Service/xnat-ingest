@@ -8,7 +8,7 @@ from fileformats.core import FileSet
 from accessionflow.api.label_api import label
 from accessionflow.helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
 from accessionflow.helpers.logging import logger, set_logger_handling
-from accessionflow.model.store_config import Store
+from accessionflow.model.store import Store
 
 from .base import data_store_group
 

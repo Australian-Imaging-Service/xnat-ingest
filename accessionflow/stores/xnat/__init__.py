@@ -1,6 +1,6 @@
 """Support for labelling sessions for, and uploading them to, XNAT repositories"""
 
-from accessionflow.model.store_config import LabelLevel, Store
+from accessionflow.model.store import LabelLevel, Store
 
 STORE = Store(
     name="xnat",
