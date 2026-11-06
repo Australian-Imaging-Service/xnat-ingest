@@ -15,7 +15,7 @@ once and left running, rather than needing a process supervisor to restart it af
 every transient failure (though a restart policy is still good practice as a
 backstop — see below).
 
-A published Docker image (``ghcr.io/australian-imaging-service/xnat-ingest``) wraps
+A published Docker image (``ghcr.io/australian-imaging-service/accessionflow``) wraps
 the CLI as its entrypoint, so each stage becomes a single long-running container:
 
 .. code-block:: console
@@ -23,7 +23,7 @@ the CLI as its entrypoint, so each stage becomes a single long-running container
     $ docker run -d \
         -v /data/incoming:/input \
         -v /data/staging:/staging \
-        ghcr.io/australian-imaging-service/xnat-ingest \
+        ghcr.io/australian-imaging-service/accessionflow \
         collate /input /staging/collated --loop 300
 
 Repeat with ``label``, optionally ``deidentify``, and ``upload`` as separate
@@ -41,7 +41,7 @@ a service sharing a named volume for the staging directories:
 
     services:
       collate:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: collate /input /staging/collated --loop 300
         volumes:
           - /data/incoming:/input
@@ -49,14 +49,14 @@ a service sharing a named volume for the staging directories:
         restart: unless-stopped
 
       label:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: label /staging/collated /staging/labelled --loop 300
         volumes:
           - staging:/staging
         restart: unless-stopped
 
       upload:
-        image: ghcr.io/australian-imaging-service/xnat-ingest
+        image: ghcr.io/australian-imaging-service/accessionflow
         command: upload /staging/labelled xnat.example.org --loop 300
         environment:
           ACFLOW_USER: my-upload-user
