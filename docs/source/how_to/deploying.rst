@@ -1,7 +1,7 @@
 Deployment tips
 ===============
 
-Rather than a one-off run, most nodes want ``group``/``assign``/``deidentify``/
+Rather than a one-off run, most nodes want ``collate``/``label``/``deidentify``/
 ``upload`` running continuously, each watching its input directory and picking up new
 files as they arrive. Every stage except ``check-upload`` supports this directly via
 ``--loop <seconds>``: instead of running once and exiting, the command re-runs itself
@@ -24,9 +24,9 @@ the CLI as its entrypoint, so each stage becomes a single long-running container
         -v /data/incoming:/input \
         -v /data/staging:/staging \
         ghcr.io/australian-imaging-service/xnat-ingest \
-        group /input /staging/grouped --loop 300
+        collate /input /staging/collated --loop 300
 
-Repeat with ``assign``, optionally ``deidentify``, and ``upload`` as separate
+Repeat with ``label``, optionally ``deidentify``, and ``upload`` as separate
 containers, each mounting the previous stage's output as its input, chained through a
 shared staging area on disk (or an S3 bucket, which ``upload``/``check-upload`` can
 read from directly).
@@ -40,24 +40,24 @@ a service sharing a named volume for the staging directories:
 .. code-block:: yaml
 
     services:
-      group:
+      collate:
         image: ghcr.io/australian-imaging-service/xnat-ingest
-        command: group /input /staging/grouped --loop 300
+        command: collate /input /staging/collated --loop 300
         volumes:
           - /data/incoming:/input
           - staging:/staging
         restart: unless-stopped
 
-      assign:
+      label:
         image: ghcr.io/australian-imaging-service/xnat-ingest
-        command: assign /staging/grouped /staging/assigned --loop 300
+        command: label /staging/collated /staging/labelled --loop 300
         volumes:
           - staging:/staging
         restart: unless-stopped
 
       upload:
         image: ghcr.io/australian-imaging-service/xnat-ingest
-        command: upload /staging/assigned xnat.example.org --loop 300
+        command: upload /staging/labelled xnat.example.org --loop 300
         environment:
           XINGEST_USER: my-upload-user
           XINGEST_PASS: my-upload-password
@@ -81,9 +81,9 @@ what has and hasn't made it to XNAT rather than as an always-on service.
 
 Rather than writing these manifests from scratch, `ais-edge
 <https://github.com/Australian-Imaging-Service/ais-edge>`_ provides ready-made Helm
-charts for deploying *XNAT Ingest* (alongside other edge-node components) to
+charts for deploying *AccessionFlow* (alongside other edge-node components) to
 Kubernetes, and is a good starting point for a production setup.
 
-Orthanc grouping builds each study below ``__build__`` before an atomic rename.
-Use one group-orthanc producer per output directory. A retry removes its stale
+Orthanc collation builds each study below ``__build__`` before an atomic rename.
+Use one collate-orthanc producer per output directory. A retry removes its stale
 build; converter children that outlive their parent are outside this contract.

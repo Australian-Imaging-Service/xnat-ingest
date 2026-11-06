@@ -22,7 +22,7 @@ from medimages4tests.dummy.raw.pet.siemens.biograph_vision.vr20b.pet_listmode im
 # from logging.handlers import SMTPHandler
 from moto import mock_aws
 
-from xnat_ingest.helpers.logging import logger
+from accessionflow.helpers.logging import logger
 
 # Set DEBUG logging for unittests
 

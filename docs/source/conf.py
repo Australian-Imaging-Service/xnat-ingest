@@ -23,7 +23,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-from xnat_ingest import __version__  # noqa
+from accessionflow.helpers import __version__  # noqa
 
 with open(Path(__file__).parents[2] / "pyproject.toml", "rb") as f:
     pyproject = tomllib.load(f)
@@ -82,7 +82,7 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = "XNAT Ingest"
+project = "AccessionFlow"
 author = ", ".join(a for a, _ in authors)
 copyright = "{}, {}".format(datetime.datetime.now().year, author)
 
@@ -167,10 +167,10 @@ html_theme_options = {
 
 # The name for this set of Sphinx documents.  If None, it defaults to
 # "<project> v<release> documentation".
-html_title = "XNAT Ingest v{}".format(__version__)
+html_title = "AccessionFlow v{}".format(__version__)
 
 # A shorter title for the navigation bar.  Default is the same as html_title.
-# html_short_title = 'XNAT Ingest v<release>'
+# html_short_title = 'AccessionFlow v<release>'
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
@@ -252,7 +252,7 @@ html_css_files = ["custom.css"]
 language = "English"
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "XNAT Ingest"
+htmlhelp_basename = "AccessionFlow"
 
 # -- Options for LaTeX output ---------------------------------------------
 
@@ -271,7 +271,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, "xnat_ingest.tex", "XNAT Ingest Documentation", author, "manual"),
+    (master_doc, "accessionflow.tex", "AccessionFlow Documentation", author, "manual"),
 ]
 
 # Autodoc settings
@@ -305,7 +305,7 @@ autodoc_default_options = {
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [(master_doc, "xnat_ingest", "XNAT Ingest Documentation", [author], 1)]
+man_pages = [(master_doc, "accessionflow", "AccessionFlow Documentation", [author], 1)]
 
 # If true, show URL addresses after external links.
 # man_show_urls = False
@@ -319,10 +319,10 @@ man_pages = [(master_doc, "xnat_ingest", "XNAT Ingest Documentation", [author], 
 texinfo_documents = [
     (
         master_doc,
-        "XNAT Ingest",
-        "XNAT Ingest Documentation",
+        "AccessionFlow",
+        "AccessionFlow Documentation",
         author,
-        "XNAT Ingest",
+        "AccessionFlow",
         "Archive-centered analysis of neuroimaging data",
         "Miscellaneous",
     ),

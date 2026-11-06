@@ -33,10 +33,10 @@ RUN pip install --break-system-packages \
 # Add application code
 ADD . /app
 
-# Install pipx and then install application using pipx so "xnat-ingest" is on PATH
+# Install pipx and then install application using pipx so "accessionflow" is on PATH
 RUN pip install --break-system-packages /app
 
 # Set application entrypoint to docker entrypoint
-ENTRYPOINT ["xnat-ingest"]
+ENTRYPOINT ["accessionflow"]
 LABEL org.opencontainers.image.source=https://github.com/australian-imaging-service/xnat-ingest
-LABEL org.opencontainers.image.description="xnat-ingest"
+LABEL org.opencontainers.image.description="accessionflow"

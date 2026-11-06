@@ -1,37 +1,37 @@
 Command-line interface
 ======================
 
-XNAT Ingest's command line interface consists of a number of sub-commands under the
-`xnat-ingest` command. See :doc:`/how_to/pipeline` for how these fit together into a
+AccessionFlow's command line interface consists of a number of sub-commands under the
+`accessionflow` command. See :doc:`/how_to/pipeline` for how these fit together into a
 pipeline.
 
 
-.. click:: xnat_ingest.cli.group_cli:group_cmd
-   :prog: xnat-ingest group
+.. click:: accessionflow.cli.collate_cli:collate_cmd
+   :prog: accessionflow collate
 
-.. click:: xnat_ingest.cli.group_cli:group_orthanc_cmd
-   :prog: xnat-ingest group-orthanc
-
-
-.. click:: xnat_ingest.cli.assign_cli:assign_cmd
-   :prog: xnat-ingest assign
+.. click:: accessionflow.cli.collate_cli:collate_orthanc_cmd
+   :prog: accessionflow collate-orthanc
 
 
-.. click:: xnat_ingest.cli.deidentify_cli:deidentify_cmd
-   :prog: xnat-ingest deidentify
+.. click:: accessionflow.cli.label_cli:label_cmd
+   :prog: accessionflow label
 
 
-.. click:: xnat_ingest.cli.package_cli:package_cmd
-   :prog: xnat-ingest package
+.. click:: accessionflow.cli.deidentify_cli:deidentify_cmd
+   :prog: accessionflow deidentify
 
 
-.. click:: xnat_ingest.cli.upload_cli:upload_cmd
-   :prog: xnat-ingest upload
+.. click:: accessionflow.cli.package_cli:package_cmd
+   :prog: accessionflow package
 
 
-.. click:: xnat_ingest.cli.check_upload_cli:check_upload_cmd
-   :prog: xnat-ingest check-upload
+.. click:: accessionflow.cli.upload_cli:upload_cmd
+   :prog: accessionflow upload
 
 
-.. click:: xnat_ingest.cli.associate_cli:associate_cmd
-   :prog: xnat-ingest associate
+.. click:: accessionflow.cli.check_upload_cli:check_upload_cmd
+   :prog: accessionflow check-upload
+
+
+.. click:: accessionflow.cli.attach_cli:attach_cmd
+   :prog: accessionflow attach

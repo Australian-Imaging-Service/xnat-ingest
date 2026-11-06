@@ -1,0 +1,631 @@
+import os
+import shutil
+import time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fileformats.core import FileSet
+from fileformats.generic import File
+from fileformats.medimage import DicomDir, DicomSeries
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
+
+from accessionflow.api.collate_api import collate
+from accessionflow.api.label_api import INVALID_DIRNAME, label
+from accessionflow.helpers.arg_types import IDSpec
+from accessionflow.helpers.metadata import Metadata
+from accessionflow.helpers.remotes import list_session_dirs
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
+
+PROJECT_FIELD = "StudyID"
+SUBJECT_FIELD = "PatientID"
+SESSION_FIELD = "AccessionNumber"
+SCAN_FIELD = "SeriesDescription"
+
+
+@pytest.fixture
+def collated_dir(tmp_path: Path) -> Path:
+    """A directory containing a single collated-but-not-yet-labelled session"""
+    d = tmp_path / "collated"
+    d.mkdir()
+    (d / f"{Accession.PRE_LABEL_PREFIX}some-uid").mkdir()
+    return d
+
+
+def _mock_session(dirname: str = "PROJ.SUBJ.SESS") -> MagicMock:
+    """A mock session whose save() actually creates its output directory.
+
+    label materialises a session that does not exist yet under __build__ and
+    renames it into place, so a save that writes nothing leaves nothing to
+    rename. The mock also has to answer staging_dirname(), which label uses to
+    work out where the output WILL land before saving it.
+    """
+    mock = MagicMock()
+
+    def _save(dest_dir: Path, **kwargs):
+        saved_dir = Path(dest_dir) / dirname
+        saved_dir.mkdir(parents=True, exist_ok=True)
+        return mock, saved_dir
+
+    mock.staging_dirname.return_value = dirname
+    mock.save.side_effect = _save
+    return mock
+
+
+def test_label_calls_load_label_save_for_each_session(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    mock_session.label.return_value = {}
+    with patch.object(Accession, "load", return_value=mock_session) as mock_load:
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert errors == []
+    mock_load.assert_called_once()
+    mock_session.label.assert_called_once_with(
+        project_field=PROJECT_FIELD,
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+        constant_project_id=None,
+        scan_field=None,
+    )
+    # save() is handed the BUILD directory, not the output directory: a session
+    # that does not exist yet is built under __build__ and renamed into place, so
+    # that a run which dies part-way cannot leave a partial session under its real
+    # name for upload to collect.
+    saved_kwargs = mock_session.save.call_args.kwargs
+    assert saved_kwargs["copy_mode"] == FileSet.CopyMode.hardlink_or_copy
+    assert saved_kwargs["include"] == ()
+    build_dir = saved_kwargs["dest_dir"]
+    assert build_dir.parent.name == "__build__"
+    assert build_dir.parent.parent == output_dir
+    # and the finished session is what actually appears in the output
+    assert (output_dir / "PROJ.SUBJ.SESS").is_dir()
+    assert not build_dir.parent.exists(), "the build directory was left behind"
+
+
+def test_label_leaves_no_partial_session_under_its_real_name_when_save_dies(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    """A run that dies part-way through save() must leave nothing collectable.
+
+    This is the live path. With de-identification done in Orthanc, which is how
+    every site is configured, `upload` reads the labelled directory DIRECTLY.
+    save() creates the session directory and then fills it one scan at a time, so
+    a crash used to leave a prefix of the scans under the session's real name.
+    Each surviving resource is internally consistent, so upload's per-resource
+    manifest and checksum checks all pass; there is no session-level completeness
+    check; the partial tree's mtimes go quiet and it satisfies the settle window
+    on both upload paths. The result is a partial session in XNAT, silently.
+    """
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    # ids resolve cleanly, so this session is headed for the real output
+    # directory and not the invalid one
+    mock_session.label.return_value = {}
+
+    def dying_save(dest_dir: Path, **kwargs):
+        # a prefix of the session, exactly as an interrupted save would leave it
+        partial = Path(dest_dir) / "PROJ.SUBJ.SESS" / "1.scan" / "DICOM"
+        partial.mkdir(parents=True)
+        (partial / "inst.dcm").write_text("half a session")
+        raise RuntimeError("died part-way through save")
+
+    mock_session.save.side_effect = dying_save
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert len(errors) == 1
+    assert "died part-way through save" in errors[0]
+    collectable = [p for p in output_dir.iterdir() if not p.name.startswith("__")]
+    assert collectable == [], (
+        f"a partial session was left where upload would collect it: {collectable}"
+    )
+    assert not list(output_dir.rglob("inst.dcm")), "the partial data survived"
+
+
+def test_label_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> None:
+    """A pass that saves over an existing output and dies before it moves the
+    temporary manifest into place leaves a resource without a manifest. The input
+    did not change, so it is older than the files left behind. The next pass
+    replaces the resource. It does not fail on every pass with FileExistsError"""
+    src = tmp_path / "src" / "a-file.txt"
+    src.parent.mkdir()
+    src.write_text("content")
+    session = Accession(
+        uid="some-uid",
+        scans=[Acquisition(id="1", type="T", resources={"RES": File(src)})],
+    )
+    session.metadata.update(
+        {PROJECT_FIELD: "PROJ", SUBJECT_FIELD: "SUBJ", SESSION_FIELD: "SESS"}
+    )
+    collated_dir = tmp_path / "collated"
+    _, collated_session_dir = session.save(collated_dir)
+    an_hour_ago = time.time() - 3600
+    for path in collated_session_dir.rglob("*"):
+        os.utime(path, (an_hour_ago, an_hour_ago))
+    output_dir = tmp_path / "labelled"
+
+    def label_pass() -> list[str]:
+        return label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert label_pass() == []
+    resource_dir = output_dir / "PROJ.SUBJ.SESS" / "1.T" / "RES"
+    manifest = resource_dir / Resource.MANIFEST_FNAME
+    tmp_manifest = resource_dir / (Resource.MANIFEST_FNAME + ".tmp")
+    # What the dead pass leaves: data files and the temporary manifest only
+    manifest.rename(tmp_manifest)
+    (resource_dir / Metadata.FNAME).unlink()
+
+    assert label_pass() == []
+
+    assert manifest.exists()
+    assert not tmp_manifest.exists()
+    labelled = Accession.load(output_dir / "PROJ.SUBJ.SESS")
+    expected = Resource(name="RES", fileset=File(src)).checksums
+    assert labelled.scans["1"].resources["RES"].checksums == expected
+    assert label_pass() == []
+
+
+def test_label_routes_invalid_ids_to_invalid_subdir(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    mock_session.label.return_value = {"PatientID": "INVALID_MISSING_PATIENTID_abc123"}
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert len(errors) == 1
+    assert "PatientID" in errors[0]
+    saved_kwargs = mock_session.save.call_args.kwargs
+    assert saved_kwargs["copy_mode"] == FileSet.CopyMode.hardlink_or_copy
+    assert saved_kwargs["include"] == ()
+    # built under the INVALID directory, and promoted into it
+    assert saved_kwargs["dest_dir"].parent.parent == output_dir / INVALID_DIRNAME
+    assert (output_dir / INVALID_DIRNAME / "PROJ.SUBJ.SESS").is_dir()
+
+
+def test_label_passes_scan_field(collated_dir: Path, tmp_path: Path) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    with patch.object(Accession, "load", return_value=mock_session):
+        label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            scan_field=SCAN_FIELD,
+        )
+
+    assert mock_session.label.call_args.kwargs["scan_field"] == SCAN_FIELD
+
+
+def test_label_passes_constant_project_id(collated_dir: Path, tmp_path: Path) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    with patch.object(Accession, "load", return_value=mock_session):
+        label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            project_id="FIXED_PROJECT",
+        )
+
+    assert mock_session.label.call_args.kwargs["constant_project_id"] == "FIXED_PROJECT"
+
+
+def test_label_collects_errors_without_raising(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    mock_session.label.side_effect = RuntimeError("simulated label failure")
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+
+    assert len(errors) == 1
+    assert "simulated label failure" in errors[0]
+    mock_session.save.assert_not_called()
+
+
+def test_label_raise_errors_propagates(collated_dir: Path, tmp_path: Path) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    mock_session = _mock_session()
+    mock_session.label.side_effect = RuntimeError("simulated label failure")
+    with patch.object(Accession, "load", return_value=mock_session):
+        with pytest.raises(RuntimeError, match="simulated label failure"):
+            label(
+                input_dir=collated_dir,
+                output_dir=output_dir,
+                project_field=PROJECT_FIELD,
+                subject_field=SUBJECT_FIELD,
+                session_field=SESSION_FIELD,
+                raise_errors=True,
+            )
+
+
+def test_label_deletes_source_dir_on_success_when_unlink_source_all(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+    session_dir = next(collated_dir.iterdir())
+    (session_dir / "some_file.txt").write_text("data")
+
+    mock_session = _mock_session()
+    mock_session.label.return_value = {}
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            unlink_source="all",
+        )
+
+    assert errors == []
+    assert not session_dir.exists()
+
+
+def test_label_leaves_source_dir_when_unlink_source_none(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+    session_dir = next(collated_dir.iterdir())
+
+    mock_session = _mock_session()
+    with patch.object(Accession, "load", return_value=mock_session):
+        label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            unlink_source=None,
+        )
+
+    assert session_dir.exists()
+
+
+def test_label_keep_metadata_preserves_session_without_resources(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+    session_dir = next(collated_dir.iterdir())
+    metadata = session_dir / Metadata.FNAME
+    metadata.write_text("{}")
+
+    mock_session = _mock_session()
+    mock_session.label.return_value = {}
+    mock_session.resources = []
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            unlink_source="keep-metadata",
+        )
+
+    assert errors == []
+    assert session_dir.exists()
+    assert metadata.read_text() == "{}"
+
+
+def test_label_does_not_delete_on_failure_even_if_unlink_source_all(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+    session_dir = next(collated_dir.iterdir())
+
+    mock_session = _mock_session()
+    mock_session.label.side_effect = RuntimeError("simulated label failure")
+    with patch.object(Accession, "load", return_value=mock_session):
+        label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            unlink_source="all",
+        )
+
+    assert session_dir.exists()
+
+
+# ── end-to-end integration test using real (dummy) DICOM data ────────────────
+
+
+@pytest.fixture(scope="module")
+def dicom_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    dicom_dir = tmp_path_factory.mktemp("dicom")
+    get_pet_image(out_dir=dicom_dir)
+    return dicom_dir
+
+
+def test_label_end_to_end_resolves_ids_from_collated_metadata(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    collated_dir = tmp_path / "collated"
+    collated_dir.mkdir()
+    collate_errors = collate(
+        input_paths=[str(dicom_dir)],
+        output_dir=collated_dir,
+        datatypes=[DicomSeries],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+        resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+    )
+    assert collate_errors == []
+
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    errors = label(
+        input_dir=collated_dir,
+        output_dir=output_dir,
+        project_field=PROJECT_FIELD,
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+        scan_field=SCAN_FIELD,
+    )
+
+    assert errors == []
+    session_dirs = list(output_dir.iterdir())
+    assert len(session_dirs) == 1
+    # PatientID = "Session Label", AccessionNumber = "987654321" in the dummy data
+    # (spaces are escaped to underscores in resolved IDs)
+    assert session_dirs[0].name == "PROJECT_ID.Session_Label.987654321"
+
+    # The scan description ('SeriesDescription') has now been resolved, so the scan
+    # directory should no longer have a trailing dot. Unlike project/subject/session
+    # IDs, scan descriptions are not escaped, so spaces are preserved
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    assert not scan_dir.name.endswith(".")
+    assert scan_dir.name == "4.PET SWB 8MIN"
+
+
+def test_label_loads_dicomdir_resource(dicom_dir: Path, tmp_path: Path) -> None:
+    input_dir = tmp_path / "incoming"
+    source_dir = input_dir / "dicom0"
+    shutil.copytree(dicom_dir, source_dir)
+
+    collated_dir = tmp_path / "collated"
+    assert (
+        collate(
+            input_paths=[str(input_dir)],
+            output_dir=collated_dir,
+            datatypes=[DicomDir],
+            recursive=True,
+            session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+            scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+            resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+        )
+        == []
+    )
+
+    output_dir = tmp_path / "labelled"
+    assert (
+        label(
+            input_dir=collated_dir,
+            output_dir=output_dir,
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+        )
+        == []
+    )
+
+    labelled_session = Accession.load(next(iter(list_session_dirs(output_dir))))
+    resource = next(iter(labelled_session.resources))
+    assert isinstance(resource.fileset, DicomDir)
+    assert resource.fileset.fspath.name == source_dir.name
+    assert resource.fileset.fspath.is_dir()
+    assert len(resource.checksums) == len(list(source_dir.iterdir()))
+
+
+def test_label_end_to_end_routes_datatypes_to_separate_projects(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    collated_dir = tmp_path / "collated"
+    collated_dir.mkdir()
+    assert (
+        collate(
+            input_paths=[str(dicom_dir)],
+            output_dir=collated_dir,
+            datatypes=[DicomSeries],
+            session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+            scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+            resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+        )
+        == []
+    )
+
+    collated_session = Accession.load(next(iter(list_session_dirs(collated_dir))))
+    collated_session.add_session_resource("report", File.sample(seed=42))
+    collated_session.save(collated_dir)
+
+    dicom_output = tmp_path / "dicom-labelled"
+    report_output = tmp_path / "report-labelled"
+    common_args = {
+        "input_dir": collated_dir,
+        "project_field": PROJECT_FIELD,
+        "subject_field": SUBJECT_FIELD,
+        "session_field": SESSION_FIELD,
+    }
+    assert (
+        label(
+            output_dir=dicom_output,
+            project_id="DICOM_PROJECT",
+            include=[DicomSeries],
+            **common_args,
+        )
+        == []
+    )
+    assert (
+        label(
+            output_dir=report_output,
+            project_id="REPORT_PROJECT",
+            include=[File],
+            **common_args,
+        )
+        == []
+    )
+
+    dicom_session = Accession.load(next(iter(list_session_dirs(dicom_output))))
+    report_session = Accession.load(next(iter(list_session_dirs(report_output))))
+    assert dicom_session.project_id == "DICOM_PROJECT"
+    assert report_session.project_id == "REPORT_PROJECT"
+    assert dicom_session.resources
+    assert all(
+        isinstance(resource.fileset, DicomSeries)
+        for resource in dicom_session.resources
+    )
+    assert report_session.scans == {}
+    assert len(report_session.session_resources) == 1
+    assert isinstance(report_session.resources[0].fileset, File)
+    assert (collated_dir / collated_session.staging_relpath[0]).exists()
+
+
+def test_label_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    """A session whose project field can't be resolved from its metadata should be
+    saved with a placeholder ID under __invalid__, not dropped"""
+    collated_dir = tmp_path / "collated"
+    collated_dir.mkdir()
+    collate_errors = collate(
+        input_paths=[str(dicom_dir)],
+        output_dir=collated_dir,
+        datatypes=[DicomSeries],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+        resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+    )
+    assert collate_errors == []
+
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    errors = label(
+        input_dir=collated_dir,
+        output_dir=output_dir,
+        project_field="ThisFieldDoesNotExistInTheMetadata",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+
+    assert len(errors) == 1
+    assert "ThisFieldDoesNotExistInTheMetadata" in errors[0]
+    assert list(output_dir.iterdir()) == [output_dir / INVALID_DIRNAME]
+    session_dirs = list((output_dir / INVALID_DIRNAME).iterdir())
+    assert len(session_dirs) == 1
+    project_id = session_dirs[0].name.split(".")[0]
+    assert project_id.startswith("INVALID_MISSING_")
+
+    reloaded = Accession.load(session_dirs[0])
+    assert reloaded.invalid_ids
+
+
+def test_label_skips_duplicate_invalid_sessions(
+    dicom_dir: Path, tmp_path: Path
+) -> None:
+    """Running label twice on the same unresolvable session should not create
+    a second directory in __invalid__."""
+    collated_dir = tmp_path / "collated"
+    collated_dir.mkdir()
+    collate_errors = collate(
+        input_paths=[str(dicom_dir)],
+        output_dir=collated_dir,
+        datatypes=[DicomSeries],
+        session=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
+        scan=[IDSpec("SeriesNumber", "medimage/dicom-collection")],
+        resource=[IDSpec("ImageType[2:]", "medimage/dicom-collection")],
+    )
+    assert collate_errors == []
+
+    output_dir = tmp_path / "labelled"
+    output_dir.mkdir()
+
+    errors1 = label(
+        input_dir=collated_dir,
+        output_dir=output_dir,
+        project_field="NonExistentField",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+    assert len(errors1) == 1
+    invalid_dir = output_dir / INVALID_DIRNAME
+    entries_after_first = list(invalid_dir.iterdir())
+    assert len(entries_after_first) == 1
+
+    # Second run should skip
+    errors2 = label(
+        input_dir=collated_dir,
+        output_dir=output_dir,
+        project_field="NonExistentField",
+        subject_field=SUBJECT_FIELD,
+        session_field=SESSION_FIELD,
+    )
+    assert errors2 == []
+    entries_after_second = list(invalid_dir.iterdir())
+    assert len(entries_after_second) == 1
+    assert entries_after_second[0] == entries_after_first[0]

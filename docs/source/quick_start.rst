@@ -13,7 +13,7 @@ de-identification) and :doc:`cli` for every option.
 
 .. code-block:: console
 
-    $ python3 -m pip install xnat-ingest
+    $ python3 -m pip install accessionflow
 
 
 2. Get an XNAT to upload to
@@ -32,7 +32,7 @@ for trying things out without touching a real server:
 
 This starts an XNAT instance at ``http://localhost:8080`` with the default credentials
 ``admin``/``admin``. Either way, log in to your instance's web interface and create a
-project (e.g. called ``MYPROJECT``) to upload to — *XNAT Ingest* stages and de-identifies
+project (e.g. called ``MYPROJECT``) to upload to — *AccessionFlow* stages and de-identifies
 data, but doesn't create new projects on the server itself.
 
 
@@ -55,31 +55,31 @@ scan (downloaded and cached the first time it's run). Substitute your own direct
 DICOM files here instead if you have some handy.
 
 
-4. Group, assign and upload
+4. Collate, label and upload
 ------------------------------
 
-Group the files into scans/resources:
+Collate the files into scans/resources:
 
 .. code-block:: console
 
-    $ xnat-ingest group /path/to/dicom/series /tmp/xnat-ingest-quickstart/grouped
+    $ accessionflow collate /path/to/dicom/series /tmp/accessionflow-quickstart/collated
 
-Assign the session to your project. The sample data from step 3 doesn't have
-``StudyComments``/``AccessionNumber`` populated (the fields ``assign`` uses by default
+Label the session to your project. The sample data from step 3 doesn't have
+``StudyComments``/``AccessionNumber`` populated (the fields ``label`` uses by default
 for project/session), so we fix the project explicitly and use ``StudyInstanceUID`` for
 the session instead — real scanner data may populate these differently, or the same
-way, depending on your site (see :ref:`2. Assign project/subject/session IDs`):
+way, depending on your site (see :ref:`2. Label project/subject/session IDs`):
 
 .. code-block:: console
 
-    $ xnat-ingest assign /tmp/xnat-ingest-quickstart/grouped /tmp/xnat-ingest-quickstart/assigned \
+    $ accessionflow label /tmp/accessionflow-quickstart/collated /tmp/accessionflow-quickstart/labelled \
         --constant-project-id MYPROJECT --session StudyInstanceUID
 
 Then upload to XNAT
 
 .. code-block:: console
 
-    $ xnat-ingest upload /tmp/xnat-ingest-quickstart/assigned http://localhost:8080 \
+    $ accessionflow upload /tmp/accessionflow-quickstart/labelled http://localhost:8080 \
         --user admin --password admin
 
 

@@ -96,7 +96,7 @@ jobs:
     #     conda install -c mrtrix3 mrtrix3
     #     mrconvert --version
 
-    - name: Install Xnat-Ingest
+    - name: Install AccessionFlow
       run: |
         uv venv --python python3
         uv pip install \
@@ -111,7 +111,7 @@ jobs:
         echo "password admin" >> $HOME/.netrc
 
     - name: Pytest
-      run: uv run --no-sync pytest -q -ra --tb=short --cov xnat_ingest --cov-config .coveragerc --cov-report xml .
+      run: uv run --no-sync pytest -q -ra --tb=short --cov accessionflow --cov-config .coveragerc --cov-report xml .
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7

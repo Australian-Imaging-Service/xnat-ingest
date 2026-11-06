@@ -1,9 +1,9 @@
 import os
 
+from accessionflow.utils import show_cli_trace
 from click.testing import CliRunner
-from xnat_ingest.utils import show_cli_trace
 
-from xnat_ingest.cli import check_upload_cli
+from accessionflow.cli import check_upload_cli
 
 runner = CliRunner()
 

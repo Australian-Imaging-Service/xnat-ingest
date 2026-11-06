@@ -1,0 +1,2347 @@
+import json
+import os
+import shutil
+import struct
+import time
+import typing as ty
+import zlib
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import click
+import pytest
+import xnat4tests  # type: ignore[import-untyped]
+from fileformats.application import Json
+from fileformats.core import SampleFileGenerator, extra_implementation
+from fileformats.core.exceptions import FormatRecognitionError
+from fileformats.medimage import DicomSeries
+from fileformats.testing import MyFormat, MyFormatGz
+from frametree.core.cli import add_source as dataset_add_source
+from frametree.core.cli import define as dataset_define  # type: ignore[import-untyped]
+from frametree.core.cli.store import add as store_add  # type: ignore[import-untyped]
+from medimages4tests.dummy.dicom.ct.ac.siemens.biograph_vision.vr20b import (
+    get_image as get_ac_image,  # type: ignore[import-untyped]
+)
+from medimages4tests.dummy.dicom.pet.statistics.siemens.biograph_vision.vr20b import (
+    get_image as get_statistics_image,  # type: ignore[import-untyped]
+)
+from medimages4tests.dummy.dicom.pet.topogram.siemens.biograph_vision.vr20b import (
+    get_image as get_topogram_image,  # type: ignore[import-untyped]
+)
+from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b import (
+    get_image as get_pet_image,  # type: ignore[import-untyped]
+)
+from moto import mock_aws
+
+from accessionflow.api.label_api import INVALID_DIRNAME
+from accessionflow.cli import (
+    attach_cmd,
+    check_upload_cmd,
+    collate_cmd,
+    deidentify_cmd,
+    fields_cmd,
+    label_cmd,
+    package_cmd,
+    upload_cmd,
+)
+from accessionflow.helpers.arg_types import (
+    MimeType,  # type: ignore[import-untyped]
+    XnatLogin,
+)
+from accessionflow.helpers.metadata import Metadata
+from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
+from accessionflow.model.resource import Resource
+from conftest import get_raw_data_files, show_cli_trace
+
+
+@extra_implementation(MyFormat.generate_sample_data)
+def my_format_generate_sample_data(
+    mf: MyFormat,
+    generator: SampleFileGenerator,
+) -> list[Path]:
+    # Generate sample data by writing some text to the file
+    return [generator.generate(MyFormat, fill=10)]
+
+
+@extra_implementation(MyFormatGz.generate_sample_data)
+def my_format_gz_generate_sample_data(
+    mfgz: MyFormatGz,
+    generator: SampleFileGenerator,
+) -> list[Path]:
+    # Generate sample data by writing some text to the file
+    return [generator.generate(MyFormatGz, fill=10)]
+
+
+# Default field specs used to assign project/subject/session IDs, matching what the
+# old, pre-split 'sort' command used to default to
+LABEL_ID_ARGS = [
+    "--project",
+    "StudyID",
+    "--subject",
+    "PatientID",
+    "--session",
+    "AccessionNumber",
+]
+
+PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
+
+
+@click.command(
+    help="""Stages images found in the input directories into separate directories for each
+imaging acquisition session
+
+FILES_PATH is either the path to a directory containing the files to upload, or
+a glob pattern that selects the paths directly
+
+OUTPUT_DIR is the directory that the files for each session are collated to before they
+are uploaded to XNAT
+""",
+)
+@click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+@click.option(
+    "--datatype",
+    type=MimeType.cli_type,
+    metavar="<mime-type>",
+    multiple=True,
+    default=None,
+    envvar="XINGEST_DATATYPES",
+    help=(
+        'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
+        "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
+        "Any formats implemented in the FileFormats Python package "
+        "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
+        '"extra" are supported, see FF docs on how to add support for new formats.'
+    ),
+)
+@click.option(
+    "--xnat-login",
+    nargs=3,
+    type=XnatLogin.cli_type,
+    default=None,
+    metavar="<host> <user> <password>",
+    help="The XNAT server to upload to plus the user and password to use",
+    envvar="XINGEST_XNAT_LOGIN",
+)
+def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
+    fileformats = [m.datatype for m in datatype]
+    with open(out_file, "w") as f:
+        f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
+
+
+def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--datatype",
+        type=MimeType.cli_type,
+        metavar="<mime-type>",
+        multiple=True,
+        default=None,
+        envvar="XINGEST_DATATYPES",
+        help=(
+            'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
+            "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
+            "Any formats implemented in the FileFormats Python package "
+            "(https://github.com/ArcanaFramework/fileformats) that implement the 'read_metadata' "
+            '"extra" are supported, see FF docs on how to add support for new formats.'
+        ),
+    )
+    def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
+        fileformats = [m.datatype for m in datatype]
+        with open(out_file, "w") as f:
+            f.write("\n".join(f"{f.__module__}.{f.__name__}" for f in fileformats))
+
+    out_file = tmp_path / "out.txt"
+
+    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_DATATYPES": (
+                "medimage/dicom-series;medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
+            )
+        },
+    ):
+        result = cli_runner(test_cli_types, [str(out_file)])
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assert out_file.read_text().split("\n") == [
+        "fileformats.medimage.dicom.DicomSeries",
+        "fileformats.vendor.siemens.medimage.syngo_mi.SyngoMi_Vr20b_ListMode",
+    ]
+
+
+def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
+    @click.command()
+    @click.argument("out_file", type=click.Path(exists=False, path_type=Path))
+    @click.option(
+        "--xnat-login",
+        nargs=3,
+        type=XnatLogin.cli_type,
+        default=None,
+        metavar="<host> <user> <password>",
+        help="The XNAT server to upload to plus the user and password to use",
+        envvar="XINGEST_XNAT_LOGIN",
+    )
+    def test_cli_types(out_file: Path, xnat_login: XnatLogin) -> None:
+        with open(out_file, "w") as f:
+            f.write(xnat_login.host + "\n")
+            f.write(xnat_login.user + "\n")
+            f.write(xnat_login.password)
+
+    out_file = tmp_path / "out.txt"
+
+    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_XNAT_LOGIN": (
+                "https://xnat.example.com:8888 a_user a_passwordwithspecialchars*#%,;##@"
+            )
+        },
+    ):
+        result = cli_runner(test_cli_types, [str(out_file)])
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    assert out_file.read_text().split("\n") == [
+        "https://xnat.example.com:8888",
+        "a_user",
+        "a_passwordwithspecialchars*#%,;##@",
+    ]
+
+
+def test_fields_cli_envvar(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    with patch.dict(
+        os.environ,
+        {
+            "XINGEST_FIELDS": (
+                "scanner_model ManufacturerModelName;study_date {StudyDate:%Y-%m-%d}"
+            )
+        },
+    ):
+        result = cli_runner(
+            fields_cmd,
+            [str(input_dir), str(output_dir)],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+
+def test_fields_cli_accepts_multiple_mappings(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    result = cli_runner(
+        fields_cmd,
+        [
+            str(input_dir),
+            str(output_dir),
+            "--extract",
+            "scanner_model",
+            "ManufacturerModelName",
+            "--extract",
+            "study_date",
+            "{StudyDate:%Y-%m-%d}",
+        ],
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+
+def test_fields_cli_rejects_duplicate_field_names(
+    tmp_path: Path,
+    cli_runner: ty.Any,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    output_dir = tmp_path / "output"
+
+    result = cli_runner(
+        fields_cmd,
+        [
+            str(input_dir),
+            str(output_dir),
+            "--extract",
+            "site",
+            "InstitutionName",
+            "--extract",
+            "site",
+            "Manufacturer",
+        ],
+    )
+
+    assert result.exit_code == 2, show_cli_trace(result)
+    assert "Duplicate --field names" in result.output
+    assert not output_dir.exists()
+
+
+def test_stage_and_upload(
+    xnat_config: ty.Any,
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    run_prefix: str,
+) -> None:
+    # Only uploads from a local directory, as uploads from S3 are covered by the
+    # (much quicker) test_check_upload_* tests
+    project_id = f"STAGEANDUPLOAD{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    dicoms_dir1 = tmp_path / "dicom1"
+    dicoms_dir1.mkdir(exist_ok=True)
+
+    dicoms_dir2_parent = tmp_path / "dicoms2"
+    dicoms_dir2 = dicoms_dir2_parent / "child"
+    dicoms_dir2.mkdir(exist_ok=True, parents=True)
+
+    dicoms_dirs = [dicoms_dir1, dicoms_dir2_parent]
+
+    attached_files_dir = tmp_path / "non-dicoms"
+    attached_files_dir.mkdir(exist_ok=True)
+
+    sorted_dir = tmp_path / "sorted"
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
+
+    stage_log_file = tmp_path / "stage-logs.log"
+    if stage_log_file.exists():
+        os.unlink(stage_log_file)
+
+    attach_log_file = tmp_path / "attach-logs.log"
+    if attach_log_file.exists():
+        os.unlink(attach_log_file)
+
+    upload_log_file = tmp_path / "upload-logs.log"
+    if upload_log_file.exists():
+        os.unlink(upload_log_file)
+
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+    if check_upload_log_file.exists():
+        os.unlink(check_upload_log_file)
+
+    # Delete any existing sessions from previous test runs
+    session_ids = []
+    session_names = []
+    with xnat4tests.connect() as xnat_login:
+        for i, c in enumerate("ab"):
+            first_name = f"First{c.upper()}"
+            last_name = f"Last{c.upper()}"
+            PatientID = f"subject{i}"
+            AccessionNumber = f"987654321{i}"
+            session_id = AccessionNumber
+            session_ids.append(session_id)
+            session_names.append(f"{project_id}.{PatientID}.{AccessionNumber}")
+
+            StudyInstanceUID = (
+                f"1.3.12.2.1107.5.1.4.10016.3000002308242209356530000001{i}"
+            )
+
+            series = DicomSeries(
+                get_pet_image(
+                    tmp_path / f"pet{i}",
+                    first_name=first_name,
+                    last_name=last_name,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=project_id,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir1 / f"pet{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_ac_image(
+                    tmp_path / f"ac{i}",
+                    first_name=first_name,
+                    last_name=last_name,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=project_id,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir1 / f"ac{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_topogram_image(
+                    tmp_path / f"topogram{i}",
+                    first_name=first_name,
+                    last_name=last_name,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=project_id,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir2 / f"topogram{i}-{dcm.fspath.name}")
+            series = DicomSeries(
+                get_statistics_image(
+                    tmp_path / f"statistics{i}",
+                    first_name=first_name,
+                    last_name=last_name,
+                    StudyInstanceUID=StudyInstanceUID,
+                    PatientID=PatientID,
+                    AccessionNumber=AccessionNumber,
+                    StudyID=project_id,
+                ).iterdir()
+            )
+            for dcm in series.contents:
+                os.link(dcm, dicoms_dir2 / f"statistics{i}-{dcm.fspath.name}")
+            assoc_fspaths = get_raw_data_files(
+                tmp_path / f"non-dicom{i}",
+                first_name=first_name,
+                last_name=last_name,
+                date_time=datetime(2023, 8, 25, 15, 50, 5, i),
+            )
+            for assoc_fspath in assoc_fspaths:
+                os.link(
+                    assoc_fspath,
+                    attached_files_dir
+                    / f"{assoc_fspath.stem}-{i}{assoc_fspath.suffix}",
+                )
+
+    # Create data store
+    result = cli_runner(
+        store_add,
+        [
+            "xnat",
+            "testxnat",
+            "--server",
+            xnat_server,
+            "--user",
+            xnat_config.xnat_user,
+            "--password",
+            xnat_config.xnat_password,
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    dataset_address = f"testxnat//{project_id}"
+
+    # Create dataset definition
+    result = cli_runner(dataset_define, [dataset_address])
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    for col_name, col_type, col_pattern in [
+        ("pet", "medimage/dicom-series", "PET SWB 8MIN"),
+        ("topogram", "medimage/dicom-series", "Topogram.*"),
+        ("atten_corr", "medimage/dicom-series", "AC CT.*"),
+        (
+            "listmode",
+            "medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
+            ".*/LISTMODE",
+        ),
+        # (
+        #     "sinogram",
+        #     "medimage/vnd.siemens.syngo-mi.vr20b.sinogram",
+        #     ".*/EM_SINO",
+        # ),
+        (
+            "countrate",
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate",
+            ".*/COUNTRATE",
+        ),
+    ]:
+        # Add dataset columns
+        result = cli_runner(
+            dataset_add_source,
+            [
+                dataset_address,
+                col_name,
+                col_type,
+                "--path",
+                col_pattern,
+            ],
+        )
+        assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        collate_cmd,
+        [str(d) for d in dicoms_dirs]
+        + [
+            str(sorted_dir),
+            "--resource",
+            "ImageType[-1]",
+            "medimage/dicom-collection",
+            "--recursive",
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Staging completed successfully" in logs, show_cli_trace(result)
+    stdout_logs = result.stdout
+    assert "Staging completed successfully" in stdout_logs, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    labelled_dir.mkdir()
+    result = cli_runner(
+        label_cmd,
+        [str(sorted_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    mdata_path = labelled_dir / session_names[0] / Metadata.FNAME
+    assert mdata_path.exists(), show_cli_trace(result)
+    mdata = json.loads(mdata_path.read_bytes())
+    assert mdata.get("PatientID") == "subject0", show_cli_trace(result)
+
+    attached_dir = tmp_path / "attached"
+
+    result = cli_runner(
+        attach_cmd,
+        [
+            str(labelled_dir),
+            str(attached_dir),
+            "medimage/vnd.siemens.syngo-mi.vr20b.count-rate|medimage/vnd.siemens.syngo-mi.vr20b.list-mode",
+            (
+                str(attached_files_dir)
+                + "/{PatientName.family_name}_{PatientName.given_name}*.ptd"
+            ),
+            r".*/[^\.]+.[^\.]+.[^\.]+.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^\.]+).*",
+            # "--raise-errors",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file info {attach_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = attach_log_file.read_text()
+    assert "Attachment completed successfully" in logs, show_cli_trace(result)
+
+    source_dir = str(attached_dir)
+
+    result = cli_runner(
+        upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "medimage/dicom-series",
+            "--raise-errors",
+            "--method",
+            "tgz_file",
+            "medimage/dicom-series",
+            "--method",
+            "tar_file",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+            "--num-files-per-batch",
+            "107",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    file_logs = upload_log_file.read_text()
+    assert "Upload completed successfully" in file_logs, show_cli_trace(result)
+    stdout_logs = result.stdout
+    assert "Upload completed successfully" in stdout_logs, show_cli_trace(result)
+    assert "as all the resources already exist on XNAT" not in stdout_logs
+
+    # Run upload a second time, and check that already uploaded sessions are skipped
+    result = cli_runner(
+        upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "medimage/dicom-series",
+            "--raise-errors",
+            "--method",
+            "tgz_file",
+            "medimage/dicom-series",
+            "--method",
+            "tar_file",
+            "medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+            "--num-files-per-batch",
+            "107",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert "as all the resources already exist on XNAT" in result.stdout, (
+        show_cli_trace(result)
+    )
+
+    dicom_scan_headers = {
+        "1": {
+            "frames": 1,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421141748900003651",
+        },
+        "2": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082421255920000017965",
+        },
+        "4": {
+            "frames": 531,
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422262922600127929",
+        },
+        "6": {
+            "frames": 0,  # PET Statistics, not a image
+            "UID": "1.3.12.2.1107.5.1.4.10016.30000023082422251027100000102",
+        },
+    }
+
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[project_id]
+        for session_id in session_ids:
+            xsession = xproject.experiments[session_id]
+            scan_ids = sorted(s.id for s in xsession.scans)
+
+            assert scan_ids == [
+                "1",
+                "2",
+                "4",
+                "6",
+                "602",
+                # "603",
+            ]
+
+            for xscan in xsession.scans.values():
+                assert xscan.resources, (
+                    f"Scan {xscan.id!r} in {session_id!r} has no resources"
+                )
+                for xresource in xscan.resources.values():
+                    assert xresource.files, (
+                        f"Resource {xresource.label!r} on scan {xscan.id!r} "
+                        f"in {session_id!r} has no files"
+                    )
+                if xscan.id in dicom_scan_headers:
+                    expected = dicom_scan_headers[xscan.id]
+                    assert xscan.frames == expected["frames"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has frames={xscan.frames!r}, "
+                        f"expected {expected['frames']!r} — DICOM headers may not have been extracted"
+                    )
+                    assert xscan.uid == expected["UID"], (
+                        f"Scan {xscan.id!r} in {session_id!r} has UID={xscan.uid!r}, "
+                        f"expected {expected['UID']!r} — DICOM headers may not have been extracted"
+                    )
+
+    # Run upload a second time, and check that already uploaded sessions are skipped
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "medimage/dicom-series",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"file debug {check_upload_log_file};stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    file_logs = check_upload_log_file.read_text()
+    assert "ERROR" not in file_logs, show_cli_trace(result)
+
+
+def test_additional_logger_routes_to_configured_handler(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    dicoms_dir = tmp_path / "dicoms"
+    get_pet_image(dicoms_dir)
+
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    stage_log_file = tmp_path / "stage-logs.log"
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--additional-logger",
+            "fileformats",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Staging completed successfully" in logs, show_cli_trace(result)
+    assert " - fileformats - " in logs, show_cli_trace(result)
+
+
+def test_stage_wait_period(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    capsys: ty.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Get test image data
+
+    sorted_dir = tmp_path / "sorted"
+    dicoms_path = tmp_path / "dicoms"
+    if sorted_dir.exists():
+        shutil.rmtree(sorted_dir)
+    sorted_dir.mkdir()
+
+    stage_log_file = tmp_path / "stage-logs.log"
+    if stage_log_file.exists():
+        os.unlink(stage_log_file)
+
+    # Generate a test DICOM image
+    get_pet_image(dicoms_path)
+
+    # Fix the age-check clock so loading this large fixture cannot consume the
+    # waiting period. Other modules keep their real clocks.
+    checked_at = time.time_ns()
+    monkeypatch.setattr(
+        "accessionflow.api.collate_api.time",
+        SimpleNamespace(time_ns=lambda: checked_at),
+    )
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_path),
+            str(sorted_dir),
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert " as it was last modified " in logs, show_cli_trace(result)
+    assert not [p for p in sorted_dir.iterdir() if not p.name.startswith("__")], (
+        show_cli_trace(result)
+    )
+
+    # Backdate the modification times of the files past the wait period, rather than
+    # sleeping until it has elapsed
+    backdated = checked_at / 1e9 - 60
+    for fspath in dicoms_path.rglob("*"):
+        os.utime(fspath, (backdated, backdated))
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_path),
+            str(sorted_dir),
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "10",
+        ],
+        env={
+            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = stage_log_file.read_text()
+    assert "Successfully collated " in logs, show_cli_trace(result)
+    assert list(sorted_dir.iterdir())
+
+
+def test_collate_path_metadata_regex(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms" / "cohort-A"
+    dicoms_dir.mkdir(parents=True)
+    get_pet_image(dicoms_dir)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--path-metadata-regex",
+            r".*/(?P<cohort>[^/]+)$",
+            "medimage/dicom-series",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    mdata = json.loads((resource_dir / Metadata.FNAME).read_bytes())
+    assert mdata["cohort"] == "cohort-A"
+
+
+def _write_minimal_png(path: Path, *, rgb: tuple[int, int, int] = (0, 0, 0)) -> Path:
+    """Write a minimal but valid 1x1 PNG so fileformats recognises it as image/png."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00" + bytes(rgb))
+    path.write_bytes(
+        signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+    )
+    return path
+
+
+def test_collate_metadata_table_detailed_example(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """End-to-end version of the worked example in ``accessionflow collate --help``.
+
+    A directory tree of PNG images whose relative path is captured with
+    ``--path-metadata-regex`` and used to join a CSV metadata table
+    (``fileset[image/png|image/jpeg]`` row frequency). The joined table carries a
+    ``SubjectID`` column that groups/labels the session and a ``LesionID`` column
+    that both names the scan and collapses the multiple views of a lesion into a
+    single merged resource via ``--on-resource-clash merge``.
+    """
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    images_dir = tmp_path / "images"
+    rel_paths = [
+        "subj-01/lesionA-dermoscopy.png",
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionB-dermoscopy.png",
+        "subj-02/lesionC-dermoscopy.png",
+    ]
+    for i, rel in enumerate(rel_paths):
+        _write_minimal_png(images_dir / rel, rgb=(10 + i, 20 + i, 30 + i))
+
+    table = tmp_path / "clinical.csv"
+    table.write_text(
+        "relpath,SubjectID,LesionID,Diagnosis\n"
+        "subj-01/lesionA-dermoscopy.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionA-clinical.png,subj-01,lesionA,melanoma\n"
+        "subj-01/lesionB-dermoscopy.png,subj-01,lesionB,nevus\n"
+        "subj-02/lesionC-dermoscopy.png,subj-02,lesionC,melanoma\n"
+    )
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(images_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+            "--datatype",
+            "image/png",
+            "--session",
+            "SubjectID",
+            "all",
+            "--scan",
+            "LesionID",
+            "all",
+            "--resource",
+            "LesionID",
+            "all",
+            "--on-resource-clash",
+            "merge",
+            "image/png|image/jpeg",
+            "--path-metadata-regex",
+            r".*/(?P<relpath>[\w-]+/[\w-]+\.(?:png|jpg))",
+            "image/png|image/jpeg",
+            "--metadata-table",
+            f"{table}[text/csv]",
+            "fileset[image/png|image/jpeg]",
+            "relpath=relpath",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    def resource_dirs(session_dir: Path) -> dict[str, Path]:
+        return {
+            res_dir.name: res_dir
+            for scan_dir in session_dir.iterdir()
+            if scan_dir.is_dir()
+            for res_dir in scan_dir.iterdir()
+            if res_dir.is_dir()
+        }
+
+    session_dirs = {d.name: d for d in list_session_dirs(sorted_dir)}
+    assert len(session_dirs) == 2
+    subj01_dir = next(d for n, d in session_dirs.items() if "subj-01" in n)
+    subj02_dir = next(d for n, d in session_dirs.items() if "subj-02" in n)
+
+    subj01_resources = resource_dirs(subj01_dir)
+    assert set(subj01_resources) == {"lesionA", "lesionB"}
+
+    # lesionA merged its two views into a single SetOf[Png] resource
+    assert sorted(p.name for p in subj01_resources["lesionA"].glob("*.png")) == [
+        "lesionA-clinical.png",
+        "lesionA-dermoscopy.png",
+    ]
+    lesion_a_manifest = json.loads(
+        (subj01_resources["lesionA"] / Resource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_a_manifest["datatype"] == "image/png+set-of"
+    lesion_b_manifest = json.loads(
+        (subj01_resources["lesionB"] / Resource.MANIFEST_FNAME).read_bytes()
+    )
+    assert lesion_b_manifest["datatype"] == "image/png"
+    lesion_a_mdata = json.loads(
+        (subj01_resources["lesionA"] / Metadata.FNAME).read_bytes()
+    )
+    # columns the two rows agree on stay scalar, the per-file 'relpath' is collated
+    # into a list aligned with the merged files
+    assert lesion_a_mdata["SubjectID"] == "subj-01"
+    assert lesion_a_mdata["LesionID"] == "lesionA"
+    assert lesion_a_mdata["Diagnosis"] == "melanoma"
+    assert sorted(lesion_a_mdata["relpath"]) == [
+        "subj-01/lesionA-clinical.png",
+        "subj-01/lesionA-dermoscopy.png",
+    ]
+
+    # lesionB is a single-view resource, so it keeps its per-file metadata
+    lesion_b_mdata = json.loads(
+        (subj01_resources["lesionB"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_b_mdata["Diagnosis"] == "nevus"
+    assert lesion_b_mdata["relpath"] == "subj-01/lesionB-dermoscopy.png"
+
+    subj02_resources = resource_dirs(subj02_dir)
+    assert set(subj02_resources) == {"lesionC"}
+    lesion_c_mdata = json.loads(
+        (subj02_resources["lesionC"] / Metadata.FNAME).read_bytes()
+    )
+    assert lesion_c_mdata["SubjectID"] == "subj-02"
+    assert lesion_c_mdata["Diagnosis"] == "melanoma"
+
+
+def test_collate_allow_unrecognised_skips_unrecognised_files(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--allow-unrecognised",
+            r".*\.txt",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+
+
+def test_collate_without_allow_unrecognised_fails_on_unrecognised_file(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_collate_allow_unrecognised_pattern_not_matching_still_fails(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.txt").write_text("not a recognised format")
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--allow-unrecognised",
+            r"unrelated-pattern",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_collate_ignore_datatype_excludes_recognised_but_unwanted_files(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--ignore-datatype",
+            "application/json",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+
+
+def test_collate_without_ignore_datatype_fails_on_recognised_extra_type(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+    (dicoms_dir / "notes.json").write_text("{}")
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, FormatRecognitionError)
+
+
+def test_collate_ignore_datatype_contradicting_datatype_fails(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(dicoms_dir)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--datatype",
+            "medimage/dicom-series",
+            "--ignore-datatype",
+            "medimage/dicom-series",
+        ],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+
+
+def test_sort_orthanc_collate_resources(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    sorted_dir = tmp_path / "sorted"
+    sorted_dir.mkdir()
+
+    # Create DICOM files and arrange them in an Orthanc-like content-addressed nested
+    # structure, where each instance is in its own hash-addressed subdirectory
+    pet_dir = tmp_path / "pet_source"
+    get_pet_image(
+        pet_dir,
+        StudyID="TESTPROJECT",
+        PatientID="subject1",
+        AccessionNumber="acc1",
+    )
+
+    orthanc_dir = tmp_path / "orthanc"
+    dcm_files = list(pet_dir.iterdir())[:4]
+    for i, dcm in enumerate(dcm_files):
+        nested = orthanc_dir / f"hash{i // 2}" / f"subhash{i % 2}"
+        nested.mkdir(parents=True, exist_ok=True)
+        os.link(dcm, nested / dcm.name)
+
+    # Without --collate-resources the nested source structure is preserved in the resource dir
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(orthanc_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert any(item.is_dir() for item in resource_dir.iterdir()), (
+        "Expected nested sub-directory structure without collation"
+    )
+
+    # With --collate-resources siblings, all files are placed flat in the resource dir
+    sorted_collated_dir = tmp_path / "sorted_collated"
+    sorted_collated_dir.mkdir()
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(orthanc_dir),
+            str(sorted_collated_dir),
+            "--raise-errors",
+            "--recursive",
+            "--wait-period",
+            "0",
+            "--collate-resources",
+            "medimage/dicom-series",
+            "siblings",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_dirs = list_session_dirs(sorted_collated_dir)
+    assert len(session_dirs) == 1
+    scan_dir = next(d for d in session_dirs[0].iterdir() if d.is_dir())
+    resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
+    assert all(item.is_file() for item in resource_dir.iterdir()), (
+        "Expected flat structure with 'siblings' collation"
+    )
+
+
+def test_label_missing_id_field_collects_error(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    # A session that fails to collate->label (the subject ID field is missing) is
+    # collected as an error rather than crashing the whole run, and it isn't written
+    # to the output directory
+
+    collated_dir = tmp_path / "collated"
+    collated_dir.mkdir()
+    labelled_dir = tmp_path / "labelled"
+    labelled_dir.mkdir()
+    dicoms_path = tmp_path / "dicoms"
+
+    label_log_file = tmp_path / "label-logs.log"
+    if label_log_file.exists():
+        os.unlink(label_log_file)
+
+    # Generate a test DICOM image without a patient ID
+    get_pet_image(dicoms_path, PatientID="")
+
+    result = cli_runner(
+        collate_cmd,
+        [str(dicoms_path), str(collated_dir), "--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        label_cmd,
+        [str(collated_dir), str(labelled_dir)] + LABEL_ID_ARGS,
+        env={
+            "XINGEST_LOGGERS": f"file debug {label_log_file};stream info stdout",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = label_log_file.read_text()
+    assert "Label completed with 1 errors" in logs, show_cli_trace(result)
+    # The session couldn't be assigned an ID, so nothing was written to the output dir
+    assert not [d for d in labelled_dir.iterdir() if d.name != INVALID_DIRNAME], (
+        show_cli_trace(result)
+    )
+
+
+@mock_aws
+def test_check_upload_missing_scan(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADMISSINGSCAN{upload_source}{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    sorted_dir = tmp_path / "sorted"
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(inputs_dir),
+            str(sorted_dir),
+            "--session",
+            "StudyInstanceUID",
+            "all",
+            "--scan",
+            "SeriesNumber",
+            "all",
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_LOGGERS": "stream debug stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    result = cli_runner(
+        label_cmd,
+        [str(sorted_dir), str(labelled_dir)]
+        + LABEL_ID_ARGS
+        + ["--scan", "SeriesDescription", "--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    source_dir = transfer_to_source(
+        labelled_dir,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "testing/my-format-gz-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" in logs
+    assert "EMPTY SCAN" not in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "CHECKSUM FAIL" not in logs
+
+
+@mock_aws
+def test_check_upload_empty_scan(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADEMPTYSCAN{upload_source}{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    sorted_dir = tmp_path / "sorted"
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(inputs_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_LOGGERS": "stream debug stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    result = cli_runner(
+        label_cmd,
+        [str(sorted_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    source_dir = transfer_to_source(
+        labelled_dir,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[project_id]
+        xsession = xproject.experiments["1"]
+        xscan = xsession.scans["1"]
+        xresource = next(iter(xscan.resources))
+        # Delete via the REST API rather than xresource.delete(), as in xnatpy >=0.8
+        # that also purges the object from every cached listing in the process,
+        # which fails on listings left over from sessions that are already closed
+        xnat_login.delete(xresource.uri)
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "EMPTY SCAN" in logs
+    assert "CHECKSUM FAIL" not in logs
+
+
+@mock_aws
+def test_check_upload_missing_resource(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADMISSINGRESOURCE{upload_source}{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    sorted_dir = tmp_path / "sorted"
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["ImageType"] = ["ORIGINAL", "PRIMARY", "MY_FORMAT_GZ_X"]
+    file2_metadata["SeriesNumber"] = "1"
+    file2_metadata["SeriesDescription"] = "File 1"
+
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(inputs_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_LOGGERS": "stream debug stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # these test formats aren't DICOM, so the default DICOM-scoped
+            # --session/--scan specs don't apply - set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    result = cli_runner(
+        label_cmd,
+        [str(sorted_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    source_dir = transfer_to_source(
+        labelled_dir,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    with xnat4tests.connect() as xnat_login:
+        xproject = xnat_login.projects[project_id]
+        xsession = xproject.experiments["1"]
+        xscan = xsession.scans["1"]
+        xresource = next(iter(xscan.resources))
+        # Delete via the REST API rather than xresource.delete(), as in xnatpy >=0.8
+        # that also purges the object from every cached listing in the process,
+        # which fails on listings left over from sessions that are already closed
+        xnat_login.delete(xresource.uri)
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" in logs
+    assert "EMPTY SCAN" not in logs
+    assert "CHECKSUM FAIL" not in logs
+
+
+@mock_aws
+def test_check_upload_checksum_fail(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    xnat_login: ty.Any,
+    run_prefix: str,
+    upload_source: str,
+    s3_bucket: str,
+) -> None:
+    # Get test image data
+
+    project_id = f"CHECKUPLOADCHECKSUMFAIL{upload_source}{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    inputs_dir = tmp_path / "inputs"
+    sorted_dir = tmp_path / "sorted"
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+
+    session_metadata = {
+        "ImageType": ["ORIGINAL", "PRIMARY", "MY_FORMAT_X"],
+        "StudyID": project_id,
+        "PatientID": "subject1",
+        "AccessionNumber": "1",
+        "PatientName": "Test^Subject",
+        "StudyInstanceUID": "1234567890",
+        "Modality": "MR",
+    }
+
+    file1_metadata = session_metadata.copy()
+    file1_metadata["SeriesNumber"] = "1"
+    file1_metadata["SeriesDescription"] = "File 1"
+    MyFormat.sample(dest_dir=inputs_dir, stem="file1")
+    Json.new(inputs_dir / "file1.json", file1_metadata)
+
+    file2_metadata = session_metadata.copy()
+    file2_metadata["SeriesNumber"] = "2"
+    file2_metadata["SeriesDescription"] = "File 2"
+    MyFormatGz.sample(dest_dir=inputs_dir, stem="file2")
+    Json.new(inputs_dir / "file2.json", file2_metadata)
+
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(inputs_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--unlink-source",
+            "all",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_LOGGERS": "stream debug stdout",
+            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            # non-DICOM test formats: the default DICOM-scoped --session/--scan
+            # specs don't apply, set them explicitly
+            "XINGEST_SESSION": "StudyInstanceUID all",
+            "XINGEST_SCAN": "SeriesNumber all",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    result = cli_runner(
+        label_cmd,
+        [str(sorted_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Run upload only including the MyFormatGz files to induce an error in check-upload
+    # when checking for all files
+    result = cli_runner(
+        upload_cmd,
+        [
+            str(labelled_dir),
+            "--always-include",
+            "testing/my-format-x",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    manifest_file = Json(
+        next(
+            p
+            for p in next(
+                q
+                for q in next(
+                    r for r in iter(list_session_dirs(labelled_dir)) if r.is_dir()
+                ).iterdir()
+                if q.is_dir()
+            ).iterdir()
+            if p.is_dir()
+        )
+        / Resource.MANIFEST_FNAME
+    )
+    manifest_data = manifest_file.load()
+    checksums = manifest_data["checksums"]
+    key, val = next(iter(checksums.items()))
+    checksums[key] = val + "1"
+    manifest_file.save(manifest_data)
+
+    source_dir = transfer_to_source(
+        labelled_dir,
+        upload_source=upload_source,
+        s3_bucket=s3_bucket,
+        s3_prefix=project_id,
+    )
+
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            source_dir,
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    logs = check_upload_log_file.read_text()
+    assert "MISSING SCAN" not in logs
+    assert "MISSING RESOURCE" not in logs
+    assert "EMPTY SCAN" not in logs
+    assert "CHECKSUM FAIL" in logs
+
+
+def test_upload_snapshots_display_in_xnat(
+    xnat_server: str,
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    run_prefix: str,
+) -> None:
+    """PNG views of a scan merged into one resource and packaged into XNAT snapshots
+    alongside the originals are served, once uploaded, from the URLs the XNAT
+    session page loads a scan's snapshot and thumbnail from"""
+    project_id = f"SNAPSHOTS{run_prefix}"
+    with xnat4tests.connect() as xnat_login:
+        xnat_login.put(f"/data/archive/projects/{project_id}")
+
+    images_dir = tmp_path / "images"
+    for i, view in enumerate(["clinical", "dermoscopy"]):
+        _write_minimal_png(
+            images_dir / project_id / "subject1" / "session1" / f"1-{view}.png",
+            rgb=(255 * i, 0, 255),
+        )
+
+    sorted_dir = tmp_path / "sorted"
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(images_dir),
+            str(sorted_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+            "--datatype",
+            "image/png",
+            "--session",
+            "SessionID",
+            "all",
+            "--scan",
+            "ScanID",
+            "all",
+            "--on-resource-clash",
+            "merge",
+            "image/png",
+            "--path-metadata-regex",
+            r".*/(?P<ProjectID>\w+)/(?P<SubjectID>\w+)/(?P<SessionID>\w+)/"
+            r"(?P<ScanID>\w+)-\w+\.png",
+            "image/png",
+        ],
+        env={"XINGEST_LOGGERS": "stream debug stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    result = cli_runner(
+        label_cmd,
+        [
+            str(sorted_dir),
+            str(labelled_dir),
+            "--project",
+            "ProjectID",
+            "--subject",
+            "SubjectID",
+            "--session",
+            "SessionID",
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # Pass the PNGs through (a conversion to their own type copies them) beside the
+    # snapshots made from them. The snapshots' label is replaced on upload.
+    packaged_dir = tmp_path / "packaged"
+    result = cli_runner(
+        package_cmd,
+        [
+            str(labelled_dir),
+            str(packaged_dir),
+            "image/png+set-of",
+            "--output-resource",
+            "photos",
+            "image/png+set-of",
+            "--output-resource",
+            "snapshots",
+            "medimage/vnd.xnat.snapshots",
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    result = cli_runner(
+        upload_cmd,
+        [
+            str(packaged_dir),
+            # Photographs have no DICOM modality to choose the session type from, and
+            # xnat4tests doesn't enable the photograph (XC) session type
+            "--modality",
+            "MR",
+            "--raise-errors",
+            "--use-curl-jsession",
+            "--wait-period",
+            "0",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": "stream info stdout",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    staged_resource_dir = next(packaged_dir.glob("*/1.*/snapshots"))
+    with xnat4tests.connect() as xnat_login:
+        xsession = xnat_login.projects[project_id].experiments["session1"]
+        assert sorted(r.label for r in xsession.scans["1"].resources.values()) == [
+            "SNAPSHOTS",
+            "photos",
+        ]
+        for view, fname in [
+            ("snapshot", "snapshot_qc.gif"),
+            ("thumbnail", "snapshot_qc_t.gif"),
+        ]:
+            # The session page loads a scan's snapshot and thumbnail from these
+            # endpoints. XNAT serves the files in the SNAPSHOTS resource whose content
+            # is ORIGINAL/THUMBNAIL, and otherwise tries to generate them from DICOM.
+            response = xnat_login.get(
+                f"/xapi/projects/{project_id}/experiments/{xsession.id}/scan/1/{view}"
+            )
+            assert response.content == (staged_resource_dir / fname).read_bytes()
+
+    # check-upload finds the snapshots under the label they were uploaded with
+    check_upload_log_file = tmp_path / "check-upload-logs.log"
+    result = cli_runner(
+        check_upload_cmd,
+        [
+            str(packaged_dir),
+            "--always-include",
+            "generic/file-set",
+            "--use-curl-jsession",
+        ],
+        env={
+            "XINGEST_HOST": xnat_server,
+            "XINGEST_USER": "admin",
+            "XINGEST_PASS": "admin",
+            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+        },
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert check_upload_log_file.read_text() == ""
+
+
+def test_deidentify_cli_dicom(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Sort DICOM sessions then run deidentify_cli end-to-end.
+
+    Verifies the full pipeline: staging → session loading → spec parsing →
+    deidentification → reid persistence.
+    """
+    PROJECT_ID = "TESTDEIDPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.0"
+
+    DICOM_DEID_SPEC = """
+    FORMAT dicom
+
+    %header
+
+    ADD PatientIdentityRemoved YES
+    REPLACE PatientName var:anon_patient_name
+    """
+
+    # 1. Generate DICOM test data for multiple scan types in subdirectories
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    for get_image, subdir in [
+        (get_pet_image, "pet"),
+        (get_ac_image, "ac"),
+        (get_topogram_image, "topogram"),
+    ]:
+        get_image(
+            dicoms_dir / subdir,
+            StudyID=PROJECT_ID,
+            PatientID=PATIENT_ID,
+            AccessionNumber=ACCESSION,
+            StudyInstanceUID=STUDY_UID,
+        )
+
+    # 2. Stage with collate_cli
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    sort_log = tmp_path / "sort.log"
+    result = cli_runner(
+        collate_cmd,
+        [
+            str(dicoms_dir),
+            str(staged_dir),
+            "--raise-errors",
+            "--wait-period",
+            "0",
+            "--recursive",
+        ],
+        env={"XINGEST_LOGGERS": f"file debug {sort_log};stream info stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 2b. Label project/subject/visit IDs, extracted from the DICOM metadata
+    labelled_dir = tmp_path / "labelled"
+    labelled_dir.mkdir()
+    result = cli_runner(
+        label_cmd,
+        [str(staged_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    assert (labelled_dir / session_name).exists(), "Session not labelled"
+
+    # 3. Project spec mapping DicomSeries to an empty spec dict
+
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
+    (medimage_dir / "dicom-series.transforms.yaml").write_text(
+        'version: "0.1"\n'
+        "variables:\n"
+        "  anon_patient_name: {tag: PatientID, default: ''}\n"
+    )
+
+    # 4. Run deidentify_cli with the mock deidentify implementation
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    deid_log = tmp_path / "deid.log"
+
+    result = cli_runner(
+        deidentify_cmd,
+        [
+            str(labelled_dir),
+            str(output_dir),
+            str(spec_dir),
+            "--reid-dir",
+            str(reid_dir),
+            "--raise-errors",
+        ],
+        env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 5. Log reports success
+    logs = deid_log.read_text()
+    assert "Deidentification completed successfully" in logs, show_cli_trace(result)
+
+    # 6. Reid metadata captures original PHI values
+    reid_file = reid_dir / f"{session_name}.json"
+    assert reid_file.exists(), f"Reid file missing: {reid_file}"
+    reid = json.loads(reid_file.read_bytes())
+    assert reid.get("session_uid") == STUDY_UID.replace(".", "_")
+    changed_fields = reid.get("changed_fields", {})
+    #    assert changed_fields.get("PatientID") == PATIENT_ID
+    assert changed_fields.get("PatientName")
+
+    # 7. Deidentified session directory contains files
+    deid_session_root = output_dir / session_name
+    assert deid_session_root.exists()
+    assert any(p.is_file() for p in deid_session_root.rglob("*")), (
+        f"No files found under {deid_session_root}"
+    )
+
+
+def test_deidentify_cli_dicom_missing_transform(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify fails when recipe references a var without a matching transform."""
+
+    PROJECT_ID = "TESTMISSINGTRANSFORM"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.2"
+
+    SPEC_WITH_MISSING_VAR = """
+    FORMAT dicom
+
+    %header
+
+    REPLACE PatientName var:anon_patient_name
+    """
+
+    # 1. Generate DICOM test data
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    # 2. Stage
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        collate_cmd,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 3. Label
+    labelled_dir = tmp_path / "labelled"
+    labelled_dir.mkdir()
+    result = cli_runner(
+        label_cmd,
+        [str(staged_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    # 4. Spec with var:anon_patient_name but NO transforms file
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir(parents=True)
+    (medimage_dir / "dicom-series").write_text(SPEC_WITH_MISSING_VAR)
+
+    # 5. Run deidentify — should fail due to missing transform
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    result = cli_runner(
+        deidentify_cmd,
+        [
+            str(labelled_dir),
+            str(output_dir),
+            str(spec_dir),
+            "--reid-dir",
+            str(reid_dir),
+            "--raise-errors",
+        ],
+    )
+    assert result.exit_code != 0, show_cli_trace(result)
+    assert "anon_patient_name" in result.output or "anon_patient_name" in str(
+        result.exception
+    ), (
+        f"Expected error about missing 'anon_patient_name' transform: {show_cli_trace(result)}"
+    )
+
+
+def test_deidentify_cli_dicom_encrypted_reid(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+) -> None:
+    """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file.
+
+    Accession.deidentify is mocked so the test focuses on the encryption
+    logic rather than the deidentification implementation.
+    """
+    from unittest.mock import MagicMock
+
+    from cryptography.fernet import Fernet
+
+    from accessionflow.model.accession import Accession
+
+    PROJECT_ID = "TESTDEIDENCPROJECT"
+    PATIENT_ID = "subject1"
+    ACCESSION = "ACC001"
+    STUDY_UID = "1.2.3.4.5.6.7.8.9.1"
+
+    dicoms_dir = tmp_path / "dicoms"
+    dicoms_dir.mkdir()
+    get_pet_image(
+        dicoms_dir,
+        StudyID=PROJECT_ID,
+        PatientID=PATIENT_ID,
+        AccessionNumber=ACCESSION,
+        StudyInstanceUID=STUDY_UID,
+    )
+
+    staged_dir = tmp_path / "staged"
+    staged_dir.mkdir()
+    result = cli_runner(
+        collate_cmd,
+        [str(dicoms_dir), str(staged_dir), "--raise-errors", "--wait-period", "0"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    labelled_dir = tmp_path / "labelled"
+    labelled_dir.mkdir()
+    result = cli_runner(
+        label_cmd,
+        [str(staged_dir), str(labelled_dir)] + LABEL_ID_ARGS + ["--raise-errors"],
+    )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    spec_dir = tmp_path / "spec"
+    project_spec_dir = spec_dir / PROJECT_ID
+    project_spec_dir.mkdir(parents=True)
+    medimage_dir = project_spec_dir / "medimage"
+    medimage_dir.mkdir()
+    (medimage_dir / "dicom-series").write_text("Dummy spec")
+
+    output_dir = tmp_path / "deidentified"
+    reid_dir = tmp_path / "reid"
+    key = Fernet.generate_key()
+
+    def mock_deidentify(self, dest_dir, **kwargs):
+        mock_session = MagicMock()
+
+        # save() returns (session, saved_dir) and creates that directory.
+        # deidentify materialises a session that does not exist yet under
+        # __build__ and renames it into place, so a save that returns nothing
+        # and writes nothing leaves nothing to rename.
+        session_dirname = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+
+        def _save(dest_dir, *args, **kwargs):
+            saved_dir = Path(dest_dir) / session_dirname
+            saved_dir.mkdir(parents=True, exist_ok=True)
+            return mock_session, saved_dir
+
+        mock_session.save = MagicMock(side_effect=_save)
+        mock_session.staging_dirname = MagicMock(return_value=session_dirname)
+        return mock_session, {"PatientID": PATIENT_ID}
+
+    with patch.object(Accession, "deidentify", mock_deidentify):
+        result = cli_runner(
+            deidentify_cmd,
+            [
+                str(labelled_dir),
+                str(output_dir),
+                str(spec_dir),
+                "--reid-dir",
+                str(reid_dir),
+                "--raise-errors",
+                "--reid-encrypt-key",
+                key.decode(),
+            ],
+        )
+    assert result.exit_code == 0, show_cli_trace(result)
+
+    session_name = f"{PROJECT_ID}.{PATIENT_ID}.{ACCESSION}"
+    enc_file = reid_dir / f"{session_name}.json.enc"
+    assert enc_file.exists(), f"Encrypted reid file missing: {enc_file}"
+    assert not (reid_dir / f"{session_name}.json").exists()
+
+    decrypted = json.loads(Fernet(key).decrypt(enc_file.read_bytes()))
+    # session.uid is derived from StudyInstanceUID (dots -> underscores) once a
+    # session has been through real staging/assignment, not the project.subject.
+    # session directory name used for the mocked deidentify() fixtures elsewhere.
+    assert decrypted.get("session_uid") == STUDY_UID.replace(".", "_")
+    assert decrypted.get("changed_fields", {}).get("PatientID") == PATIENT_ID
+
+
+def transfer_to_source(
+    source_dir: Path, upload_source: str, s3_prefix: str, s3_bucket: str
+) -> str:
+    if upload_source == "s3":
+        # Upload staged data to S3 bucket
+        for fspath in source_dir.glob("**/*"):
+            if fspath.is_file():
+                upload_file_to_s3(
+                    fspath,
+                    s3_bucket,
+                    f"{s3_prefix.rstrip('/')}/{fspath.relative_to(source_dir)}",
+                )
+        return f"s3://{s3_bucket}/{s3_prefix}"
+    else:
+        return str(source_dir)
+
+
+def test_deidentify_cmd_metadata_allowlist(
+    cli_runner: ty.Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("XINGEST_METADATA_ALLOWLIST", raising=False)
+
+    input_dir = tmp_path / "input"
+    spec_dir = tmp_path / "spec"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    spec_dir.mkdir()
+
+    with patch(
+        "accessionflow.cli.deidentify_cli.deidentify",
+        return_value=[],
+    ) as mock_deidentify:
+        result = cli_runner(
+            deidentify_cmd,
+            [str(input_dir), str(output_dir), str(spec_dir), "--loop", "-1"],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert set(mock_deidentify.call_args.kwargs["metadata_allowlist"]) == {"__uid__"}
+
+    with patch(
+        "accessionflow.cli.deidentify_cli.deidentify",
+        return_value=[],
+    ) as mock_deidentify:
+        result = cli_runner(
+            deidentify_cmd,
+            [
+                str(input_dir),
+                str(output_dir),
+                str(spec_dir),
+                "--loop",
+                "-1",
+                "--metadata-allowlist",
+                "__uid__,Modality",
+            ],
+        )
+
+    assert result.exit_code == 0, show_cli_trace(result)
+    assert set(mock_deidentify.call_args.kwargs["metadata_allowlist"]) == {
+        "__uid__",
+        "Modality",
+    }

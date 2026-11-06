@@ -19,6 +19,6 @@ repos:
       rev: v2.4.3
       hooks:
           - id: codespell
-            exclude: ^(xnat_checks/_version\.py|versioneer\.py)$
+            exclude: ^accessionflow/helpers/_version\.py$
             args:
                 - --ignore-words=.codespell-ignorewords

@@ -1,28 +1,28 @@
 .. _home:
 
-XNAT Ingest
-===========
+AccessionFlow
+=============
 .. image:: https://github.com/australian-imaging-service/xnat-ingest/actions/workflows/ci-cd.yml/badge.svg
    :target: https://github.com/australian-imaging-service/xnat-ingest/actions/workflows/ci-cd.yml
 .. image:: https://codecov.io/gh/australian-imaging-service/xnat-ingest/branch/main/graph/badge.svg?token=UIS0OGPST7
    :target: https://codecov.io/gh/australian-imaging-service/xnat-ingest
-.. image:: https://img.shields.io/pypi/v/xnat-ingest.svg
-   :target: https://pypi.python.org/pypi/xnat-ingest/
+.. image:: https://img.shields.io/pypi/v/accessionflow.svg
+   :target: https://pypi.python.org/pypi/accessionflow/
    :alt: Latest Version
 .. image:: https://img.shields.io/github/stars/australian-imaging-service/xnat-ingest?label=GitHub
    :alt: GitHub stars
    :target: https://github.com/australian-imaging-service/xnat-ingest
 
 
-*XNAT Ingest* is a toolkit for capturing data from instruments and uploading them to an XNAT
+*AccessionFlow* is a toolkit for capturing data from instruments and uploading them to an XNAT
 instance.
 
 Data files coming straight off a scanner or other instrument aren't organised the way XNAT
 expects, and — particularly on clinical scanners — often still carry patient-identifying
-information that needs stripping before they leave clinical control. *XNAT Ingest*
+information that needs stripping before they leave clinical control. *AccessionFlow*
 contains tools for each step of this process:
 
-* Grouping DICOM and non-DICOM files into sessions, scans and resources
+* Collating DICOM and non-DICOM files into sessions, scans and resources
 * Determining which XNAT project each belongs to and assigning appropriate subject and session labels
 * De-identifying files using flexible, file-format-specific methods
 * Uploading the sorted data into the specified XNAT instance.
@@ -33,8 +33,8 @@ running continuously as a service, watching for new files as they arrive.
 See :doc:`quick_start` for a hands-on walkthrough using synthetic sample data or go through the
 different sections in more detail using the links below
 
-* :ref:`Basic ingest workflow` — group, assign and upload files to XNAT
-* :ref:`Associate files without relevant metadata` — link in files by filename pattern instead
+* :ref:`Basic ingest workflow` — collate, label and upload files to XNAT
+* :ref:`Attach files without relevant metadata` — link in files by filename pattern instead
 * :ref:`Deidentification` — strip patient-identifying data first
 * :ref:`Deployment tips` — run the pipeline continuously via Docker/Kubernetes
 * :doc:`cli` — full command-line reference
@@ -43,7 +43,7 @@ different sections in more detail using the links below
 Installation
 ------------
 
-The recommended way to run *XNAT Ingest*, particularly for a long-running node, is the
+The recommended way to run *AccessionFlow*, particularly for a long-running node, is the
 published Docker image, which bundles the CLI as its entrypoint along with all of its
 external dependencies (e.g. dcm2niix, MRtrix3):
 
@@ -54,11 +54,11 @@ external dependencies (e.g. dcm2niix, MRtrix3):
 See :ref:`Deployment tips` for how this fits into Docker Compose
 or Kubernetes.
 
-Alternatively, *XNAT Ingest* can be installed for Python >=3.11 using *pip*:
+Alternatively, *AccessionFlow* can be installed for Python >=3.11 using *pip*:
 
 .. code-block:: console
 
-    $ python3 -m pip install xnat-ingest
+    $ python3 -m pip install accessionflow
 
 
 License
@@ -81,7 +81,7 @@ This work is licensed under the
 
     how_to/pipeline
     how_to/deidentify
-    how_to/associate
+    how_to/attach
     how_to/deploying
 
 .. toctree::
