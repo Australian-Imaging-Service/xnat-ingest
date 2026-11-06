@@ -8,13 +8,13 @@ import pytest
 from xnat.session import BaseXNATSession
 
 from accessionflow.model.accession import Accession
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     IDENTITY_PATH,
     XnatLocalSessionListing,
     XnatS3SessionListing,
     get_xnat_session,
 )
-from accessionflow.repositories.xnat.tests.test_all_uploaded_completeness import (
+from accessionflow.stores.xnat.tests.test_all_uploaded_completeness import (
     LOCAL,
     RESOURCE_PATH,
     FakeXnat,
@@ -240,7 +240,7 @@ def test_failed_subject_read_never_falls_back_to_upload(tmp_path):
 
 
 def test_session_only_mode_checks_uid_when_supplied(tmp_path):
-    from accessionflow.repositories.xnat.remotes import XnatSessionOnlyListing
+    from accessionflow.stores.xnat.remotes import XnatSessionOnlyListing
 
     root = tmp_path / "sess"
     root.mkdir()
@@ -422,7 +422,7 @@ def test_creation_must_read_back_identity():
 
 
 def test_session_only_cannot_adopt_without_expected_subject(tmp_path):
-    from accessionflow.repositories.xnat.remotes import XnatSessionOnlyListing
+    from accessionflow.stores.xnat.remotes import XnatSessionOnlyListing
 
     root = tmp_path / "sess"
     root.mkdir()
@@ -439,7 +439,7 @@ def test_session_only_cannot_adopt_without_expected_subject(tmp_path):
 def test_s3_session_only_checks_identity_without_data_download(
     tmp_path, uid, monkeypatch
 ):
-    from accessionflow.repositories.xnat import remotes
+    from accessionflow.stores.xnat import remotes
 
     bucket = Mock()
     bucket.download_fileobj.side_effect = lambda key, stream: stream.write(

@@ -5,7 +5,7 @@ reach `resource_errors`, so the success branch was taken and the session logged
 "Successfully uploaded all files" while holding a fraction of its data.
 """
 
-from accessionflow.repositories.xnat.api.upload_api import session_upload_verdict
+from accessionflow.stores.xnat.api.upload_api import session_upload_verdict
 
 
 def test_clean_session_returns_none() -> None:

@@ -16,8 +16,8 @@ import typing as ty
 from pathlib import Path
 from unittest import mock
 
-from accessionflow.repositories.xnat.api.upload_api import upload
-from accessionflow.repositories.xnat.remotes import XnatLocalSessionListing
+from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.remotes import XnatLocalSessionListing
 
 
 class RecordingConnection:
@@ -53,7 +53,7 @@ def _upload_one_session(tmp_path: Path, uploaded: bool) -> ty.List[str]:
         mock.patch.object(
             XnatLocalSessionListing, "all_uploaded", return_value=uploaded
         ),
-        mock.patch("accessionflow.repositories.xnat.api.upload_api.Accession.load"),
+        mock.patch("accessionflow.stores.xnat.api.upload_api.Accession.load"),
     ):
         upload(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
     return events

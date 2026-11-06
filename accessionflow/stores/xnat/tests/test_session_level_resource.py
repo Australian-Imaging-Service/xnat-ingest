@@ -15,7 +15,7 @@ from unittest import mock
 import pytest
 
 from accessionflow.exceptions import IncompleteCheckumsException
-from accessionflow.repositories.xnat.remotes import get_xnat_resource
+from accessionflow.stores.xnat.remotes import get_xnat_resource
 
 
 class FakeResourceOnXnat:
@@ -51,7 +51,7 @@ def _staged(n: int) -> dict[str, str]:
 
 def _call(staged: dict[str, str], on_xnat: dict[str, str]) -> ty.Any:
     with mock.patch(
-        "accessionflow.repositories.xnat.remotes.get_xnat_checksums",
+        "accessionflow.stores.xnat.remotes.get_xnat_checksums",
         return_value=on_xnat,
     ):
         return get_xnat_resource(FakeStagedResource(staged), FakeXnatSession())

@@ -6,7 +6,7 @@ from unittest.mock import ANY, Mock
 import pytest
 
 from accessionflow.model.accession import Accession
-from accessionflow.repositories.xnat.remotes import get_xnat_session
+from accessionflow.stores.xnat.remotes import get_xnat_session
 
 
 class _CreatedObject:

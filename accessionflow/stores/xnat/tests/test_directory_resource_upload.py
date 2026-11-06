@@ -17,7 +17,7 @@ from fileformats.generic import Directory, File
 from accessionflow.helpers.remotes import calculate_checksums
 from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
-from accessionflow.repositories.xnat.api import upload_api
+from accessionflow.stores.xnat.api import upload_api
 
 
 def _directory(tmp_path):

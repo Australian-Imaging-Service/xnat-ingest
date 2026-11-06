@@ -7,7 +7,7 @@ import pytest
 from fileformats.core import FileSet
 
 from accessionflow.model.resource import Resource
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     XnatS3SessionListing,
     compare_resource_with_xnat,
     get_xnat_checksums,

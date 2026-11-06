@@ -20,8 +20,8 @@ from accessionflow.cli.upload_cli import upload_group
 from accessionflow.helpers.arg_types import LoggerConfig, StoreCredentials
 from accessionflow.helpers.logging import logger, set_logger_handling
 from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS
-from accessionflow.repositories.xnat.api.upload_api import upload
-from accessionflow.repositories.xnat.arg_types import UploadMethod
+from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.arg_types import UploadMethod
 
 
 @upload_group.command(

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from accessionflow.repositories.xnat.api.upload_api import select_files_to_upload
+from accessionflow.stores.xnat.api.upload_api import select_files_to_upload
 
 
 def _flat(tmp_path: Path) -> tuple[list[Path], Path]:

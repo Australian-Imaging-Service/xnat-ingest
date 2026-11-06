@@ -4,7 +4,7 @@
 5 of 8 files has the same label as one holding all 8.
 """
 
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     ResourceComparison,
     compare_resource_with_xnat,
 )

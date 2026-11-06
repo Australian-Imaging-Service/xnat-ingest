@@ -370,8 +370,8 @@ def iterate_s3_sessions(
         matching botocore's default connection-pool size.
     listing_class : type[S3SessionListing], optional
         the class to list sessions named 'project.subject.session' with, by default
-        S3SessionListing. Repository plugins pass a subclass that can find the
-        session in the repository
+        S3SessionListing. Store plugins pass a subclass that can find the
+        session in the store
     session_only_listing_class : type[S3SessionListing], optional
         the class to list sessions named by session label only with, by default
         S3SessionOnlyListing

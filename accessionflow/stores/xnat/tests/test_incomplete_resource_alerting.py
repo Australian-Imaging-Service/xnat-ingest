@@ -14,7 +14,7 @@ from unittest import mock
 import pytest
 
 from accessionflow.exceptions import IncompleteCheckumsException
-from accessionflow.repositories.xnat.remotes import get_xnat_resource
+from accessionflow.stores.xnat.remotes import get_xnat_resource
 
 # The literal substrings the shipped Loki rules match on.
 #
@@ -79,7 +79,7 @@ def test_unrepairable_resource_logs_the_phrase_the_alert_matches(
 
     with caplog.at_level(logging.ERROR, logger="accessionflow"):
         with mock.patch(
-            "accessionflow.repositories.xnat.remotes.get_xnat_checksums",
+            "accessionflow.stores.xnat.remotes.get_xnat_checksums",
             return_value=on_xnat,
         ):
             with pytest.raises(IncompleteCheckumsException):
@@ -108,7 +108,7 @@ def test_both_alert_substrings_are_in_one_message(caplog: ty.Any) -> None:
 
     with caplog.at_level(logging.ERROR, logger="accessionflow"):
         with mock.patch(
-            "accessionflow.repositories.xnat.remotes.get_xnat_checksums",
+            "accessionflow.stores.xnat.remotes.get_xnat_checksums",
             return_value=on_xnat,
         ):
             with pytest.raises(IncompleteCheckumsException):

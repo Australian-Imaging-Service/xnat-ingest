@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     compare_resource_with_xnat,
     get_xnat_resource,
     log_name_only_comparison,
@@ -177,7 +177,7 @@ def test_existing_resource_logs_debug_without_warnings(caplog, scan_level, repai
     with (
         caplog.at_level(logging.DEBUG, logger="accessionflow"),
         patch(
-            "accessionflow.repositories.xnat.remotes.get_xnat_checksums",
+            "accessionflow.stores.xnat.remotes.get_xnat_checksums",
             return_value=before,
         ),
     ):

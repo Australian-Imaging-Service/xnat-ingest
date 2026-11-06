@@ -30,24 +30,24 @@ from unittest.mock import MagicMock, patch
 
 import requests.exceptions
 
-from accessionflow.repositories.xnat.cli import upload_cmd
+from accessionflow.stores.xnat.cli import upload_cmd
 from conftest import show_cli_trace
 
 STAGED = "/staged"
 SERVER = "https://xnat.example.org"
 COMMON_ARGS = [STAGED, SERVER, "--user", "testuser", "--password", "testpass"]
 
-# Unset any XINGEST_* env vars a developer may have exported locally (e.g. for
+# Unset any ACFLOW_* env vars a developer may have exported locally (e.g. for
 # manually testing against a real XNAT) so they can't leak into these tests,
 # which rely on click falling back to the explicit CLI args/defaults above.
 CLEAN_ENV = {
-    "XINGEST_STORE_CREDENTIALS": None,
-    "XINGEST_HOST": None,
-    "XINGEST_USER": None,
-    "XINGEST_PASS": None,
-    "XINGEST_STAGED": None,
-    "XINGEST_LOOP": None,
-    "XINGEST_DATE": None,
+    "ACFLOW_STORE_CREDENTIALS": None,
+    "ACFLOW_HOST": None,
+    "ACFLOW_USER": None,
+    "ACFLOW_PASS": None,
+    "ACFLOW_STAGED": None,
+    "ACFLOW_LOOP": None,
+    "ACFLOW_DATE": None,
 }
 
 
@@ -65,11 +65,9 @@ def _run_loop(
     extra_args: ty.Sequence[str] = (),
 ) -> ty.Tuple[ty.Any, MagicMock, MagicMock]:
     with (
-        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
-        patch(
-            "accessionflow.repositories.xnat.cli.upload_cli.time.sleep"
-        ) as mock_sleep,
+        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.upload_cli.time.sleep") as mock_sleep,
     ):
         if xnat_side_effect is not None:
             mock_xnat_cls.side_effect = xnat_side_effect
@@ -352,8 +350,8 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
     the caller instead of being swallowed -- there's no daemon to keep
     alive, so callers need to see the failure."""
     with (
-        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.side_effect = requests.exceptions.ConnectionError(
@@ -371,9 +369,9 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
 
 def test_date_field_is_passed_to_upload(cli_runner: ty.Any) -> None:
     with (
-        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
         patch(
-            "accessionflow.repositories.xnat.cli.upload_cli.upload", return_value=[]
+            "accessionflow.stores.xnat.cli.upload_cli.upload", return_value=[]
         ) as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()

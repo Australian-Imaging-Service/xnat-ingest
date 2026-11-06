@@ -13,7 +13,7 @@ staging directory name contains a dot.
 import json
 import typing as ty
 
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     XnatSessionListing,
     XnatSessionOnlyListing,
 )

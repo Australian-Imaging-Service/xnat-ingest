@@ -185,7 +185,7 @@ only written if --reid-dir is given; see that option.
     help=(
         "Comma-separated metadata keys to retain in output sidecars "
         "(ACFLOW_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
-        "__repository__ are always retained, as they are needed to identify a session."
+        "__store__ are always retained, as they are needed to identify a session."
     ),
 )
 @click.option(

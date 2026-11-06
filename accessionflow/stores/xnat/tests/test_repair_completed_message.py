@@ -14,7 +14,7 @@ changed with it.
 
 import re
 
-from accessionflow.repositories.xnat.api.upload_api import repair_completed_message
+from accessionflow.stores.xnat.api.upload_api import repair_completed_message
 
 # What the downstream rules match. This line must stay clear of both.
 ATTEMPT_FILTER = re.compile(r"Repaired [0-9]+ incomplete resource")

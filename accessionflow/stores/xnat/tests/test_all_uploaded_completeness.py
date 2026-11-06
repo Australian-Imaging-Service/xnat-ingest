@@ -16,7 +16,7 @@ from unittest import mock
 import pytest
 from xnat.core import XNATBaseListing, XNATBaseObject
 
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     XnatLocalSessionListing,
     XnatS3SessionListing,
     XnatSessionOnlyListing,

@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
-from accessionflow.repositories.xnat.api.upload_api import _staged_upload_batch
+from accessionflow.stores.xnat.api.upload_api import _staged_upload_batch
 
 
 def test_concurrent_upload_batches_use_distinct_directories(tmp_path: Path) -> None:

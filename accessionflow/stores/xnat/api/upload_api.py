@@ -30,8 +30,8 @@ from accessionflow.helpers.remotes import (
 )
 from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
-from accessionflow.repositories.xnat.arg_types import UploadMethod
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.arg_types import UploadMethod
+from accessionflow.stores.xnat.remotes import (
     XnatLocalSessionListing,
     XnatS3SessionListing,
     XnatS3SessionOnlyListing,

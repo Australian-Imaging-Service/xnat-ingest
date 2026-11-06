@@ -47,8 +47,8 @@ from accessionflow.helpers.arg_types import MimeType  # type: ignore[import-unty
 from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
 from accessionflow.model.resource import Resource
-from accessionflow.repositories.xnat.arg_types import XnatLogin
-from accessionflow.repositories.xnat.cli import (
+from accessionflow.stores.xnat.arg_types import XnatLogin
+from accessionflow.stores.xnat.cli import (
     check_upload_cmd,
     label_cmd,
     upload_cmd,
@@ -106,7 +106,7 @@ are uploaded to XNAT
     metavar="<mime-type>",
     multiple=True,
     default=None,
-    envvar="XINGEST_DATATYPES",
+    envvar="ACFLOW_DATATYPES",
     help=(
         'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
         "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
@@ -122,7 +122,7 @@ are uploaded to XNAT
     default=None,
     metavar="<host> <user> <password>",
     help="The XNAT server to upload to plus the user and password to use",
-    envvar="XINGEST_XNAT_LOGIN",
+    envvar="ACFLOW_XNAT_LOGIN",
 )
 def test_cli_types(out_file: Path, datatype: ty.List[MimeType]) -> None:
     fileformats = [m.datatype for m in datatype]
@@ -139,7 +139,7 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         metavar="<mime-type>",
         multiple=True,
         default=None,
-        envvar="XINGEST_DATATYPES",
+        envvar="ACFLOW_DATATYPES",
         help=(
             'The MIME-type(s) (or "MIME-like" see FileFormats docs) of potential datatype(s) '
             "of the primary files to to upload, defaults to 'medimage/dicom-series'. "
@@ -155,12 +155,12 @@ def test_mime_type_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     out_file = tmp_path / "out.txt"
 
-    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+    # Patch the environment to set the ACFLOW_DATATYPES variable using unittest.mock
 
     with patch.dict(
         os.environ,
         {
-            "XINGEST_DATATYPES": (
+            "ACFLOW_DATATYPES": (
                 "medimage/dicom-series;medimage/vnd.siemens.syngo-mi.vr20b.list-mode"
             )
         },
@@ -185,7 +185,7 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
         default=None,
         metavar="<host> <user> <password>",
         help="The XNAT server to upload to plus the user and password to use",
-        envvar="XINGEST_XNAT_LOGIN",
+        envvar="ACFLOW_XNAT_LOGIN",
     )
     def test_cli_types(out_file: Path, xnat_login: XnatLogin) -> None:
         with open(out_file, "w") as f:
@@ -195,12 +195,12 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
 
     out_file = tmp_path / "out.txt"
 
-    # Patch the environment to set the XINGEST_DATATYPES variable using unittest.mock
+    # Patch the environment to set the ACFLOW_DATATYPES variable using unittest.mock
 
     with patch.dict(
         os.environ,
         {
-            "XINGEST_XNAT_LOGIN": (
+            "ACFLOW_XNAT_LOGIN": (
                 "https://xnat.example.com:8888 a_user a_passwordwithspecialchars*#%,;##@"
             )
         },
@@ -227,7 +227,7 @@ def test_fields_cli_envvar(
     with patch.dict(
         os.environ,
         {
-            "XINGEST_FIELDS": (
+            "ACFLOW_FIELDS": (
                 "scanner_model ManufacturerModelName;study_date {StudyDate:%Y-%m-%d}"
             )
         },
@@ -489,7 +489,7 @@ def test_stage_and_upload(
             "all",
         ],
         env={
-            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -528,7 +528,7 @@ def test_stage_and_upload(
             # "--raise-errors",
         ],
         env={
-            "XINGEST_LOGGERS": f"file info {attach_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file info {attach_log_file};stream info stdout",
         },
     )
 
@@ -558,11 +558,11 @@ def test_stage_and_upload(
             "107",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"file debug {upload_log_file};stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -594,11 +594,11 @@ def test_stage_and_upload(
             "107",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file debug {upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"file debug {upload_log_file};stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -671,11 +671,11 @@ def test_stage_and_upload(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"file debug {check_upload_log_file};stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"file debug {check_upload_log_file};stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -706,7 +706,7 @@ def test_additional_logger_routes_to_configured_handler(
             "fileformats",
         ],
         env={
-            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -757,7 +757,7 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -786,7 +786,7 @@ def test_stage_wait_period(
             "10",
         ],
         env={
-            "XINGEST_LOGGERS": f"file debug {stage_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file debug {stage_log_file};stream info stdout",
         },
     )
 
@@ -1254,7 +1254,7 @@ def test_label_missing_id_field_collects_error(
         label_cmd,
         [str(collated_dir), str(labelled_dir)] + LABEL_ID_ARGS,
         env={
-            "XINGEST_LOGGERS": f"file debug {label_log_file};stream info stdout",
+            "ACFLOW_LOGGERS": f"file debug {label_log_file};stream info stdout",
         },
     )
 
@@ -1327,8 +1327,8 @@ def test_check_upload_missing_scan(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream debug stdout",
-            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            "ACFLOW_LOGGERS": "stream debug stdout",
+            "ACFLOW_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
         },
     )
 
@@ -1364,11 +1364,11 @@ def test_check_upload_missing_scan(
             "0",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": "stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1383,11 +1383,11 @@ def test_check_upload_missing_scan(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1454,12 +1454,12 @@ def test_check_upload_empty_scan(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream debug stdout",
-            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            "ACFLOW_LOGGERS": "stream debug stdout",
+            "ACFLOW_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
             # these test formats aren't DICOM, so the default DICOM-scoped
             # --session/--scan specs don't apply - set them explicitly
-            "XINGEST_SESSION": "StudyInstanceUID all",
-            "XINGEST_SCAN": "SeriesNumber all",
+            "ACFLOW_SESSION": "StudyInstanceUID all",
+            "ACFLOW_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1493,11 +1493,11 @@ def test_check_upload_empty_scan(
             "0",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": "stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1522,11 +1522,11 @@ def test_check_upload_empty_scan(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1594,12 +1594,12 @@ def test_check_upload_missing_resource(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream debug stdout",
-            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            "ACFLOW_LOGGERS": "stream debug stdout",
+            "ACFLOW_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
             # these test formats aren't DICOM, so the default DICOM-scoped
             # --session/--scan specs don't apply - set them explicitly
-            "XINGEST_SESSION": "StudyInstanceUID all",
-            "XINGEST_SCAN": "SeriesNumber all",
+            "ACFLOW_SESSION": "StudyInstanceUID all",
+            "ACFLOW_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1633,11 +1633,11 @@ def test_check_upload_missing_resource(
             "0",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": "stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1662,11 +1662,11 @@ def test_check_upload_missing_resource(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1732,12 +1732,12 @@ def test_check_upload_checksum_fail(
             "0",
         ],
         env={
-            "XINGEST_LOGGERS": "stream debug stdout",
-            "XINGEST_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
+            "ACFLOW_LOGGERS": "stream debug stdout",
+            "ACFLOW_DATATYPES": "testing/my-format-x;testing/my-format-gz-x",
             # non-DICOM test formats: the default DICOM-scoped --session/--scan
             # specs don't apply, set them explicitly
-            "XINGEST_SESSION": "StudyInstanceUID all",
-            "XINGEST_SCAN": "SeriesNumber all",
+            "ACFLOW_SESSION": "StudyInstanceUID all",
+            "ACFLOW_SCAN": "SeriesNumber all",
         },
     )
 
@@ -1764,11 +1764,11 @@ def test_check_upload_checksum_fail(
             "0",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": "stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1810,11 +1810,11 @@ def test_check_upload_checksum_fail(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
 
@@ -1872,7 +1872,7 @@ def test_upload_snapshots_display_in_xnat(
             r"(?P<ScanID>\w+)-\w+\.png",
             "image/png",
         ],
-        env={"XINGEST_LOGGERS": "stream debug stdout"},
+        env={"ACFLOW_LOGGERS": "stream debug stdout"},
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
@@ -1927,11 +1927,11 @@ def test_upload_snapshots_display_in_xnat(
             "0",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": "stream info stdout",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": "stream info stdout",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -1966,11 +1966,11 @@ def test_upload_snapshots_display_in_xnat(
             "--use-curl-jsession",
         ],
         env={
-            "XINGEST_HOST": xnat_server,
-            "XINGEST_USER": "admin",
-            "XINGEST_PASS": "admin",
-            "XINGEST_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
-            "XINGEST_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
+            "ACFLOW_HOST": xnat_server,
+            "ACFLOW_USER": "admin",
+            "ACFLOW_PASS": "admin",
+            "ACFLOW_LOGGERS": f"stream debug stdout;file error {check_upload_log_file}",
+            "ACFLOW_STORE_CREDENTIALS": "0123456789ABCDEF randomstringofcharacters0912341241234",
         },
     )
     assert result.exit_code == 0, show_cli_trace(result)
@@ -2030,7 +2030,7 @@ def test_deidentify_cli_dicom(
             "0",
             "--recursive",
         ],
-        env={"XINGEST_LOGGERS": f"file debug {sort_log};stream info stdout"},
+        env={"ACFLOW_LOGGERS": f"file debug {sort_log};stream info stdout"},
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
@@ -2075,7 +2075,7 @@ def test_deidentify_cli_dicom(
             str(reid_dir),
             "--raise-errors",
         ],
-        env={"XINGEST_LOGGERS": f"file info {deid_log};stream info stdout"},
+        env={"ACFLOW_LOGGERS": f"file info {deid_log};stream info stdout"},
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
@@ -2303,7 +2303,7 @@ def test_deidentify_cmd_metadata_allowlist(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("XINGEST_METADATA_ALLOWLIST", raising=False)
+    monkeypatch.delenv("ACFLOW_METADATA_ALLOWLIST", raising=False)
 
     input_dir = tmp_path / "input"
     spec_dir = tmp_path / "spec"

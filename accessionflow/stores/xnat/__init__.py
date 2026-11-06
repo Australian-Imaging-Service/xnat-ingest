@@ -1,8 +1,8 @@
 """Support for labelling sessions for, and uploading them to, XNAT repositories"""
 
-from accessionflow.model.repository import LabelLevel, Repository
+from accessionflow.model.store_config import LabelLevel, Store
 
-REPOSITORY = Repository(
+STORE = Store(
     name="xnat",
     title="XNAT",
     labels=(
@@ -18,4 +18,4 @@ REPOSITORY = Repository(
     multiple_resources=True,
 )
 
-__all__ = ["REPOSITORY"]
+__all__ = ["STORE"]

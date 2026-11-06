@@ -17,14 +17,14 @@ from xnat.exceptions import XNATResponseError
 from accessionflow.helpers.arg_types import StoreCredentials
 from accessionflow.helpers.logging import logger
 from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS, iterate_s3_sessions
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     XnatLocalSessionListing,
     XnatS3SessionListing,
     XnatS3SessionOnlyListing,
     XnatSessionListing,
     get_xnat_checksums,
 )
-from accessionflow.repositories.xnat.scan_types import SNAPSHOTS_RESOURCE_LABEL
+from accessionflow.stores.xnat.scan_types import SNAPSHOTS_RESOURCE_LABEL
 
 
 def check_upload(

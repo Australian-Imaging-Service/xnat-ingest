@@ -1,4 +1,4 @@
-"""The stages whose subcommands are provided by repository plugins"""
+"""The stages whose subcommands are provided by store plugins"""
 
 import os
 from pathlib import Path
@@ -8,36 +8,36 @@ import pytest
 from click.testing import CliRunner
 
 from accessionflow.cli import cli, label_group, make_label_command
-from accessionflow.model.repository import (
+from accessionflow.model.store_config import (
     LabelLevel,
-    Repository,
-    get_repository,
-    repository_plugins,
+    Store,
+    get_store,
+    store_plugins,
 )
 
-CLEAN_ENV = {key: None for key in os.environ if key.startswith("XINGEST_")}
+CLEAN_ENV = {key: None for key in os.environ if key.startswith("ACFLOW_")}
 
 
 def test_xnat_plugin_is_found() -> None:
-    assert "xnat" in repository_plugins()
-    xnat = get_repository("xnat")
+    assert "xnat" in store_plugins()
+    xnat = get_store("xnat")
     assert [level.name for level in xnat.labels] == ["project", "subject", "session"]
     assert xnat.acquisition is not None and xnat.acquisition.name == "scan"
 
 
-def test_get_repository_names_the_installed_plugins() -> None:
+def test_get_store_names_the_installed_plugins() -> None:
     with pytest.raises(ValueError, match="installed: .*xnat"):
-        get_repository("not-a-repository")
+        get_store("not-a-store")
 
 
-def test_repository_needs_three_label_levels() -> None:
+def test_store_needs_three_label_levels() -> None:
     with pytest.raises(ValueError, match="exactly 3"):
-        Repository(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
+        Store(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
 
 
-def test_repository_rejects_repeated_label_names() -> None:
+def test_store_rejects_repeated_label_names() -> None:
     with pytest.raises(ValueError, match="repeated"):
-        Repository(
+        Store(
             name="dup",
             title="Dup",
             labels=(LabelLevel("a"), LabelLevel("b"), LabelLevel("c")),
@@ -53,12 +53,12 @@ def test_stages_list_the_plugin_subcommands() -> None:
         assert "xnat" in result.output
 
 
-def test_missing_repository_plugin_is_explained() -> None:
+def test_missing_store_plugin_is_explained() -> None:
     result = CliRunner().invoke(cli, ["upload", "nope", "x"], env=CLEAN_ENV)
     assert result.exit_code == 2
-    assert "no repository plugin named 'nope' is installed" in result.output
-    assert "accessionflow.repositories.nope" in result.output
-    assert "xnat" in result.output  # the repositories that are available
+    assert "no store plugin named 'nope' is installed" in result.output
+    assert "accessionflow.stores.nope" in result.output
+    assert "xnat" in result.output  # the stores that are available
 
 
 def test_label_xnat_maps_scan_to_acquisition(
@@ -95,20 +95,20 @@ def test_label_xnat_maps_scan_to_acquisition(
     assert kwargs["single_resource"] is False  # XNAT scans hold several resources
 
 
-def test_label_single_resource_follows_repository_config(
+def test_label_single_resource_follows_store_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import accessionflow.cli.label_cli as label_cli
 
     label = MagicMock(return_value=[])
     monkeypatch.setattr(label_cli, "label", label)
-    repository = Repository(
+    store = Store(
         name="singleres",
         title="Single",
         labels=(LabelLevel("a", "A"), LabelLevel("b", "B"), LabelLevel("c", "C")),
         multiple_resources=False,
     )
-    make_label_command(repository)
+    make_label_command(store)
     try:
         (tmp_path / "in").mkdir()
         result = CliRunner().invoke(
@@ -132,10 +132,10 @@ def test_label_xnat_options_keep_their_env_vars(
     (tmp_path / "in").mkdir()
     env = dict(
         CLEAN_ENV,
-        XINGEST_PROJECT="StudyID",
-        XINGEST_SESSION="StudyInstanceUID",
-        XINGEST_SCAN="SeriesNumber",
-        XINGEST_CONSTANT_PROJECT_ID="PROJ",
+        ACFLOW_PROJECT="StudyID",
+        ACFLOW_SESSION="StudyInstanceUID",
+        ACFLOW_SCAN="SeriesNumber",
+        ACFLOW_CONSTANT_PROJECT_ID="PROJ",
     )
     result = CliRunner().invoke(
         cli, ["label", "xnat", str(tmp_path / "in"), str(tmp_path / "out")], env=env
@@ -148,15 +148,15 @@ def test_label_xnat_options_keep_their_env_vars(
     assert kwargs["project_id"] == "PROJ"
 
 
-def test_label_command_follows_repository_config(
+def test_label_command_follows_store_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A repository with no acquisition label, and a level without a default"""
+    """A store with no acquisition label, and a level without a default"""
     import accessionflow.cli.label_cli as label_cli
 
     label = MagicMock(return_value=[])
     monkeypatch.setattr(label_cli, "label", label)
-    repository = Repository(
+    store = Store(
         name="testrepo",
         title="Test",
         labels=(
@@ -166,7 +166,7 @@ def test_label_command_follows_repository_config(
         ),
         envvar_prefix="TESTREPO_",
     )
-    command = make_label_command(repository)
+    command = make_label_command(store)
     try:
         assert label_group.commands["testrepo"] is command
         options = {opt for param in command.params for opt in param.opts}

@@ -8,13 +8,13 @@ from fileformats.core import FileSet
 from accessionflow.api.label_api import label
 from accessionflow.helpers.arg_types import CopyModeParamType, LoggerConfig, MimeType
 from accessionflow.helpers.logging import logger, set_logger_handling
-from accessionflow.model.repository import Repository
+from accessionflow.model.store_config import Store
 
-from .base import repository_group
+from .base import store_group
 
-label_group = repository_group(
+label_group = store_group(
     name="label",
-    help="""Assigns the IDs a repository needs, extracted from session metadata, to
+    help="""Assigns the IDs a store needs, extracted from session metadata, to
 sessions that have already been collated into acquisitions/resources""",
 )
 
@@ -35,29 +35,29 @@ reviewed/reprocessed rather than silently lost.
 """
 
 
-def make_label_command(repository: Repository) -> click.Command:
-    """Make the 'label <repository>' subcommand from the repository's configuration
+def make_label_command(store: Store) -> click.Command:
+    """Make the 'label <store>' subcommand from the store's configuration
     and register it with the 'label' group.
 
-    The command has an option for each of the repository's label levels, e.g.
+    The command has an option for each of the store's label levels, e.g.
     '--project', '--subject' and '--session' for XNAT, and one for its name for an
     acquisition, e.g. '--scan', each settable by an environment variable named after
     it, e.g. 'ACFLOW_PROJECT'.
 
     Parameters
     ----------
-    repository : Repository
-        the configuration of the repository
+    store : Store
+        the configuration of the store
 
     Returns
     -------
     click.Command
-        the 'label <repository>' subcommand
+        the 'label <store>' subcommand
     """
-    prefix = repository.envvar_prefix
-    top = repository.labels[0]
-    level_names = [level.name for level in repository.labels]
-    acquisition = repository.acquisition
+    prefix = store.envvar_prefix
+    top = store.labels[0]
+    level_names = [level.name for level in store.labels]
+    acquisition = store.acquisition
 
     def label_cmd(
         input_dir: Path,
@@ -86,7 +86,7 @@ def make_label_command(repository: Repository) -> click.Command:
 
         # The model holds the labels as project, subject and session IDs for now
         project_field, subject_field, session_field = (
-            label_fields[f"label_{i}"] for i in range(len(repository.labels))
+            label_fields[f"label_{i}"] for i in range(len(store.labels))
         )
 
         # Run the label process in a loop if loop is set to a positive value,
@@ -105,7 +105,7 @@ def make_label_command(repository: Repository) -> click.Command:
                 raise_errors=raise_errors,
                 copy_mode=copy_mode,
                 include=[include_type.datatype for include_type in include_types],
-                single_resource=not repository.multiple_resources,
+                single_resource=not store.multiple_resources,
             )
             if loop < 0:
                 break
@@ -122,7 +122,7 @@ def make_label_command(repository: Repository) -> click.Command:
             time.sleep(sleep_time)
 
     label_options: list[click.Parameter] = []
-    for i, level in enumerate(repository.labels):
+    for i, level in enumerate(store.labels):
         envvar = level.envvar(prefix)
         # An explicit default of None would count as a value for 'required' in
         # click >= 8.3, so a level without a default is given none at all
@@ -179,16 +179,16 @@ def make_label_command(repository: Repository) -> click.Command:
     command = _common_label_options(
         prefix,
         click.command(
-            name=repository.name,
+            name=store.name,
             help=LABEL_HELP.format(
-                title=repository.title,
+                title=store.title,
                 levels="/".join(level_names),
                 acquisitions=f"{acquisition.name}s" if acquisition else "acquisitions",
                 dirname=".".join(f"<{n}>" for n in level_names),
             ),
         ),
     )(label_cmd)
-    # After the arguments, before the options that all repositories share
+    # After the arguments, before the options that all stores share
     command.params[2:2] = label_options
     label_group.add_command(command)
     return command
@@ -197,7 +197,7 @@ def make_label_command(repository: Repository) -> click.Command:
 def _common_label_options(
     prefix: str, command: ty.Callable[[ty.Callable[..., None]], click.Command]
 ) -> ty.Callable[[ty.Callable[..., None]], click.Command]:
-    """The arguments and options of 'label' that don't depend on the repository"""
+    """The arguments and options of 'label' that don't depend on the store"""
     decorators = [
         click.argument(
             "input_dir",

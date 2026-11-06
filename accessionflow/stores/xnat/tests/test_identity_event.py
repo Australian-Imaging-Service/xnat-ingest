@@ -5,9 +5,9 @@ from unittest import mock
 import pytest
 
 from accessionflow.exceptions import SessionIdentityRefused
-from accessionflow.repositories.xnat.api.upload_api import upload
-from accessionflow.repositories.xnat.remotes import XnatLocalSessionListing
-from accessionflow.repositories.xnat.tests.test_upload_cache_invalidation import (
+from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.remotes import XnatLocalSessionListing
+from accessionflow.stores.xnat.tests.test_upload_cache_invalidation import (
     FakeRepo,
 )
 

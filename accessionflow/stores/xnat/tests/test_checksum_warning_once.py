@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from accessionflow.repositories.xnat import remotes
+from accessionflow.stores.xnat import remotes
 
 WARNING = "XNAT returns no file checksums; files are compared by name only"
 

@@ -12,16 +12,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from accessionflow.cli import attach_cmd
-from accessionflow.repositories.xnat.cli import upload_cmd
+from accessionflow.stores.xnat.cli import upload_cmd
 from conftest import show_cli_trace
 
 CLEAN_ENV = {
-    "XINGEST_REQUIRE_MANIFEST": None,
-    "XINGEST_STORE_CREDENTIALS": None,
-    "XINGEST_HOST": None,
-    "XINGEST_USER": None,
-    "XINGEST_PASS": None,
-    "XINGEST_LOOP": None,
+    "ACFLOW_REQUIRE_MANIFEST": None,
+    "ACFLOW_STORE_CREDENTIALS": None,
+    "ACFLOW_HOST": None,
+    "ACFLOW_USER": None,
+    "ACFLOW_PASS": None,
+    "ACFLOW_LOOP": None,
 }
 
 
@@ -46,8 +46,8 @@ def test_upload_passes_require_manifest(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
@@ -55,7 +55,7 @@ def test_upload_passes_require_manifest(
             upload_cmd,
             ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
             + flags,
-            env={**CLEAN_ENV, "XINGEST_REQUIRE_MANIFEST": env_value},
+            env={**CLEAN_ENV, "ACFLOW_REQUIRE_MANIFEST": env_value},
         )
     assert result.exit_code == 0, show_cli_trace(result)
     assert mock_upload.call_args.kwargs["require_manifest"] is expected
@@ -73,8 +73,8 @@ def test_upload_passes_no_uid_check(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
@@ -82,7 +82,7 @@ def test_upload_passes_no_uid_check(
             upload_cmd,
             ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
             + flags,
-            env={**CLEAN_ENV, "XINGEST_NO_UID_CHECK": env_value},
+            env={**CLEAN_ENV, "ACFLOW_NO_UID_CHECK": env_value},
         )
     assert result.exit_code == 0, show_cli_trace(result)
     assert mock_upload.call_args.kwargs["skip_uid_check"] is expected

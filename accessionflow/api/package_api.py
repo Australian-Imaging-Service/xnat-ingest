@@ -16,8 +16,8 @@ from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
 
 # The DICOM sample label follows XNAT's rule until packaging is configured by the
-# repository plugin
-from accessionflow.repositories.xnat.scan_types import (
+# store plugin
+from accessionflow.stores.xnat.scan_types import (
     xnat_resource_label_from_sop_class,
 )
 

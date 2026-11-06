@@ -13,13 +13,13 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 from accessionflow.helpers.remotes import list_session_dirs
 from accessionflow.model.acquisition import Acquisition
 from accessionflow.model.resource import Resource
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.remotes import (
     XnatSessionOnlyListing,
     _xnat_scan_class_from_session,
     get_xnat_resource,
     split_resource_by_modality,
 )
-from accessionflow.repositories.xnat.scan_types import (
+from accessionflow.stores.xnat.scan_types import (
     PRIMARY_SOP_CLASS_UIDS,
     SCAN_TYPE_BY_SOP_CLASS_UID,
     SOP_CLASS_UIDS_BY_SCAN_TYPE,

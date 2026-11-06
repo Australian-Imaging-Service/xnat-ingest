@@ -8,8 +8,8 @@ import pytest
 
 from accessionflow.exceptions import UnsupportedModalityError
 from accessionflow.model.accession import Accession
-from accessionflow.repositories.xnat.api import upload_api
-from accessionflow.repositories.xnat.remotes import get_xnat_session, xnat_session_type
+from accessionflow.stores.xnat.api import upload_api
+from accessionflow.stores.xnat.remotes import get_xnat_session, xnat_session_type
 
 
 class _XnatClass:

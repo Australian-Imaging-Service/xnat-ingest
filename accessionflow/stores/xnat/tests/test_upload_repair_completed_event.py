@@ -25,8 +25,8 @@ import pytest
 
 from accessionflow.exceptions import IncompleteCheckumsException
 from accessionflow.helpers.logging import JsonFormatter, logger
-from accessionflow.repositories.xnat.api import upload_api
-from accessionflow.repositories.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api import upload_api
+from accessionflow.stores.xnat.api.upload_api import upload
 
 EVENT = "xnat_repair_completed"
 UPLOADED = "Successfully uploaded all files in"

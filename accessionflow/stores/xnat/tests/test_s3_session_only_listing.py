@@ -8,8 +8,8 @@ from moto import mock_aws
 
 from accessionflow.helpers.arg_types import StoreCredentials
 from accessionflow.helpers.remotes import iterate_s3_sessions
-from accessionflow.repositories.xnat.api.upload_api import upload
-from accessionflow.repositories.xnat.remotes import (
+from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.remotes import (
     XnatS3SessionListing,
     XnatS3SessionOnlyListing,
 )
