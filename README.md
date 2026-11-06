@@ -1,8 +1,13 @@
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo-dark.png">
-  <img src="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo.png" alt="AccessionFlow" width="380">
-</picture>
+<p>
+  <br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo-dark.png">
+    <img src="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo.png" alt="AccessionFlow" width="520">
+  </picture>
+  <br>
+  <br>
+</p>
 
 [![CI/CD](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/accessionflow/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/accessionflow)
