@@ -166,8 +166,7 @@ def _deposit_resource(
     # Files of an earlier deposit that the resource no longer has
     prefix = resource.store_dir.rstrip("/") + "/"
     for path in fs.find(resource.store_dir):
-        relpath = path[len(prefix) :] if path.startswith(prefix) else None
-        if relpath is not None and relpath not in resource.checksums:
+        if path.startswith(prefix) and path[len(prefix) :] not in resource.checksums:
             fs.rm_file(path)
     write_atomically(
         fs, manifest_path, json.dumps(resource.manifest, indent=4).encode()

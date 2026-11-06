@@ -1,6 +1,5 @@
 import hashlib
 import json
-import logging
 import os
 import uuid
 from pathlib import Path
@@ -139,14 +138,21 @@ def test_deposit_depth_follows_levels(
 
 
 def test_deposit_again_skips_what_is_there(
-    tmp_path: Path, dest: str, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, dest: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     staged = _staged(tmp_path)
     assert store(staged, dest) == []
-    with caplog.at_level(logging.INFO, logger="accessionflow"):
-        assert store(staged, dest) == []
-    assert "is already in the store" in caplog.text
-    assert "Deposited" not in caplog.text
+    fs, _ = _fs(dest)
+    put_file = type(fs).put_file
+    copied: list[str] = []
+
+    def recording_put_file(self, lpath, rpath, *args, **kwargs):  # type: ignore[no-untyped-def]
+        copied.append(rpath)
+        return put_file(self, lpath, rpath, *args, **kwargs)
+
+    monkeypatch.setattr(type(fs), "put_file", recording_put_file)
+    assert store(staged, dest) == []
+    assert copied == []
 
 
 def test_interrupted_deposit_is_finished(tmp_path: Path, dest: str) -> None:
