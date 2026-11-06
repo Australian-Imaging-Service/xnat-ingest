@@ -62,7 +62,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 dev = ["pre-commit", "codespell", "ruff==0.16.2"]
 test = [
-    "pytest >=7.0",
+    "pytest >=8.1",  # consider_namespace_packages (pytest.ini)
     "pytest-env>=0.6.2",
     "pytest-cov>=2.12.1",
     "xnat4tests >=0.4.1",
