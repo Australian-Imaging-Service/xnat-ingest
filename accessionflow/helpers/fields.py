@@ -46,7 +46,7 @@ class Fields(Metadata):
                 logger.warning(
                     "Could not resolve XNAT field '%s' from '%s', skipping: %s",
                     field_name,
-                    spec.specifier,
+                    spec.expr,
                     e,
                 )
         self.update(extracted)

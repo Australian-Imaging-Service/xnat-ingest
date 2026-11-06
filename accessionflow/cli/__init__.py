@@ -6,6 +6,7 @@ from .fields_cli import fields_cmd
 from .label_cli import label_group, make_label_command
 from .package_cli import package_cmd
 from .upload_cli import check_upload_group, upload_group
+from .workflow_cli import workflow
 
 __all__ = [
     "attach_cmd",
@@ -21,4 +22,5 @@ __all__ = [
     "repository_group",
     "RepositoryGroup",
     "upload_group",
+    "workflow",
 ]
