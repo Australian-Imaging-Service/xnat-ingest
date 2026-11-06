@@ -72,8 +72,8 @@ def test_upload_passes_no_uid_check(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("xnat_ingest.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("xnat_ingest.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
