@@ -18,7 +18,7 @@ label_group = data_store_group(
 sessions that have already been collated into acquisitions/resources""",
 )
 
-LABEL_HELP = """Labels sessions for a {title} data store with their {levels} labels,
+LABEL_HELP = """Labels sessions for {title} data stores with their {levels} labels,
 extracted from session metadata, after they have been collated into
 {acquisitions}/resources
 

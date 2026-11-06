@@ -510,6 +510,11 @@ def _is_timestamp(value: str) -> bool:
     return True
 
 
+def _labels_converter(labels: ty.Mapping[str, str]) -> dict[str, str]:
+    """A copy of the labels, so that the accession doesn't share a caller's dict"""
+    return dict(labels)
+
+
 @attrs.define(slots=False)
 class Accession:
     """Representation of an accession to be deposited in a data store, which is a set
@@ -531,7 +536,7 @@ class Accession:
     """
 
     uid: str
-    labels: dict[str, str] = attrs.field(factory=dict, converter=dict)
+    labels: dict[str, str] = attrs.field(factory=dict, converter=_labels_converter)
     store_type: str | None = None
     scans: ty.Dict[str, Acquisition] = attrs.field(
         factory=dict,

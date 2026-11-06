@@ -273,3 +273,93 @@ def test_former_fields_name_still_works(
     assert "'accessionflow fields' is deprecated" in result.output
     assert "'accessionflow select-fields' instead" in result.output
     select_fields.assert_called_once()
+
+
+@pytest.fixture
+def free_store_label(monkeypatch: pytest.MonkeyPatch):
+    """A 'label' subcommand for a store whose levels are named when labelling"""
+    import accessionflow.cli.label_cli as label_cli
+
+    label = MagicMock(return_value=[])
+    monkeypatch.setattr(label_cli, "label", label)
+    data_store = Store(
+        name="freestore",
+        title="Free",
+        labels=None,
+        acquisition=LabelLevel("acquisition", default="SeriesDescription"),
+    )
+    make_label_command(data_store)
+    yield label
+    del label_group.commands["freestore"]
+
+
+def test_label_levels_named_by_user(tmp_path: Path, free_store_label) -> None:
+    (tmp_path / "in").mkdir()
+    args = ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")]
+    result = CliRunner().invoke(
+        cli,
+        args
+        + [
+            "--level",
+            "site",
+            "SiteID",
+            "--level",
+            "subject",
+            "PatientID",
+            "--level",
+            "visit",
+            "{StudyDate:%Y%m%d}",
+            "--constant-label",
+            "site",
+            "SYD",
+        ],
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code == 0, result.output
+    kwargs = free_store_label.call_args.kwargs
+    assert list(kwargs["label_fields"].items()) == [
+        ("site", "SiteID"),
+        ("subject", "PatientID"),
+        ("visit", "{StudyDate:%Y%m%d}"),
+    ]
+    assert kwargs["constant_labels"] == {"site": "SYD"}
+    assert kwargs["acquisition_field"] == "SeriesDescription"
+    assert kwargs["store_type"] == "freestore"
+
+
+def test_label_levels_from_env(tmp_path: Path, free_store_label) -> None:
+    (tmp_path / "in").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")],
+        env=dict(CLEAN_ENV, ACFLOW_LEVELS="site SiteID subject PatientID"),
+    )
+    assert result.exit_code == 0, result.output
+    assert free_store_label.call_args.kwargs["label_fields"] == {
+        "site": "SiteID",
+        "subject": "PatientID",
+    }
+
+
+@pytest.mark.parametrize(
+    "extra,message",
+    [
+        ([], "--level"),
+        (["--level", "site", "A", "--level", "site", "B"], "repeated"),
+        (["--level", "acquisition", "A"], "repeated"),
+        (["--level", "site", "A", "--constant-label", "visit", "X"], "visit"),
+        (["--level", "not a name", "A"], "valid identifiers"),
+    ],
+)
+def test_label_levels_named_by_user_are_checked(
+    tmp_path: Path, free_store_label, extra: list[str], message: str
+) -> None:
+    (tmp_path / "in").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")] + extra,
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code != 0
+    assert message in result.output or message in str(result.exception)
+    free_store_label.assert_not_called()
