@@ -1,7 +1,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo-dark.png">
-  <img src="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo.png" alt="AccessionFlow" align="right" width="380">
+  <img src="https://raw.githubusercontent.com/Australian-Imaging-Service/accessionflow/main/docs/logo_dev/accessionflow-logo.png" alt="AccessionFlow" width="380">
 </picture>
 
 [![CI/CD](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml)
