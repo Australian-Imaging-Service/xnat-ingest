@@ -8,7 +8,7 @@
 
 
 Accessioning is the process of formally receiving material from a source and registering
-it in a managed collection (it doesn't require RIS accession numbers). AccessionFlow is a
+it in a managed collection. AccessionFlow is a
 collection of tools to accession data: collate it, label it, de-identify it and upload it
 to an XNAT repository. Support for various file types is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
