@@ -24,8 +24,8 @@ default), and collates files into a directory structure of
     $ accessionflow collate /data/incoming/*.dcm /data/staging/collated
 
 * ``INPUT_PATHS`` — one or more directories or glob patterns pointing at the raw files
-  (``XINGEST_INPUT_PATHS``)
-* ``OUTPUT_DIR`` — where collated sessions are written (``XINGEST_OUTPUT_DIR``)
+  (``ACFLOW_INPUT_PATHS``)
+* ``OUTPUT_DIR`` — where collated sessions are written (``ACFLOW_OUTPUT_DIR``)
 
 For DICOM collections, sessions are collated by ``StudyInstanceUID`` and
 scans by ``SeriesNumber`` by default. No defaults are provided for other formats.
@@ -175,12 +175,12 @@ storage area rather than copying them.
     $ accessionflow collate-orthanc http://localhost:8042 /var/lib/orthanc/db \
         /data/staging/collated orthanc-user orthanc-password
 
-* ``URL`` — the Orthanc REST endpoint (``XINGEST_ORTHANC_URL``)
+* ``URL`` — the Orthanc REST endpoint (``ACFLOW_ORTHANC_URL``)
 * ``STORE_DIR`` — Orthanc's ``StorageDirectory``, as seen from wherever the command
-  runs (``XINGEST_ORTHANC_STORE_DIR``)
+  runs (``ACFLOW_ORTHANC_STORE_DIR``)
 * ``OUTPUT_DIR`` — where collated sessions are written, same as for ``collate``
 * ``USER``/``PASSWORD`` — Orthanc credentials
-  (``XINGEST_ORTHANC_USER``/``XINGEST_ORTHANC_PASSWORD``)
+  (``ACFLOW_ORTHANC_USER``/``ACFLOW_ORTHANC_PASSWORD``)
 
 Because the files are hardlinked, ``STORE_DIR`` and ``OUTPUT_DIR`` must be on the
 same filesystem, and Orthanc's storage must be uncompressed. Compression is off by
@@ -207,10 +207,10 @@ Which studies are staged (and staged only once) is controlled through Orthanc
 
 * ``--to-process-label <label>`` — only studies carrying this label are considered.
   If unset, every study on the server is a candidate
-  (``XINGEST_ORTHANC_TO_PROCESS``)
+  (``ACFLOW_ORTHANC_TO_PROCESS``)
 * ``--processed-label <label>`` — applied to each study once it's been staged, and
   any study already carrying it is skipped on later runs
-  (``XINGEST_ORTHANC_PROCESSED``)
+  (``ACFLOW_ORTHANC_PROCESSED``)
 
 Removing the processed label from a study (e.g. through the Orthanc web UI) makes it
 eligible for re-staging. Note that ``--unlink-source`` is not yet implemented for
@@ -302,8 +302,8 @@ each one belongs to, from metadata fields, writing the result under
 
     $ accessionflow label xnat /data/staging/collated /data/staging/labelled
 
-* ``INPUT_DIR`` — the ``collate`` output directory (``XINGEST_INPUT_DIR``)
-* ``OUTPUT_DIR`` — where labelled sessions are written (``XINGEST_OUTPUT_DIR``)
+* ``INPUT_DIR`` — the ``collate`` output directory (``ACFLOW_INPUT_DIR``)
+* ``OUTPUT_DIR`` — where labelled sessions are written (``ACFLOW_OUTPUT_DIR``)
 
 The metadata fields used default to ``StudyComments`` (project), ``PatientID``
 (subject) and ``AccessionNumber`` (session). Override with ``--project``/
@@ -453,15 +453,15 @@ projects/subjects/sessions/scans/resources as needed.
         --user my-upload-user --password my-upload-password
 
 * ``STAGED`` — the ``label`` output directory, or an S3 bucket URI
-  (``XINGEST_STAGED``)
-* ``SERVER`` — the XNAT server address (``XINGEST_HOST``)
-* ``--user``/``--password`` — XNAT credentials (``XINGEST_USER``/``XINGEST_PASS``)
+  (``ACFLOW_STAGED``)
+* ``SERVER`` — the XNAT server address (``ACFLOW_HOST``)
+* ``--user``/``--password`` — XNAT credentials (``ACFLOW_USER``/``ACFLOW_PASS``)
 * ``--date <field>`` — when creating a session, set its date from the named
-  session metadata field (``XINGEST_DATE``). Repeated values must all resolve to
+  session metadata field (``ACFLOW_DATE``). Repeated values must all resolve to
   the same calendar date; existing XNAT sessions are not changed.
 
 Credentials are read from the environment if the flags are omitted, so on a shared
-node you'd typically set ``XINGEST_HOST``, ``XINGEST_USER`` and ``XINGEST_PASS`` once
+node you'd typically set ``ACFLOW_HOST``, ``ACFLOW_USER`` and ``ACFLOW_PASS`` once
 in the environment rather than passing them on every invocation.
 
 To attach session-level resources to an existing XNAT session, the staging directory
@@ -497,12 +497,12 @@ hidden from that UI by default. It is not secret storage.
 By default ``__uid__`` is the original session UID, which for DICOM is its
 ``StudyInstanceUID``, and de-identification keeps it, so it is stored on XNAT. To
 replace it with a keyed hash, give ``deidentify`` a private ``--hash-uid-key``
-(``XINGEST_HASH_UID_KEY``). The same UID and key always give the same hash, so don't
+(``ACFLOW_HASH_UID_KEY``). The same UID and key always give the same hash, so don't
 change the key. With ``--reid-dir``, both values are recorded in the re-identification
 metadata.
 
 Sessions already on XNAT hold their previous value, which a hashed UID won't match.
-While moving to hashed UIDs, pass ``--no-uid-check`` (``XINGEST_NO_UID_CHECK``) to
+While moving to hashed UIDs, pass ``--no-uid-check`` (``ACFLOW_NO_UID_CHECK``) to
 ``upload`` and ``check-upload``. This skips only the UID comparison: the subject is
 still checked where it is known, and the value on XNAT isn't changed, so these
 sessions will be refused again once the option is removed unless their values are

@@ -28,19 +28,19 @@ never find the real files:
         ".*/[^.]+\.[^.]+\.[^.]+\.(?P<id>\d+)\.[A-Z]+_(?P<resource>[^.]+).*"
 
 * ``INPUT_DIR`` — the directory of sessions to attach files into, from whichever
-  stage you're running this after (``XINGEST_INPUT_DIR``)
+  stage you're running this after (``ACFLOW_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where sessions are written with the attached files attached
-  (``XINGEST_OUTPUT_DIR``)
+  (``ACFLOW_OUTPUT_DIR``)
 * ``DATATYPE`` — the format of the files being linked in, as one or more
-  ``|``-separated MIME-like identifiers (``XINGEST_DATATYPE``) — multiple formats can
+  ``|``-separated MIME-like identifiers (``ACFLOW_DATATYPE``) — multiple formats can
   be matched by a single call, as in the example above
 * ``GLOB`` — a glob pattern used to find the files, with ``{field}`` placeholders
   filled in from the session's own metadata (e.g. ``{PatientName.family_name}``)
-  (``XINGEST_GLOB``). A relative pattern is resolved against the directory the primary
+  (``ACFLOW_GLOB``). A relative pattern is resolved against the directory the primary
   DICOMs came from; an absolute one (as above) searches a separate location entirely,
   ignoring where the DICOMs live
 * ``ID_PATTERN`` — a regular expression matched against each found file's path
-  (``XINGEST_ID_PATTERN``), with named groups ``id`` (the scan ID to attach it to) and
+  (``ACFLOW_ID_PATTERN``), with named groups ``id`` (the scan ID to attach it to) and
   ``resource`` (the resource name to file it under), and optionally ``type`` (the scan
   type/description, which otherwise defaults to the scan ID)
 

@@ -77,7 +77,7 @@ result = runner.invoke(
         f"{WORK_DIR}/input/Dermoscopy/LesionDermoscopyData_20260805155613.csv",
         "fileset[image/png|image/jpeg]",
         'ImagePath==HYPERLINK("{subject_uid}/{filename}")',
-    ],  # XINGEST_DIR
+    ],  # ACFLOW_DIR
     catch_exceptions=False,
 )
 

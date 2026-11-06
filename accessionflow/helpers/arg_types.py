@@ -651,7 +651,7 @@ class SemicolonListType(click.types.StringParamType):
     stripped and empty entries dropped.
 
     This keeps ``--allow-unrecognised`` / ``--exclude-path`` consistent with the other
-    list-valued ``XINGEST_*`` env vars and lets an individual value (e.g. a glob with a
+    list-valued ``ACFLOW_*`` env vars and lets an individual value (e.g. a glob with a
     space in a path component) contain whitespace."""
 
     name = "text"

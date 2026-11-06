@@ -16,12 +16,12 @@ result = runner.invoke(
     [
         f"{WORK_DIR}/RAW-DATA-EXPORT/VENTURE_P001_Galligas_Post-RT",
         f"{WORK_DIR}/TEST-STAGED",
-    ],  # XINGEST_DIR
+    ],  # ACFLOW_DIR
     env={
-        "XINGEST_ADDITIONAL_LOGGERS": "fileformats.",
-        "XINGEST_AWS_BUCKET": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING",
-        "XINGEST_COPY_MODE": "hardlink_or_copy",
-        "XINGEST_DATATYPES": (
+        "ACFLOW_ADDITIONAL_LOGGERS": "fileformats.",
+        "ACFLOW_AWS_BUCKET": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING",
+        "ACFLOW_COPY_MODE": "hardlink_or_copy",
+        "ACFLOW_DATATYPES": (
             "medimage/dicom-series;"
             "medimage/vnd.siemens.syngo-mi.vr20b.count-rate;"
             "medimage/vnd.siemens.syngo-mi.vr20b.list-mode;"
@@ -32,30 +32,30 @@ result = runner.invoke(
             "medimage/vnd.siemens.syngo-mi.vr20b.ct-spl;"
             "medimage/vnd.siemens.syngo-mi.vr20b.physio"
         ),
-        "XINGEST_DEIDENTIFIED_DIR_NAME": "DEIDENTIFIED",
-        "XINGEST_DEIDENTIFY": "0",
-        "XINGEST_DELETE": "0",
-        "XINGEST_INVALID_DIR_NAME": "INVALID",
-        "XINGEST_LOGGERS": f"stream,info,stdout;file,debug,{WORK_DIR}/xnat-ingest-test-stage.log",
-        "XINGEST_PRE_STAGE_DIR_NAME": "PRE-STAGE",
-        "XINGEST_PROJECT": "PatientComments",
-        "XINGEST_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
-        "XINGEST_SCAN_DESC": "SeriesDescription",
-        "XINGEST_SCAN_ID": "SeriesNumber",
-        "XINGEST_SPACES_TO_UNDERSCORES": "0",
-        "XINGEST_STAGED_DIR_NAME": "STAGED",
-        "XINGEST_SUBJECT": "PatientID",
-        "XINGEST_VISIT": "AccessionNumber",
-        "XINGEST_WORK_DIR": "/Users/tclo7153/Data/TBP/XNAT-INGEST-WORK",
-        # "XINGEST_DICOMS_PATH": "/vol/vmhost/kubernetes/<path>/<to>/<dicom>/<store>/**/*.IMA",
-        # "XINGEST_DIR": "/vol/vmhost/usyd-data-export/STAGING",
-        # "XINGEST_PROJECT": "ProtocolName",
-        # "XINGEST_SUBJECT": "PatientID",
-        # "XINGEST_VISIT": "AccessionNumber",
-        # "XINGEST_ASSOCIATED": "/vol/vmhost/usyd-data-export/RAW-DATA-EXPORT/{PatientName.family_name}_{PatientName.given_name}/.ptd","./[^\\.]+.[^\\.]+.[^\\.]+.(?P\\d+).[A-Z]+_(?P[^\\.]+).",
-        # "XINGEST_DELETE": "0",
-        # "XINGEST_LOGFILE": "<somewhere-sensible>,INFO",
-        # "XINGEST_DEIDENTIFY": "1",
+        "ACFLOW_DEIDENTIFIED_DIR_NAME": "DEIDENTIFIED",
+        "ACFLOW_DEIDENTIFY": "0",
+        "ACFLOW_DELETE": "0",
+        "ACFLOW_INVALID_DIR_NAME": "INVALID",
+        "ACFLOW_LOGGERS": f"stream,info,stdout;file,debug,{WORK_DIR}/accessionflow-test-stage.log",
+        "ACFLOW_PRE_STAGE_DIR_NAME": "PRE-STAGE",
+        "ACFLOW_PROJECT": "PatientComments",
+        "ACFLOW_RESOURCE": "ImageType[2:],medimage/vnd.siemens.syngo-mi.vr20b.raw-data",
+        "ACFLOW_SCAN_DESC": "SeriesDescription",
+        "ACFLOW_SCAN_ID": "SeriesNumber",
+        "ACFLOW_SPACES_TO_UNDERSCORES": "0",
+        "ACFLOW_STAGED_DIR_NAME": "STAGED",
+        "ACFLOW_SUBJECT": "PatientID",
+        "ACFLOW_VISIT": "AccessionNumber",
+        "ACFLOW_WORK_DIR": "/Users/tclo7153/Data/TBP/XNAT-INGEST-WORK",
+        # "ACFLOW_DICOMS_PATH": "/vol/vmhost/kubernetes/<path>/<to>/<dicom>/<store>/**/*.IMA",
+        # "ACFLOW_DIR": "/vol/vmhost/usyd-data-export/STAGING",
+        # "ACFLOW_PROJECT": "ProtocolName",
+        # "ACFLOW_SUBJECT": "PatientID",
+        # "ACFLOW_VISIT": "AccessionNumber",
+        # "ACFLOW_ASSOCIATED": "/vol/vmhost/usyd-data-export/RAW-DATA-EXPORT/{PatientName.family_name}_{PatientName.given_name}/.ptd","./[^\\.]+.[^\\.]+.[^\\.]+.(?P\\d+).[A-Z]+_(?P[^\\.]+).",
+        # "ACFLOW_DELETE": "0",
+        # "ACFLOW_LOGFILE": "<somewhere-sensible>,INFO",
+        # "ACFLOW_DEIDENTIFY": "1",
     },
     catch_exceptions=False,
 )

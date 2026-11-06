@@ -10,7 +10,7 @@ result = runner.invoke(
     transfer,
     [],
     env={
-        "XINGEST_DIR": "/Users/tclose/Data/testing/staging-test/",
+        "ACFLOW_DIR": "/Users/tclose/Data/testing/staging-test/",
         "XNAT_INGEST_TRANSFER_LOGFILE": "/Users/tclose/Desktop/test-log.log,INFO",
         "XNAT_INGEST_TRANSFER_DELETE": "0",
     },

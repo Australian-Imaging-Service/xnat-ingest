@@ -128,7 +128,7 @@ def collate(
         If True, the input paths will be searched recursively for files to stage. If False, only the files directly within the
         input paths will be considered for staging.
     metadata_tables: list[MetadataTable] | None
-        Specify metadata tables to extract and join metadata from input files (XINGEST_METADATA_TABLES env. var).
+        Specify metadata tables to extract and join metadata from input files (ACFLOW_METADATA_TABLES env. var).
         The 'path' arg specifies the location of the metadata table file. Its format is auto-detected as CSV or
         TSV from the file extension; a different format can be forced by appending its mime-type in square
         brackets, e.g. 'path/to/table.dat[text/csv]'.

@@ -55,32 +55,32 @@ are uploaded to XNAT
 @click.argument(
     "input_dir",
     type=click.Path(path_type=Path, exists=True),
-    envvar="XINGEST_INPUT_DIR",
+    envvar="ACFLOW_INPUT_DIR",
 )
 @click.argument(
-    "output_dir", type=click.Path(path_type=Path), envvar="XINGEST_OUTPUT_DIR"
+    "output_dir", type=click.Path(path_type=Path), envvar="ACFLOW_OUTPUT_DIR"
 )
-@click.argument("datatype", type=str, envvar="XINGEST_DATATYPE")
-@click.argument("glob", type=str, envvar="XINGEST_GLOB")
-@click.argument("id_pattern", type=str, envvar="XINGEST_ID_PATTERN")
+@click.argument("datatype", type=str, envvar="ACFLOW_DATATYPE")
+@click.argument("glob", type=str, envvar="ACFLOW_GLOB")
+@click.argument("id_pattern", type=str, envvar="ACFLOW_ID_PATTERN")
 @click.option(
     "--copy-mode",
     type=CopyModeParamType(),
     default=FileSet.CopyMode.hardlink_or_copy,
-    envvar="XINGEST_COPY_MODE",
-    help="The method to use for copying files (XINGEST_COPY_MODE env. var)",
+    envvar="ACFLOW_COPY_MODE",
+    help="The method to use for copying files (ACFLOW_COPY_MODE env. var)",
 )
 @click.option(
     "--unlink-source",
     type=click.Choice(["all", "keep-metadata"]),
     default=None,
-    envvar="XINGEST_UNLINK_SOURCE",
+    envvar="ACFLOW_UNLINK_SOURCE",
     help=(
         "Whether to unlink the source files matched by GLOB after they have been "
         "attached. 'all' and 'keep-metadata' behave the same here (individual "
         "source files are removed one by one), since these files live at an "
         "arbitrary external location rather than a directory tree accessionflow "
-        "owns. If not set, the source files are left in place (XINGEST_UNLINK_SOURCE env. var)"
+        "owns. If not set, the source files are left in place (ACFLOW_UNLINK_SOURCE env. var)"
     ),
 )
 @click.option(
@@ -88,13 +88,11 @@ are uploaded to XNAT
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=(),
     metavar="<logtype> <loglevel> <location>",
-    help=(
-        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
-    ),
+    help=("Setup handles to capture logs that are generated (ACFLOW_LOGGERS env. var)"),
 )
 @click.option(
     "--additional-logger",
@@ -102,11 +100,11 @@ are uploaded to XNAT
     type=str,
     multiple=True,
     default=(),
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)"
+        "specified here (ACFLOW_ADDITIONAL_LOGGERS env. var)"
     ),
 )
 @click.option(
@@ -118,25 +116,25 @@ are uploaded to XNAT
 @click.option(
     "--spaces-to-underscores/--no-spaces-to-underscores",
     default=False,
-    help="Whether to replace spaces with underscores in the filenames of attached files (XINGEST_SPACES_TO_UNDERSCORES env. var)",
-    envvar="XINGEST_SPACES_TO_UNDERSCORES",
+    help="Whether to replace spaces with underscores in the filenames of attached files (ACFLOW_SPACES_TO_UNDERSCORES env. var)",
+    envvar="ACFLOW_SPACES_TO_UNDERSCORES",
     type=bool,
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    envvar="ACFLOW_LOOP",
+    help="Run the staging process continuously every LOOP seconds (ACFLOW_LOOP env. var). ",
 )
 @click.option(
     "--on-resource-clash",
     type=click.Choice(ON_RESOURCE_CLASH),
     default="error",
-    envvar="XINGEST_ON_RESOURCE_CLASH",
+    envvar="ACFLOW_ON_RESOURCE_CLASH",
     help=(
         "Determines the behavior when a resource with the same name already exists in the scan. "
-        "Options are 'merge', 'avoid', 'error' (XINGEST_ON_RESOURCE_CLASH env. var)"
+        "Options are 'merge', 'avoid', 'error' (ACFLOW_ON_RESOURCE_CLASH env. var)"
         "Default: 'error'"
     ),
 )
@@ -144,14 +142,14 @@ are uploaded to XNAT
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XINGEST_TEMPDIR",
+    envvar="ACFLOW_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
     # True, as in attach(). None was read as "not required".
     default=True,
-    envvar="XINGEST_REQUIRE_MANIFEST",
+    envvar="ACFLOW_REQUIRE_MANIFEST",
     help=(
         "Whether to require manifest files in the staged resources or not "
         "(default: required)"

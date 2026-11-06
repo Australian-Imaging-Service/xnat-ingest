@@ -33,38 +33,36 @@ STAGED is either a directory that the files for each session are collated to bef
 are uploaded to XNAT or an S3 bucket to download the files from.
 
 SERVER is address of the XNAT server to upload the scans up to. Can alternatively provided
-by setting the "XINGEST_HOST" environment variable.
+by setting the "ACFLOW_HOST" environment variable.
 """,
 )
-@click.argument("staged", type=str, envvar="XINGEST_STAGED")
-@click.argument("server", type=str, envvar="XINGEST_HOST")
+@click.argument("staged", type=str, envvar="ACFLOW_STAGED")
+@click.argument("server", type=str, envvar="ACFLOW_HOST")
 @click.option(
     "--user",
     type=str,
-    envvar="XINGEST_USER",
+    envvar="ACFLOW_USER",
     help=(
-        'the XNAT user to connect with (alternatively the "XINGEST_USER" env. variable can be used.'
+        'the XNAT user to connect with (alternatively the "ACFLOW_USER" env. variable can be used.'
     ),
 )
 @click.option(
     "--password",
     default=None,
     type=str,
-    envvar="XINGEST_PASS",
-    help='the password for the XNAT user, alternatively "XINGEST_PASS" env. var',
+    envvar="ACFLOW_PASS",
+    help='the password for the XNAT user, alternatively "ACFLOW_PASS" env. var',
 )
 @click.option(
     "--logger",
     "loggers",
     multiple=True,
     type=LoggerConfig.cli_type,
-    envvar="XINGEST_LOGGERS",
+    envvar="ACFLOW_LOGGERS",
     nargs=3,
     default=[],
     metavar="<logtype> <loglevel> <location>",
-    help=(
-        "Setup handles to capture logs that are generated (XINGEST_LOGGERS env. var)"
-    ),
+    help=("Setup handles to capture logs that are generated (ACFLOW_LOGGERS env. var)"),
 )
 @click.option(
     "--additional-logger",
@@ -72,11 +70,11 @@ by setting the "XINGEST_HOST" environment variable.
     type=str,
     multiple=True,
     default=[],
-    envvar="XINGEST_ADDITIONAL_LOGGERS",
+    envvar="ACFLOW_ADDITIONAL_LOGGERS",
     help=(
         "The loggers to use for logging. By default just the 'accessionflow' logger is used. "
         "But additional loggers can be included (e.g. 'xnat') can be "
-        "specified here (XINGEST_ADDITIONAL_LOGGERS env. var)."
+        "specified here (ACFLOW_ADDITIONAL_LOGGERS env. var)."
     ),
 )
 @click.option(
@@ -85,13 +83,13 @@ by setting the "XINGEST_HOST" environment variable.
     default=["all"],
     type=str,
     multiple=True,
-    envvar="XINGEST_ALWAYSINCLUDE",
+    envvar="ACFLOW_ALWAYSINCLUDE",
     help=(
         "Scan types to always include in the upload, regardless of whether they are"
         "specified in a column or not. Specified using the scan types IANA mime-type or "
         'fileformats "mime-like" (see https://arcanaframework.github.io/fileformats/), '
         "e.g. 'application/json', 'medimage/dicom-series', "
-        "'image/jpeg'). Use 'all' to include all file-types in the session (XINGEST_ALWAYSINCLUDE "
+        "'image/jpeg'). Use 'all' to include all file-types in the session (ACFLOW_ALWAYSINCLUDE "
         "env. var)."
     ),
 )
@@ -100,11 +98,11 @@ by setting the "XINGEST_HOST" environment variable.
     "date_field",
     type=str,
     default=None,
-    envvar="XINGEST_DATE",
+    envvar="ACFLOW_DATE",
     help=(
         "Session metadata field to use as the XNAT session date when creating a "
         "session. The value must resolve to one calendar date "
-        "(XINGEST_DATE env. var)."
+        "(ACFLOW_DATE env. var)."
     ),
 )
 @click.option(
@@ -117,19 +115,19 @@ by setting the "XINGEST_HOST" environment variable.
     "--store-credentials",
     type=StoreCredentials.cli_type,
     metavar="<access-key> <secret-key>",
-    envvar="XINGEST_STORE_CREDENTIALS",
+    envvar="ACFLOW_STORE_CREDENTIALS",
     default=None,
     nargs=2,
     help=(
         "Credentials to use to access of data stored in remote stores (e.g. AWS S3) "
-        "(XINGEST_STORE_CREDENTIALS env. var)"
+        "(ACFLOW_STORE_CREDENTIALS env. var)"
     ),
 )
 @click.option(
     "--temp-dir",
     type=Path,
     default=None,
-    envvar="XINGEST_TEMPDIR",
+    envvar="ACFLOW_TEMPDIR",
     help="The directory to use for temporary downloads (i.e. from s3)",
 )
 @click.option(
@@ -137,7 +135,7 @@ by setting the "XINGEST_HOST" environment variable.
     type=click.IntRange(min=1),
     default=DEFAULT_MAX_WORKERS,
     show_default=True,
-    envvar="XINGEST_S3_MAX_WORKERS",
+    envvar="ACFLOW_S3_MAX_WORKERS",
     help="Maximum concurrent S3 object downloads.",
 )
 @click.option(
@@ -145,7 +143,7 @@ by setting the "XINGEST_HOST" environment variable.
     type=click.IntRange(min=1),
     default=DEFAULT_MAX_WORKERS,
     show_default=True,
-    envvar="XINGEST_XNAT_MAX_WORKERS",
+    envvar="ACFLOW_XNAT_MAX_WORKERS",
     help="Maximum concurrent XNAT resource uploads.",
 )
 @click.option(
@@ -153,7 +151,7 @@ by setting the "XINGEST_HOST" environment variable.
     # True, as in upload(). None was read as "not required", so a resource
     # without its manifest was uploaded as it was.
     default=True,
-    envvar="XINGEST_REQUIRE_MANIFEST",
+    envvar="ACFLOW_REQUIRE_MANIFEST",
     help=(
         "Whether to require manifest files in the staged resources or not "
         "(default: required)"
@@ -164,18 +162,18 @@ by setting the "XINGEST_HOST" environment variable.
     "--verify-ssl/--dont-verify-ssl",
     type=bool,
     default=True,
-    envvar="XINGEST_VERIFY_SSL",
+    envvar="ACFLOW_VERIFY_SSL",
     help="Whether to verify the SSL certificate of the XNAT server",
 )
 @click.option(
     "--use-curl-jsession/--dont-use-curl-jsession",
     type=bool,
     default=False,
-    envvar="XINGEST_USE_CURL_JSESSION",
+    envvar="ACFLOW_USE_CURL_JSESSION",
     help=(
         "Whether to use CURL to create a JSESSION token to authenticate with XNAT. This is "
         "used to work around a strange authentication issue when running within a Kubernetes "
-        "cluster and targeting the XNAT Tomcat directly (XINGEST_USE_CURL_JSESSION env. var)."
+        "cluster and targeting the XNAT Tomcat directly (ACFLOW_USE_CURL_JSESSION env. var)."
     ),
 )
 @click.option(
@@ -186,48 +184,48 @@ by setting the "XINGEST_HOST" environment variable.
     nargs=2,
     metavar="<method> <datatype>",
     default=[],
-    envvar="XINGEST_METHODS",
+    envvar="ACFLOW_METHODS",
     help=(
         "The methods to use to upload the file types to XNAT with. Passed through to XNATPy and controls "
         "whether directories are tarred and/or gzipped before they are uploaded, by default "
-        "'tgz_file' is used (XINGEST_METHODS env. var)."
+        "'tgz_file' is used (ACFLOW_METHODS env. var)."
     ),
 )
 @click.option(
     "--wait-period",
     type=int,
     default=0,
-    envvar="XINGEST_WAIT_PERIOD",
+    envvar="ACFLOW_WAIT_PERIOD",
     help=(
         "The number of seconds to wait since the last file modification in sessions "
         "in the S3 bucket or source file-system directory before uploading them to "
-        "avoid uploading partial sessions (XINGEST_WAIT_PERIOD env. var)."
+        "avoid uploading partial sessions (ACFLOW_WAIT_PERIOD env. var)."
     ),
 )
 @click.option(
     "--loop",
     type=int,
     default=-1,
-    envvar="XINGEST_LOOP",
-    help="Run the staging process continuously every LOOP seconds (XINGEST_LOOP env. var). ",
+    envvar="ACFLOW_LOOP",
+    help="Run the staging process continuously every LOOP seconds (ACFLOW_LOOP env. var). ",
 )
 @click.option(
     "--num-files-per-batch",
     type=int,
     default=0,
-    envvar="XINGEST_NUM_FILES_PER_BATCH",
+    envvar="ACFLOW_NUM_FILES_PER_BATCH",
     help=(
         "When uploading files to XNAT, the number of files to upload in each batch. "
         "The number of files that are uploaded in a single batch can be limited to "
         "avoid overloading the building of the catalog file. If <= 0 (the default), "
-        "then all files are uploaded in a single batch (XINGEST_NUM_FILES_PER_BATCH env. var)."
+        "then all files are uploaded in a single batch (ACFLOW_NUM_FILES_PER_BATCH env. var)."
     ),
 )
 @click.option(
     "--check-checksums/--dont-check-checksums",
     type=bool,
     default=True,
-    envvar="XINGEST_CHECK_CHECKSUMS",
+    envvar="ACFLOW_CHECK_CHECKSUMS",
     help=(
         "Whether to check the checksums of the files in the staged resources against the "
         "checksums of both the checksums saved in the manifests and verify after upload "
@@ -239,7 +237,7 @@ by setting the "XINGEST_HOST" environment variable.
     "--dry-run/--no-dry-run",
     type=bool,
     default=False,
-    envvar="XINGEST_DRY_RUN",
+    envvar="ACFLOW_DRY_RUN",
     help=(
         "List the sessions that will be uploaded instead of the actually uploading them"
     ),
@@ -248,23 +246,21 @@ by setting the "XINGEST_HOST" environment variable.
     "--modality",
     type=str,
     default=None,
-    envvar="XINGEST_MODALITY",
-    help=(
-        "Specify the modality of the sessions to upload (XINGEST_MODALITY env. var)."
-    ),
+    envvar="ACFLOW_MODALITY",
+    help=("Specify the modality of the sessions to upload (ACFLOW_MODALITY env. var)."),
 )
 @click.option(
     "--no-uid-check",
     "skip_uid_check",
     is_flag=True,
     default=False,
-    envvar="XINGEST_NO_UID_CHECK",
+    envvar="ACFLOW_NO_UID_CHECK",
     help=(
         "Don't compare a session's UID with the one recorded on an existing XNAT "
         "session. Only for the transition to hashed UIDs (see --hash-uid-key of the "
         "deidentify stage), as sessions already on XNAT hold their previous UID. The "
         "subject of the session is still checked, where it is known, and the UID on XNAT "
-        "isn't changed (XINGEST_NO_UID_CHECK env. var)"
+        "isn't changed (ACFLOW_NO_UID_CHECK env. var)"
     ),
 )
 def upload_cmd(

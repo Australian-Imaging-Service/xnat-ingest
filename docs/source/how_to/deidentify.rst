@@ -13,13 +13,13 @@ up a scan for a clinical follow-up).
     $ accessionflow deidentify /data/staging/labelled /data/staging/deidentified \
         /etc/accessionflow/deid-specs --reid-dir /data/staging/reid
 
-* ``INPUT_DIR`` — the ``label`` output directory (``XINGEST_INPUT_DIR``)
+* ``INPUT_DIR`` — the ``label`` output directory (``ACFLOW_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where deidentified sessions are written; point ``upload`` at this
-  directory instead of the ``label`` output (``XINGEST_OUTPUT_DIR``)
+  directory instead of the ``label`` output (``ACFLOW_OUTPUT_DIR``)
 * ``SPEC_DIR`` — the deidentification specs, one directory per project (see below)
-  (``XINGEST_SPEC_DIR``)
+  (``ACFLOW_SPEC_DIR``)
 * ``--reid-dir`` — optional; where the re-identification mappings are written, one
-  JSON file per session (``XINGEST_REID_DIR``). Omit it to discard the mapping rather
+  JSON file per session (``ACFLOW_REID_DIR``). Omit it to discard the mapping rather
   than persist it, which is the safer choice when holding an
   original\ ↔\ deidentified lookup on disk is itself a concern.
 

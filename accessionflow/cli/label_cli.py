@@ -42,7 +42,7 @@ def make_label_command(repository: Repository) -> click.Command:
     The command has an option for each of the repository's label levels, e.g.
     '--project', '--subject' and '--session' for XNAT, and one for its name for an
     acquisition, e.g. '--scan', each settable by an environment variable named after
-    it, e.g. 'XINGEST_PROJECT'.
+    it, e.g. 'ACFLOW_PROJECT'.
 
     Parameters
     ----------

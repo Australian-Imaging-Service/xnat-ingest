@@ -32,7 +32,7 @@ class LabelLevel:
     name : str
         the repository's name for the level, which names its command-line option
         (e.g. 'project' gives '--project') and environment variable
-        (e.g. 'XINGEST_PROJECT')
+        (e.g. 'ACFLOW_PROJECT')
     default : str, optional
         the metadata field, or a format string over several fields, that the label is
         extracted from by default
@@ -101,7 +101,7 @@ class Repository:
     labels: tuple[LabelLevel, ...] = attrs.field(validator=_check_labels)
     acquisition: LabelLevel | None = None
     multiple_resources: bool = True
-    envvar_prefix: str = "XINGEST_"
+    envvar_prefix: str = "ACFLOW_"
 
 
 def repository_plugins() -> list[str]:

@@ -59,8 +59,8 @@ a service sharing a named volume for the staging directories:
         image: ghcr.io/australian-imaging-service/xnat-ingest
         command: upload /staging/labelled xnat.example.org --loop 300
         environment:
-          XINGEST_USER: my-upload-user
-          XINGEST_PASS: my-upload-password
+          ACFLOW_USER: my-upload-user
+          ACFLOW_PASS: my-upload-password
         volumes:
           - staging:/staging
         restart: unless-stopped
@@ -74,7 +74,7 @@ Kubernetes
 The same shape maps onto a Kubernetes ``Deployment`` per stage (one replica each,
 ``restartPolicy: Always``), with the staging directories on a shared
 ``PersistentVolumeClaim`` mounted into each Pod, and connection details (XNAT host,
-user, password) injected via a ``ConfigMap``/``Secret`` as ``XINGEST_*`` environment
+user, password) injected via a ``ConfigMap``/``Secret`` as ``ACFLOW_*`` environment
 variables rather than passed as command-line flags. ``check-upload`` doesn't support
 ``--loop``, so it's a natural fit for a ``CronJob`` instead, run periodically to audit
 what has and hasn't made it to XNAT rather than as an always-on service.
