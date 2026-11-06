@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from importlib.resources import files
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,9 +11,8 @@ from fileformats.generic import Directory, File
 from fileformats.medimage import DicomSeries
 from fileformats.testing import MyFormat, MyFormatGz
 
-import accessionflow.specs as _specs_pkg
 from accessionflow.api.deidentify_api import (
-    DEFAULT_SPEC_DIR,
+    DEFAULT_RECIPE_DIR,
     deidentify,
     load_recipe_files,
 )
@@ -20,7 +20,7 @@ from accessionflow.helpers.metadata import Metadata
 from accessionflow.model.accession import Accession
 from accessionflow.model.acquisition import Acquisition
 
-SHIPPED_SPECS_DIR = Path(_specs_pkg.__path__[0])
+SHIPPED_RECIPES_DIR = Path(str(files("accessionflow.assets") / "deid_recipes"))
 
 PROJECT_ID = "PROJ"
 SUBJECT_ID = "SUBJ"
@@ -38,7 +38,7 @@ def dirs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     for d in [input_dir, output_dir, reid_dir]:
         d.mkdir(parents=True)
     _stage(input_dir, SESSION_NAME)
-    return input_dir, output_dir, SHIPPED_SPECS_DIR, reid_dir
+    return input_dir, output_dir, SHIPPED_RECIPES_DIR, reid_dir
 
 
 def _stage(input_dir: Path, name: str) -> Path:
@@ -70,14 +70,14 @@ def test_deidentify_deletes_source_dir_on_success_when_unlink_source_all(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """Remove recorded files, then their empty directories, after success."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
 
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             require_manifest=False,
             unlink_source="all",
@@ -91,7 +91,7 @@ def test_deidentify_discards_a_stale_build_from_a_crashed_run(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A new output must not include files from a failed earlier build."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
     (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
@@ -106,7 +106,7 @@ def test_deidentify_discards_a_stale_build_from_a_crashed_run(
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             require_manifest=False,
         )
@@ -125,7 +125,7 @@ def test_deidentify_does_not_skip_an_output_that_is_newer_but_short(
     so it would be skipped on this cycle and every cycle after it, permanently,
     while sitting in the directory upload reads.
     """
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     # an output that is NEWER than the input but missing its data
     stale = output_dir / SESSION_NAME
@@ -142,7 +142,7 @@ def test_deidentify_does_not_skip_an_output_that_is_newer_but_short(
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -160,7 +160,7 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
     bypasses the repair: Resource.save is what overwrites a bad output,
     and it only runs if the session is not skipped.
     """
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     calls: list = []
 
     def counting_deidentify(self, dest_dir, **kwargs):
@@ -171,7 +171,7 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
     assert len(calls) == 1
@@ -189,7 +189,7 @@ def test_deidentify_does_not_skip_a_corrupt_output_with_the_right_file_count(
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -200,7 +200,7 @@ def test_deidentify_processes_and_retires_a_backlog_session(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """Turning unlink-source on processes and retires the remaining input."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
 
     # first pass with no unlink: produces the output, leaves the input
@@ -208,7 +208,7 @@ def test_deidentify_processes_and_retires_a_backlog_session(
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
     assert session_dir.exists(), "nothing should have been unlinked yet"
@@ -219,7 +219,7 @@ def test_deidentify_processes_and_retires_a_backlog_session(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             unlink_source="all",
         )
@@ -235,7 +235,7 @@ def test_deidentify_processes_input_even_when_output_is_current(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """An existing output does not suppress processing of present input."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     calls: list = []
 
     def counting_deidentify(self, dest_dir, **kwargs):
@@ -247,7 +247,7 @@ def test_deidentify_processes_input_even_when_output_is_current(
             deidentify(
                 input_dir=input_dir,
                 output_dir=output_dir,
-                spec_dir=spec_dir,
+                recipe_dir=recipe_dir,
                 reid_dir=reid_dir,
             )
 
@@ -258,7 +258,7 @@ def test_deidentify_reports_a_session_with_no_data_files(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """An empty input directory without metadata is not a staged session."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     empty = input_dir / "PROJ.SUBJ.EMPTY"
     empty.mkdir()
 
@@ -266,7 +266,7 @@ def test_deidentify_reports_a_session_with_no_data_files(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -285,7 +285,7 @@ def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(
     under --loop it is re-examined every cycle. Reporting it would emit an error
     every interval for every session ever processed.
     """
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     skeleton = input_dir / "PROJ.SUBJ.SKEL"
     (skeleton / "2.scan").mkdir(parents=True)
     # what survives a keep-metadata unlink: the metadata, and no resource dirs
@@ -296,7 +296,7 @@ def test_deidentify_skips_a_metadata_only_skeleton_without_reporting_it(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -308,7 +308,7 @@ def test_deidentify_accepts_a_method_that_removes_files(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A method may deliberately omit files or resources from its output."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
     (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
@@ -317,7 +317,7 @@ def test_deidentify_accepts_a_method_that_removes_files(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             require_manifest=False,
             unlink_source="all",
@@ -330,7 +330,7 @@ def test_deidentify_accepts_a_method_that_removes_files(
 def test_deidentify_leaves_source_dir_when_unlink_source_none(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
     (session_dir / "2.scan" / "DICOM").mkdir(parents=True)
     (session_dir / "2.scan" / "DICOM" / "inst.dcm").write_text("data")
@@ -339,7 +339,7 @@ def test_deidentify_leaves_source_dir_when_unlink_source_none(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             require_manifest=False,
         )
@@ -349,13 +349,13 @@ def test_deidentify_leaves_source_dir_when_unlink_source_none(
 
 
 def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -371,13 +371,13 @@ def test_deidentify_plain_json(dirs: tuple[Path, Path, Path, Path]):
 def test_deidentify_no_reid_dir_discards_metadata(
     dirs: tuple[Path, Path, Path, Path],
 ) -> None:
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     with patch.object(Accession, "deidentify", _mock_deidentify):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
         )
 
     assert errors == []
@@ -390,7 +390,7 @@ def test_deidentify_encrypt_key_without_reid_dir_warns(
     dirs: tuple[Path, Path, Path, Path],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    input_dir, output_dir, spec_dir, _ = dirs
+    input_dir, output_dir, recipe_dir, _ = dirs
 
     with (
         patch.object(Accession, "deidentify", _mock_deidentify),
@@ -399,7 +399,7 @@ def test_deidentify_encrypt_key_without_reid_dir_warns(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_encrypt_key=Fernet.generate_key(),
         )
 
@@ -408,14 +408,14 @@ def test_deidentify_encrypt_key_without_reid_dir_warns(
 
 
 def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     key = Fernet.generate_key()
 
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             reid_encrypt_key=key,
         )
@@ -432,7 +432,7 @@ def test_deidentify_encrypted(dirs: tuple[Path, Path, Path, Path]) -> None:
 
 
 def test_deidentify_wrong_key_fails(dirs: tuple[Path, Path, Path, Path]):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     encrypt_key = Fernet.generate_key()
     wrong_key = Fernet.generate_key()
 
@@ -440,7 +440,7 @@ def test_deidentify_wrong_key_fails(dirs: tuple[Path, Path, Path, Path]):
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             reid_encrypt_key=encrypt_key,
         )
@@ -451,7 +451,7 @@ def test_deidentify_wrong_key_fails(dirs: tuple[Path, Path, Path, Path]):
 
 
 def test_deidentify_error_collected(dirs: tuple[Path, Path, Path, Path]):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     def failing_deidentify(self, dest_dir, **kwargs):
         raise RuntimeError("simulated deidentification failure")
@@ -460,7 +460,7 @@ def test_deidentify_error_collected(dirs: tuple[Path, Path, Path, Path]):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -470,7 +470,7 @@ def test_deidentify_error_collected(dirs: tuple[Path, Path, Path, Path]):
 
 
 def test_deidentify_raise_errors(dirs: tuple[Path, Path, Path, Path]):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     def failing_deidentify(self, dest_dir, **kwargs):
         raise RuntimeError("simulated deidentification failure")
@@ -480,7 +480,7 @@ def test_deidentify_raise_errors(dirs: tuple[Path, Path, Path, Path]):
             deidentify(
                 input_dir=input_dir,
                 output_dir=output_dir,
-                spec_dir=spec_dir,
+                recipe_dir=recipe_dir,
                 reid_dir=reid_dir,
                 raise_errors=True,
             )
@@ -501,7 +501,7 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=SHIPPED_SPECS_DIR,
+            recipe_dir=SHIPPED_RECIPES_DIR,
             reid_dir=reid_dir,
         )
 
@@ -514,14 +514,14 @@ def test_deidentify_multiple_sessions(tmp_path: Path):
 
 def test_deidentify_missing_spec_collected(dirs, tmp_path):
     input_dir, output_dir, _, reid_dir = dirs
-    empty_spec_dir = tmp_path / "empty_specs"
-    empty_spec_dir.mkdir()
+    empty_recipe_dir = tmp_path / "empty_recipes"
+    empty_recipe_dir.mkdir()
 
     with patch.object(Accession, "deidentify", _mock_deidentify):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=empty_spec_dir,
+            recipe_dir=empty_recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -535,44 +535,44 @@ def test_load_recipe_files_nonexistent_dir_returns_none(tmp_path: Path) -> None:
     assert load_recipe_files(tmp_path / "nonexistent") is None
 
 
-def _write_spec(spec_dir: Path, mime_like: str, content: str = "{}") -> Path:
-    """Helper to create a spec file at spec_dir/<category>/<format>."""
+def _write_recipe(recipe_dir: Path, mime_like: str, content: str = "{}") -> Path:
+    """Helper to create a spec file at recipe_dir/<category>/<format>."""
     category, format_name = mime_like.split("/", 1)
-    (spec_dir / category).mkdir(parents=True, exist_ok=True)
-    spec_file = spec_dir / category / format_name
-    spec_file.write_text(content)
-    return spec_file
+    (recipe_dir / category).mkdir(parents=True, exist_ok=True)
+    recipe_file = recipe_dir / category / format_name
+    recipe_file.write_text(content)
+    return recipe_file
 
 
 def test_load_recipe_files_empty_dir_returns_empty_dict(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    assert load_recipe_files(spec_dir) == {}
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    assert load_recipe_files(recipe_dir) == {}
 
 
 def test_load_recipe_files_ignores_non_category_files(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    (spec_dir / "README").write_text("docs")
-    (spec_dir / "config.json").write_text("{}")
-    assert load_recipe_files(spec_dir) == {}
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    (recipe_dir / "README").write_text("docs")
+    (recipe_dir / "config.json").write_text("{}")
+    assert load_recipe_files(recipe_dir) == {}
 
 
 def test_load_recipe_files_single_mime_like(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    spec_file = _write_spec(spec_dir, "medimage/dicom-series")
-    recipe_files = load_recipe_files(spec_dir)
-    assert recipe_files == {DicomSeries: spec_file}
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    recipe_file = _write_recipe(recipe_dir, "medimage/dicom-series")
+    recipe_files = load_recipe_files(recipe_dir)
+    assert recipe_files == {DicomSeries: recipe_file}
 
 
 def test_load_recipe_files_multiple_mime_likes(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    dcm_file = _write_spec(spec_dir, "medimage/dicom-series")
-    mf_file = _write_spec(spec_dir, "testing/my-format")
-    mfgz_file = _write_spec(spec_dir, "testing/my-format-gz")
-    recipe_files = load_recipe_files(spec_dir)
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    dcm_file = _write_recipe(recipe_dir, "medimage/dicom-series")
+    mf_file = _write_recipe(recipe_dir, "testing/my-format")
+    mfgz_file = _write_recipe(recipe_dir, "testing/my-format-gz")
+    recipe_files = load_recipe_files(recipe_dir)
     assert recipe_files == {
         DicomSeries: dcm_file,
         MyFormat: mf_file,
@@ -581,38 +581,38 @@ def test_load_recipe_files_multiple_mime_likes(tmp_path: Path) -> None:
 
 
 def test_load_recipe_files_mixed_files_only_picks_mime_names(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    spec_file = _write_spec(spec_dir, "medimage/dicom-series")
-    (spec_dir / "README").write_text("docs")
-    recipe_files = load_recipe_files(spec_dir)
-    assert recipe_files == {DicomSeries: spec_file}
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    recipe_file = _write_recipe(recipe_dir, "medimage/dicom-series")
+    (recipe_dir / "README").write_text("docs")
+    recipe_files = load_recipe_files(recipe_dir)
+    assert recipe_files == {DicomSeries: recipe_file}
 
 
 def test_load_recipe_files_skips_side_cars(tmp_path: Path) -> None:
     """Side-cars of the recipe, including ones whose stem resolves to the file type
     (e.g. "dicom-series.salt"), aren't treated as recipe files"""
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    spec_file = _write_spec(
-        spec_dir, "medimage/dicom-series.deid", "FORMAT dicom\n\n%header\n"
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    recipe_file = _write_recipe(
+        recipe_dir, "medimage/dicom-series.deid", "FORMAT dicom\n\n%header\n"
     )
-    (spec_dir / "medimage" / "dicom-series.transforms.yaml").write_text(
+    (recipe_dir / "medimage" / "dicom-series.transforms.yaml").write_text(
         'version: "0.1"\n'
     )
-    (spec_dir / "medimage" / "dicom-series.salt").write_bytes(b"key")
-    assert load_recipe_files(spec_dir) == {DicomSeries: spec_file}
+    (recipe_dir / "medimage" / "dicom-series.salt").write_bytes(b"key")
+    assert load_recipe_files(recipe_dir) == {DicomSeries: recipe_file}
 
 
 def test_load_recipe_files_multiple_recipes_raises(tmp_path: Path) -> None:
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    _write_spec(spec_dir, "medimage/dicom-series.deid", "FORMAT dicom\n")
-    _write_spec(spec_dir, "medimage/dicom-series.json", "FORMAT dicom\n")
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    _write_recipe(recipe_dir, "medimage/dicom-series.deid", "FORMAT dicom\n")
+    _write_recipe(recipe_dir, "medimage/dicom-series.json", "FORMAT dicom\n")
     with pytest.raises(
         ValueError, match="Expected exactly one deidentification recipe"
     ):
-        load_recipe_files(spec_dir)
+        load_recipe_files(recipe_dir)
 
 
 # ── deidentify fallback / error tests ────────────────────────────────────────
@@ -624,17 +624,17 @@ def test_deidentify_falls_back_to_default_when_no_project_spec(
 ) -> None:
     input_dir, output_dir, _, reid_dir = dirs
     # Provide only a default spec, no project-specific one
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    default_dir = spec_dir / DEFAULT_SPEC_DIR
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    default_dir = recipe_dir / DEFAULT_RECIPE_DIR
     default_dir.mkdir()
-    _write_spec(default_dir, "medimage/dicom-series")
+    _write_recipe(default_dir, "medimage/dicom-series")
 
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -648,14 +648,14 @@ def test_deidentify_uses_project_spec_over_default(
 ) -> None:
     input_dir, output_dir, _, reid_dir = dirs
     # Both project and default specs exist; project spec should be used
-    spec_dir = tmp_path / "specs"
-    spec_dir.mkdir()
-    default_dir = spec_dir / DEFAULT_SPEC_DIR
+    recipe_dir = tmp_path / "recipes"
+    recipe_dir.mkdir()
+    default_dir = recipe_dir / DEFAULT_RECIPE_DIR
     default_dir.mkdir()
-    _write_spec(default_dir, "medimage/dicom-series", '{"default": true}')
-    project_dir = spec_dir / PROJECT_ID
+    _write_recipe(default_dir, "medimage/dicom-series", '{"default": true}')
+    project_dir = recipe_dir / PROJECT_ID
     project_dir.mkdir()
-    project_spec_file = _write_spec(
+    project_spec_file = _write_recipe(
         project_dir, "medimage/dicom-series", '{"project": true}'
     )
 
@@ -670,7 +670,7 @@ def test_deidentify_uses_project_spec_over_default(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -687,7 +687,7 @@ def test_deidentify_passes_max_workers_through(
     """max_workers should be forwarded from deidentify_api.deidentify() to
     Accession.deidentify() unchanged.
     """
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     received_max_workers: list = []
 
@@ -702,7 +702,7 @@ def test_deidentify_passes_max_workers_through(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             max_workers=4,
         )
@@ -715,7 +715,7 @@ def test_deidentify_max_workers_defaults_to_none(
     dirs: tuple[Path, Path, Path, Path],
 ) -> None:
     """When not given explicitly, max_workers should be forwarded as None."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
 
     received_max_workers: list = []
 
@@ -730,7 +730,7 @@ def test_deidentify_max_workers_defaults_to_none(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
         )
 
@@ -783,7 +783,7 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     errors = deidentify(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_dir=SHIPPED_SPECS_DIR,
+        recipe_dir=SHIPPED_RECIPES_DIR,
         reid_dir=reid_dir,
     )
 
@@ -802,13 +802,13 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     assert reloaded.scans[scan_id].resources[resource_name].fileset.fspath.exists()
 
 
-def _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir):
+def _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir):
     """The arguments of a run that retires its input: no manifest required,
     the input unlinked once the output is complete."""
     return dict(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_dir=spec_dir,
+        recipe_dir=recipe_dir,
         reid_dir=reid_dir,
         require_manifest=False,
         unlink_source="all",
@@ -819,8 +819,8 @@ def test_deidentify_retires_a_late_scan_with_existing_output(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A one-scan late input succeeds alongside the earlier output scan."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -859,11 +859,11 @@ def test_deidentify_processes_a_late_scan_whose_output_is_current(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A retry processes the late scan and then removes its recorded input."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     kwargs = dict(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_dir=spec_dir,
+        recipe_dir=recipe_dir,
         reid_dir=reid_dir,
         require_manifest=False,
     )
@@ -893,8 +893,8 @@ def test_deidentify_accepts_removed_late_files_with_older_output(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A successful method may remove a late resource and retain older scans."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -919,8 +919,8 @@ def test_deidentify_does_not_gate_new_input_on_unrelated_old_checksums(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """Historical output corruption does not change the new run verdict."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -948,8 +948,8 @@ def test_deidentify_runs_for_new_files_of_a_scan_the_output_already_has(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """A new file in an existing scan is processed and saved."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -981,8 +981,8 @@ def test_deidentify_runs_for_another_resource_of_a_scan_the_output_already_has(
 ):
     """Same scan ID, another resource: not covered by the output, so the run
     happens and the input is retired only after it."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     Accession(
@@ -1008,9 +1008,9 @@ def test_deidentify_keeps_an_input_that_gained_files_during_the_run(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """Retire the recorded input and leave new paths for the next cycle."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     session_dir = input_dir / SESSION_NAME
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
 
     def passthrough_while_a_file_arrives(self, dest_dir, **kw):
         late = session_dir / "3.late" / "DICOM"
@@ -1039,8 +1039,8 @@ def test_deidentify_runs_again_for_a_copied_file_with_new_content(
     dirs: tuple[Path, Path, Path, Path], tmp_path: Path
 ):
     """Always process new input, including a reused name with changed bytes."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     output = output_dir / SESSION_NAME
@@ -1086,7 +1086,7 @@ def test_deidentify_saves_a_directory_resource(tmp_path: Path):
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=SHIPPED_SPECS_DIR,
+            recipe_dir=SHIPPED_RECIPES_DIR,
             reid_dir=None,
             require_manifest=False,
             unlink_source="all",
@@ -1112,7 +1112,7 @@ def test_deidentify_does_not_trust_a_stale_input_manifest(tmp_path: Path):
     kwargs = dict(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_dir=SHIPPED_SPECS_DIR,
+        recipe_dir=SHIPPED_RECIPES_DIR,
         reid_dir=None,
         require_manifest=False,
         unlink_source="all",
@@ -1150,8 +1150,8 @@ def test_deidentify_retires_recorded_session_files_after_success(
     dirs: tuple[Path, Path, Path, Path],
 ):
     """The all policy removes recorded files throughout the input session."""
-    input_dir, output_dir, spec_dir, reid_dir = dirs
-    kwargs = _retiring_kwargs(input_dir, output_dir, spec_dir, reid_dir)
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
+    kwargs = _retiring_kwargs(input_dir, output_dir, recipe_dir, reid_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert deidentify(**kwargs) == []
     _stage(input_dir, SESSION_NAME)
@@ -1169,7 +1169,7 @@ def test_deidentify_keeps_only_uid_in_output_metadata(
     dirs: tuple[Path, Path, Path, Path],
     existing_output: bool,
 ):
-    input_dir, output_dir, spec_dir, _ = dirs
+    input_dir, output_dir, recipe_dir, _ = dirs
     source_dir = input_dir / SESSION_NAME
     metadata_paths = [
         Path("__METADATA__.json"),
@@ -1192,7 +1192,7 @@ def test_deidentify_keeps_only_uid_in_output_metadata(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
         )
 
     assert errors == []
@@ -1222,7 +1222,7 @@ def _with_uid(session_dir: Path, uid: str) -> None:
 def test_deidentify_hashes_uid_and_records_it_for_reid(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    input_dir, output_dir, spec_dir, reid_dir = dirs
+    input_dir, output_dir, recipe_dir, reid_dir = dirs
     original = "1.2.840.original.study.uid"
     _with_uid(input_dir / SESSION_NAME, original)
 
@@ -1230,7 +1230,7 @@ def test_deidentify_hashes_uid_and_records_it_for_reid(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             hash_uid_key="site-secret",
         )
@@ -1253,14 +1253,14 @@ def test_deidentify_hashes_uid_and_records_it_for_reid(
 def test_deidentify_uid_hash_is_stable_and_depends_on_the_key(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    input_dir, output_dir, spec_dir, _ = dirs
+    input_dir, output_dir, recipe_dir, _ = dirs
     uids = []
     for key in ("key-a", "key-a", "key-b"):
         with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
             assert not deidentify(
                 input_dir=input_dir,
                 output_dir=output_dir,
-                spec_dir=spec_dir,
+                recipe_dir=recipe_dir,
                 hash_uid_key=key,
             )
         metadata = (output_dir / SESSION_NAME / "__METADATA__.json").read_text()
@@ -1272,23 +1272,23 @@ def test_deidentify_uid_hash_is_stable_and_depends_on_the_key(
 def test_deidentify_keeps_original_uid_without_a_key(
     dirs: tuple[Path, Path, Path, Path],
 ):
-    input_dir, output_dir, spec_dir, _ = dirs
+    input_dir, output_dir, recipe_dir, _ = dirs
     _with_uid(input_dir / SESSION_NAME, "original-uid")
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
         assert not deidentify(
-            input_dir=input_dir, output_dir=output_dir, spec_dir=spec_dir
+            input_dir=input_dir, output_dir=output_dir, recipe_dir=recipe_dir
         )
     metadata = (output_dir / SESSION_NAME / "__METADATA__.json").read_text()
     assert json.loads(metadata)["__uid__"] == "original-uid"
 
 
 def test_deidentify_refuses_an_empty_hash_key(dirs: tuple[Path, Path, Path, Path]):
-    input_dir, output_dir, spec_dir, _ = dirs
+    input_dir, output_dir, recipe_dir, _ = dirs
     with pytest.raises(ValueError, match="must not be empty"):
         deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             hash_uid_key="",
         )
 

@@ -2048,10 +2048,10 @@ def test_deidentify_cli_dicom(
 
     # 3. Project spec mapping DicomSeries to an empty spec dict
 
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    project_spec_dir.mkdir(parents=True)
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    project_recipe_dir.mkdir(parents=True)
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
     (medimage_dir / "dicom-series.transforms.yaml").write_text(
@@ -2070,7 +2070,7 @@ def test_deidentify_cli_dicom(
         [
             str(labelled_dir),
             str(output_dir),
-            str(spec_dir),
+            str(recipe_dir),
             "--reid-dir",
             str(reid_dir),
             "--raise-errors",
@@ -2149,9 +2149,9 @@ def test_deidentify_cli_dicom_missing_transform(
     assert result.exit_code == 0, show_cli_trace(result)
 
     # 4. Spec with var:anon_patient_name but NO transforms file
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir(parents=True)
     (medimage_dir / "dicom-series").write_text(SPEC_WITH_MISSING_VAR)
 
@@ -2163,7 +2163,7 @@ def test_deidentify_cli_dicom_missing_transform(
         [
             str(labelled_dir),
             str(output_dir),
-            str(spec_dir),
+            str(recipe_dir),
             "--reid-dir",
             str(reid_dir),
             "--raise-errors",
@@ -2223,10 +2223,10 @@ def test_deidentify_cli_dicom_encrypted_reid(
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    project_spec_dir.mkdir(parents=True)
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    project_recipe_dir.mkdir(parents=True)
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text("Dummy spec")
 
@@ -2258,7 +2258,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
             [
                 str(labelled_dir),
                 str(output_dir),
-                str(spec_dir),
+                str(recipe_dir),
                 "--reid-dir",
                 str(reid_dir),
                 "--raise-errors",
@@ -2306,10 +2306,10 @@ def test_deidentify_cmd_metadata_allowlist(
     monkeypatch.delenv("ACFLOW_METADATA_ALLOWLIST", raising=False)
 
     input_dir = tmp_path / "input"
-    spec_dir = tmp_path / "spec"
+    recipe_dir = tmp_path / "recipes"
     output_dir = tmp_path / "output"
     input_dir.mkdir()
-    spec_dir.mkdir()
+    recipe_dir.mkdir()
 
     with patch(
         "accessionflow.cli.deidentify_cli.deidentify",
@@ -2317,7 +2317,7 @@ def test_deidentify_cmd_metadata_allowlist(
     ) as mock_deidentify:
         result = cli_runner(
             deidentify_cmd,
-            [str(input_dir), str(output_dir), str(spec_dir), "--loop", "-1"],
+            [str(input_dir), str(output_dir), str(recipe_dir), "--loop", "-1"],
         )
 
     assert result.exit_code == 0, show_cli_trace(result)
@@ -2332,7 +2332,7 @@ def test_deidentify_cmd_metadata_allowlist(
             [
                 str(input_dir),
                 str(output_dir),
-                str(spec_dir),
+                str(recipe_dir),
                 "--loop",
                 "-1",
                 "--metadata-allowlist",

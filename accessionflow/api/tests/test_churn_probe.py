@@ -4,16 +4,16 @@ If mtimes advance on an unchanged session, the settle window on both upload
 paths can never be satisfied and the session is never uploaded.
 """
 
+from importlib.resources import files
 from pathlib import Path
 
 from fileformats.generic import File
 
-import accessionflow.specs as _specs_pkg
 from accessionflow.api.deidentify_api import deidentify
 from accessionflow.model.accession import Accession
 from accessionflow.model.acquisition import Acquisition
 
-SHIPPED = Path(_specs_pkg.__path__[0])
+SHIPPED = Path(str(files("accessionflow.assets") / "deid_recipes"))
 NAME = "PROJ.SUBJ.SESS"
 
 
@@ -38,13 +38,15 @@ def test_second_cycle_does_not_touch_output_mtimes(tmp_path: Path):
     ).save(inp)
 
     assert (
-        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+        deidentify(input_dir=inp, output_dir=out, recipe_dir=SHIPPED, reid_dir=reid)
+        == []
     )
     first = _mtimes(out / NAME)
     assert first, "no output produced"
 
     assert (
-        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+        deidentify(input_dir=inp, output_dir=out, recipe_dir=SHIPPED, reid_dir=reid)
+        == []
     )
     second = _mtimes(out / NAME)
 

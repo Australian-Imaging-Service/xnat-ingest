@@ -32,7 +32,7 @@ each scan.
 OUTPUT_DIR is the directory that the files for each session are collated to before they
 are uploaded to XNAT
 
-SPEC_DIR is the directory containing the project-specific deidentification specifications.
+RECIPE_DIR is the directory containing the deidentification recipes for each project.
 It should contain one subdirectory per project, named <project_id>, plus an optional
 "__default__" subdirectory used as a fallback for projects that don't have their own.
 Within each of these subdirectories, the directory structure mirrors the MIME-like
@@ -45,12 +45,12 @@ transforms spec in fileformats-medimage), and a '<format>.salt' file with a key 
 transforms can salt hashed values with (only readable by the user running the
 deidentification).
 Formats without a matching recipe file are only deidentified if one is found for a
-broader/parent format (e.g. a 'medimage/dicom-collection' spec also covers
+broader/parent format (e.g. a 'medimage/dicom-collection' recipe also covers
 'medimage/dicom-series').
 Metadata side-cars in the deidentified output retain only __uid__, where present.
 Other metadata fields are omitted; source metadata is unchanged. __uid__ holds the
-original session UID (by default the DICOM StudyInstanceUID) and is copied to XNAT by
-the upload stage, unless it is replaced with a keyed hash using --hash-uid-key.
+original session UID (by default the DICOM StudyInstanceUID) and is copied to the data
+store by the store stage, unless it is replaced with a keyed hash using --hash-uid-key.
 
 The re-identification metadata (a mapping from original to de-identified identifiers for
 each resource in the session, plus any DICOM tags modified during de-identification) is
@@ -66,9 +66,10 @@ only written if --reid-dir is given; see that option.
     "output_dir", type=click.Path(path_type=Path), envvar="ACFLOW_OUTPUT_DIR"
 )
 @click.argument(
-    "spec_dir",
+    "recipe_dir",
     type=click.Path(path_type=Path, exists=True),
-    envvar="ACFLOW_SPEC_DIR",
+    # ACFLOW_SPEC_DIR is the variable's name before the directory was renamed
+    envvar=["ACFLOW_RECIPE_DIR", "ACFLOW_SPEC_DIR"],
 )
 @click.option(
     "--reid-dir",
@@ -207,7 +208,7 @@ only written if --reid-dir is given; see that option.
 def deidentify_cmd(
     input_dir: Path,
     output_dir: Path,
-    spec_dir: Path,
+    recipe_dir: Path,
     reid_dir: Path | None,
     loggers: ty.List[LoggerConfig],
     additional_loggers: ty.List[str],
@@ -244,7 +245,7 @@ def deidentify_cmd(
         errors = deidentify(
             input_dir=input_dir,
             output_dir=output_dir,
-            spec_dir=spec_dir,
+            recipe_dir=recipe_dir,
             reid_dir=reid_dir,
             on_resource_clash=on_resource_clash,
             raise_errors=raise_errors,

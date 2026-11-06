@@ -20,7 +20,7 @@ from accessionflow.model.accession import Accession, recipe_formats_for
 
 from .collate_api import BUILD_NAME_DEFAULT
 
-DEFAULT_SPEC_DIR = "__default__"
+DEFAULT_RECIPE_DIR = "__default__"
 
 
 def _hash_uid(uid: str, key: str) -> str:
@@ -32,7 +32,7 @@ def _hash_uid(uid: str, key: str) -> str:
 def deidentify(
     input_dir: Path,
     output_dir: Path,
-    spec_dir: Path,
+    recipe_dir: Path,
     reid_dir: Path | None = None,
     on_resource_clash: OnResourceClash = "error",
     raise_errors: bool = False,
@@ -90,7 +90,7 @@ def deidentify(
     errors: list[str] = []
     n_skeletons = 0
 
-    default_loaded = load_recipe_files(spec_dir / DEFAULT_SPEC_DIR)
+    default_loaded = load_recipe_files(recipe_dir / DEFAULT_RECIPE_DIR)
 
     for session_listing in tqdm(
         sessions,
@@ -121,7 +121,7 @@ def deidentify(
                         f"Session '{session_listing.session_id}' contains no data "
                         "files and no session metadata, so there is nothing to deidentify"
                     )
-                loaded = load_recipe_files(spec_dir / session.project_id)
+                loaded = load_recipe_files(recipe_dir / session.project_id)
                 if loaded is None or not any(loaded):
                     if default_loaded is None or not any(default_loaded):
                         raise ValueError(
@@ -225,14 +225,14 @@ def deidentify(
 
 
 def load_recipe_files(
-    spec_dir: Path,
+    recipe_dir: Path,
 ) -> ty.Mapping[type[MedicalImagingData], Path] | None:
     """Loads the deidentification recipe files from the given directory, returning a
     mapping of file-formats to their corresponding recipe file paths.
 
     The directory structure mirrors the MIME-like hierarchy of the file formats::
 
-        spec_dir/
+        recipe_dir/
         └── <category>/          # e.g. "medimage"
             ├── <format>         # recipe file, e.g. "dicom-series" (any extension or none)
             └── <format>.<side-car-ext>  # optional side-cars of the recipe format
@@ -245,7 +245,7 @@ def load_recipe_files(
 
     Parameters
     ----------
-    spec_dir : Path
+    recipe_dir : Path
         the directory containing the deidentification recipe files
 
     Returns
@@ -254,10 +254,10 @@ def load_recipe_files(
         maps file-format types to their corresponding recipe file paths, or None if
         the spec directory does not exist.
     """
-    if not spec_dir.exists():
+    if not recipe_dir.exists():
         return None
     candidates: dict[type[MedicalImagingData], list[Path]] = {}
-    for category_dir in spec_dir.iterdir():
+    for category_dir in recipe_dir.iterdir():
         if not category_dir.is_dir() or category_dir.name.startswith((".", "_")):
             continue
         for p in category_dir.iterdir():
@@ -280,7 +280,7 @@ def load_recipe_files(
         if len(paths) != 1:
             raise ValueError(
                 f"Expected exactly one deidentification recipe file for {filetype} in "
-                f"{spec_dir}, found {[p.name for p in candidates[filetype]]}"
+                f"{recipe_dir}, found {[p.name for p in candidates[filetype]]}"
             )
         recipe_files[filetype] = paths[0]
     return recipe_files

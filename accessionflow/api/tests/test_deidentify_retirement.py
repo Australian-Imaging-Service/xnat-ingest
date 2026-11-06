@@ -11,7 +11,7 @@ from accessionflow.helpers.metadata import Metadata
 from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
 
-from .test_deidentify import SESSION_NAME, SHIPPED_SPECS_DIR, _stage
+from .test_deidentify import SESSION_NAME, SHIPPED_RECIPES_DIR, _stage
 
 
 @pytest.mark.parametrize("unlink_source", ["all", "keep-metadata"])
@@ -30,7 +30,7 @@ def test_retire_recorded_files_and_keep_late_file(tmp_path, unlink_source):
         errors = deidentify(
             input_dir,
             tmp_path / "output",
-            SHIPPED_SPECS_DIR,
+            SHIPPED_RECIPES_DIR,
             unlink_source=unlink_source,
         )
     assert errors == []
@@ -48,7 +48,7 @@ def test_method_can_remove_all_resources(tmp_path):
         lambda session, *a, **kw: (session.new_empty(), {}),
     ):
         errors = deidentify(
-            input_dir, tmp_path / "output", SHIPPED_SPECS_DIR, unlink_source="all"
+            input_dir, tmp_path / "output", SHIPPED_RECIPES_DIR, unlink_source="all"
         )
     assert errors == []
     assert not source.exists()
@@ -65,7 +65,7 @@ def test_present_input_is_processed_again(tmp_path):
 
     with patch.object(Accession, "deidentify", process):
         for _ in range(2):
-            assert deidentify(input_dir, tmp_path / "output", SHIPPED_SPECS_DIR) == []
+            assert deidentify(input_dir, tmp_path / "output", SHIPPED_RECIPES_DIR) == []
     assert len(calls) == 2
 
 
@@ -128,7 +128,7 @@ def test_failure_keeps_recorded_input(tmp_path, mode, failure):
         errors = deidentify(
             input_dir,
             tmp_path / "output",
-            SHIPPED_SPECS_DIR,
+            SHIPPED_RECIPES_DIR,
             reid_dir=reid_dir,
             unlink_source=mode,
         )
@@ -200,7 +200,7 @@ def test_changed_non_dicom_bytes_are_saved(tmp_path):
 
     with patch.object(Accession, "deidentify", process):
         errors = deidentify(
-            input_dir, tmp_path / "output", SHIPPED_SPECS_DIR, unlink_source="all"
+            input_dir, tmp_path / "output", SHIPPED_RECIPES_DIR, unlink_source="all"
         )
     assert errors == []
     assert not source.exists()

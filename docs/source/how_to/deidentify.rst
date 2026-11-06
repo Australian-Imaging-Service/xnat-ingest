@@ -11,13 +11,13 @@ up a scan for a clinical follow-up).
 .. code-block:: console
 
     $ accessionflow deidentify /data/staging/labelled /data/staging/deidentified \
-        /etc/accessionflow/deid-specs --reid-dir /data/staging/reid
+        /etc/accessionflow/deid-recipes --reid-dir /data/staging/reid
 
 * ``INPUT_DIR`` — the ``label`` output directory (``ACFLOW_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where deidentified sessions are written; point ``store`` at this
   directory instead of the ``label`` output (``ACFLOW_OUTPUT_DIR``)
-* ``SPEC_DIR`` — the deidentification specs, one directory per project (see below)
-  (``ACFLOW_SPEC_DIR``)
+* ``RECIPE_DIR`` — the deidentification recipes, one directory per project (see below)
+  (``ACFLOW_RECIPE_DIR``, or ``ACFLOW_SPEC_DIR`` as it was previously named)
 * ``--reid-dir`` — optional; where the re-identification mappings are written, one
   JSON file per session (``ACFLOW_REID_DIR``). Omit it to discard the mapping rather
   than persist it, which is the safer choice when holding an
@@ -63,18 +63,18 @@ Do not run two deidentify workers on the same input directory.
 The file format's ``contains_phi`` flag selects deidentification. DICOM uses this
 path by default. Other formats can provide their own deidentification method;
 formats without that flag are copied. If the method requires a recipe and there
-is no applicable spec (see below), the session fails and its input stays.
+is no applicable recipe (see below), the session fails and its input stays.
 
-Laying out the deidentification specs
+Laying out the deidentification recipes
 ------------------------------------------
 
-``SPEC_DIR`` holds one subdirectory per project, named to match the project ID that
+``RECIPE_DIR`` holds one subdirectory per project, named to match the project ID that
 ``label`` gave the session, plus an optional ``__default__`` subdirectory used as a
 fallback for any project without its own:
 
 .. code-block:: text
 
-    deid-specs/
+    deid-recipes/
         __default__/
             medimage/
                 dicom-series.json
@@ -83,25 +83,23 @@ fallback for any project without its own:
             medimage/
                 dicom-series.json
 
-Within each project directory, there's one spec file per format, at the path given by
+Within each project directory, there's one recipe file per format, at the path given by
 the format's MIME-like identifier (e.g. ``medimage/dicom-series`` is
 ``medimage/dicom-series.json``), alongside any side-car files the recipe format uses
-(e.g. ``dicom-series.transforms.yaml``). A spec also covers
-more specific sub-formats — e.g. a spec for the broader ``medimage/dicom-collection``
+(e.g. ``dicom-series.transforms.yaml``). A recipe also covers
+more specific sub-formats — e.g. a recipe for the broader ``medimage/dicom-collection``
 format applies to ``medimage/dicom-series`` sessions too if there's no more specific
 match.
 
 .. note::
 
-    The intent is for each spec file's contents to configure *how* that format is
-    deidentified for that project — e.g. which additional DICOM tags to blank or
-    remap beyond the built-in set, or project-specific replacement values. That
-    per-project customisation isn't wired up yet: today, the mere *presence* of a
-    spec file is what matters (it tells ``deidentify`` a format is handled for that
-    project), while the actual fields removed from DICOM are currently a fixed,
-    built-in list regardless of what the spec file contains. Until the content is
-    read, the path to an empty JSON object is a reasonable placeholder for each spec
-    file.
+    A recipe's contents decide how the format is deidentified for that project: for
+    DICOM, a `deid <https://pydicom.github.io/deid/>`_ recipe saying which tags to
+    remove, blank or replace, with the values of its ``var:`` references declared in
+    the ``<format>.transforms.yaml`` side-car. accessionflow ships an example in
+    ``accessionflow/assets/deid_recipes/__default__``, which can be copied as a
+    starting point. Check any recipe with your data's governance requirements before
+    relying on it.
 
 
 Re-identifying data later

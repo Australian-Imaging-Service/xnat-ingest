@@ -11,6 +11,7 @@ forever. Generic File.sample() takes the plain-copy path and cannot show this.
 import hashlib
 import hmac
 import json
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -19,12 +20,11 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
     get_image as get_pet_image,
 )
 
-import accessionflow.specs as _specs_pkg
 from accessionflow.api.deidentify_api import deidentify
 from accessionflow.model.accession import Accession
 from accessionflow.model.acquisition import Acquisition
 
-SHIPPED = Path(_specs_pkg.__path__[0])
+SHIPPED = Path(str(files("accessionflow.assets") / "deid_recipes"))
 NAME = "PROJ.SUBJ.SESS"
 
 
@@ -61,13 +61,15 @@ def test_dicom_deid_is_reproducible_and_does_not_churn(dicom_dir: Path, tmp_path
     ).save(inp)
 
     assert (
-        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+        deidentify(input_dir=inp, output_dir=out, recipe_dir=SHIPPED, reid_dir=reid)
+        == []
     )
     first = _state(out / NAME)
     assert first, "no output produced"
 
     assert (
-        deidentify(input_dir=inp, output_dir=out, spec_dir=SHIPPED, reid_dir=reid) == []
+        deidentify(input_dir=inp, output_dir=out, recipe_dir=SHIPPED, reid_dir=reid)
+        == []
     )
     second = _state(out / NAME)
 
@@ -103,7 +105,7 @@ def test_dicom_deid_hashes_the_study_uid_in_session_metadata(
 
     def saved_uid(output: Path, **kwargs) -> str:
         assert (
-            deidentify(input_dir=inp, output_dir=output, spec_dir=SHIPPED, **kwargs)
+            deidentify(input_dir=inp, output_dir=output, recipe_dir=SHIPPED, **kwargs)
             == []
         )
         return json.loads((output / NAME / "__METADATA__.json").read_text())["__uid__"]
