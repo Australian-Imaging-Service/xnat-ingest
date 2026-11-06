@@ -1,6 +1,7 @@
+from click.testing import CliRunner
+
 from accessionflow.cli.sort import sort
 from accessionflow.utils import show_cli_trace
-from click.testing import CliRunner
 
 runner = CliRunner()
 result = runner.invoke(

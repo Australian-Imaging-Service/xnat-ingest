@@ -1,9 +1,9 @@
 import logging
 
-from accessionflow.utils import show_cli_trace
 from click.testing import CliRunner
 
 from accessionflow.cli import sort
+from accessionflow.utils import show_cli_trace
 
 runner = CliRunner()
 

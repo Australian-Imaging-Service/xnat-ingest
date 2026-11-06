@@ -1,8 +1,9 @@
 import timeit
 
-import accessionflow.dicom  # noqa
 from fileformats.medimage import DicomSeries
 from medimages4tests.dummy.dicom.mri.dwi.siemens.skyra.syngo_d13c import get_image
+
+import accessionflow.dicom  # noqa
 
 METADATA_KEYS = [
     "SeriesNumber",
