@@ -172,7 +172,8 @@ def test_interrupted_deposit_is_finished(tmp_path: Path, dest: str) -> None:
 
 def _change_staged_file(staged: Path) -> None:
     """Change a staged file, and its manifest to match"""
-    resource_dir = next(staged.iterdir()) / "1.T1w" / "NIFTI"
+    # The staging directory also holds a __build__ directory
+    resource_dir = staged / ".".join(LABELS) / "1.T1w" / "NIFTI"
     (resource_dir / "t1.nii").write_text("new contents")
     manifest_fpath = resource_dir / Resource.MANIFEST_FNAME
     manifest = json.loads(manifest_fpath.read_text())
@@ -235,7 +236,7 @@ def test_accession_labelled_for_another_store_is_refused(
 def test_label_and_store_tree_cli(tmp_path: Path) -> None:
     """From a collated accession to a tree in a (non-local) store, through the CLI"""
     staged = _staged(tmp_path)
-    accession_dir = next(staged.iterdir())
+    accession_dir = staged / ".".join(LABELS)
     # Make it a collated, not-yet-labelled accession again
     collated = tmp_path / "collated"
     collated.mkdir()
