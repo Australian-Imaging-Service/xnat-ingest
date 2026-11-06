@@ -96,3 +96,27 @@ def deprecated_alias(name: str, target: DataStoreGroup) -> DeprecatedAlias:
     alias = DeprecatedAlias(name, target)
     cli.add_command(alias)
     return alias
+
+
+def deprecated_command_alias(name: str, target: click.Command) -> click.Command:
+    """Add a hidden former name of a command to the CLI, which runs the command after
+    warning that the name is deprecated"""
+
+    def callback(**kwargs: object) -> object:
+        click.echo(
+            f"Warning: 'accessionflow {name}' is deprecated and will be removed in a "
+            f"future release, use 'accessionflow {target.name}' instead",
+            err=True,
+        )
+        assert target.callback is not None
+        return target.callback(**kwargs)
+
+    alias = click.Command(
+        name=name,
+        params=target.params,
+        callback=callback,
+        help=f"Deprecated name of '{target.name}'",
+        hidden=True,
+    )
+    cli.add_command(alias)
+    return alias

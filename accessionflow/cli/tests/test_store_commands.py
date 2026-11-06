@@ -242,3 +242,26 @@ def test_former_stage_name_warns(
     assert "'accessionflow upload' is deprecated" in result.output
     assert "'accessionflow store'" in result.output
     store_cli.store.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_former_fields_name_still_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import accessionflow.cli.select_fields_cli as select_fields_cli
+
+    select_fields = MagicMock(return_value=[])
+    monkeypatch.setattr(select_fields_cli, "select_fields", select_fields)
+    (tmp_path / "in").mkdir()
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["--help"], env=CLEAN_ENV)
+    assert "select-fields" in help_result.output
+    assert "  fields " not in help_result.output
+    result = runner.invoke(
+        cli,
+        ["fields", str(tmp_path / "in"), str(tmp_path / "out"), "--extract", "a", "b"],
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code == 0, result.output
+    assert "'accessionflow fields' is deprecated" in result.output
+    assert "'accessionflow select-fields' instead" in result.output
+    select_fields.assert_called_once()
