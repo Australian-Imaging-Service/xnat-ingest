@@ -9,8 +9,8 @@
 
 Accessioning is the process of formally receiving material from a source and registering
 it in a managed collection. AccessionFlow is a
-collection of tools to accession data: collate it, label it, de-identify it and upload it
-to an XNAT repository. Support for various file types is provided through
+collection of tools to accession data: collate, label, de-identify and store them
+in a data store. Support for various file types is provided through
 the [FileFormats](https://arcanaframework.github.io/fileformats/) package and its extensions
 (e.g. [FileFormats MedImage](https://arcanaframework.github.io/fileformats-medimage/), [FileFormats Siemens](https://arcanaframework.github.io/fileformats-vendor-siemens/),...).
 
