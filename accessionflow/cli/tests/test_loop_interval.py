@@ -13,6 +13,13 @@ class StopLoop(Exception):
     pass
 
 
+# Commands provided by the XNAT plugin, and the module that the API they call is
+# looked up in
+XNAT_COMMANDS = {
+    "label": "accessionflow.cli.label_cli",
+    "upload": "accessionflow.repositories.xnat.cli.upload_cli",
+}
+
 CASES = [
     ("label", "label", []),
     ("attach", "attach", ["generic/file", "*", ".*"]),
@@ -38,7 +45,18 @@ def test_loop_interval(
     module_name, api_name, extra, elapsed, loop, expected_sleep, tmp_path, monkeypatch
 ):
     module = importlib.import_module("accessionflow.cli." + module_name + "_cli")
-    command = getattr(module, api_name + "_cmd")
+    if module_name in XNAT_COMMANDS:
+        # The command is provided by the XNAT plugin, the API it calls is either the
+        # plugin's or the core one
+        command = getattr(
+            importlib.import_module(
+                "accessionflow.repositories.xnat.cli." + module_name + "_cli"
+            ),
+            module_name + "_cmd",
+        )
+        module = importlib.import_module(XNAT_COMMANDS[module_name])
+    else:
+        command = getattr(module, api_name + "_cmd")
     paths = {name: str(tmp_path / name) for name in ["in", "out", "spec"]}
     for name in ["in", "spec"]:
         (tmp_path / name).mkdir()

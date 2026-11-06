@@ -151,14 +151,23 @@ html_theme = "furo"
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
+#
+# The colours are those of the logo (docs/logo_dev): a teal accent and navy text on
+# light backgrounds, and an aqua accent on dark ones (where Furo's own text colour is
+# kept, as the logo's off-white is harsher for body text).
 html_theme_options = {
+    "light_logo": "images/logo-mark.svg",
+    "dark_logo": "images/logo-mark-dark.svg",
     "light_css_variables": {
-        "color-brand-primary": "#286f9b",
-        "color-brand-content": "#89bc46",
+        "color-brand-primary": "#0B6E78",
+        "color-brand-content": "#0B6E78",
+        "color-brand-visited": "#0B6E78",
+        "color-foreground-primary": "#12263A",
     },
     "dark_css_variables": {
-        "color-brand-primary": "#80beef",
-        "color-brand-content": "#baed75",
+        "color-brand-primary": "#4FC3C8",
+        "color-brand-content": "#4FC3C8",
+        "color-brand-visited": "#4FC3C8",
     },
 }
 
@@ -172,14 +181,13 @@ html_title = "AccessionFlow v{}".format(__version__)
 # A shorter title for the navigation bar.  Default is the same as html_title.
 # html_short_title = 'AccessionFlow v<release>'
 
-# The name of an image file (relative to this directory) to place at the top
-# of the sidebar.
-html_logo = "_static/images/logo-small.png"
+# The sidebar logo is set by the "light_logo" and "dark_logo" theme options above, so
+# that it changes with the theme
 
 # The name of an image file (within the static path) to use as favicon of the
 # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
 # pixels large.
-html_favicon = "_static/images/favicon.png"
+html_favicon = "_static/images/favicon.svg"
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,

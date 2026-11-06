@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from accessionflow.cli import attach_cmd, upload_cmd
+from accessionflow.cli import attach_cmd
+from accessionflow.repositories.xnat.cli import upload_cmd
 from conftest import show_cli_trace
 
 CLEAN_ENV = {
@@ -45,8 +46,8 @@ def test_upload_passes_require_manifest(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
@@ -72,8 +73,8 @@ def test_upload_passes_no_uid_check(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.repositories.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.repositories.xnat.cli.upload_cli.upload") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []

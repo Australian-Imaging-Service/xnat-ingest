@@ -1,7 +1,7 @@
-from accessionflow.utils import show_cli_trace
 from click.testing import CliRunner
 
 from accessionflow.cli import upload_cli
+from accessionflow.utils import show_cli_trace
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 

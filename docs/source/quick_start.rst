@@ -72,14 +72,14 @@ way, depending on your site (see :ref:`2. Label project/subject/session IDs`):
 
 .. code-block:: console
 
-    $ accessionflow label /tmp/accessionflow-quickstart/collated /tmp/accessionflow-quickstart/labelled \
+    $ accessionflow label xnat /tmp/accessionflow-quickstart/collated /tmp/accessionflow-quickstart/labelled \
         --constant-project-id MYPROJECT --session StudyInstanceUID
 
 Then upload to XNAT
 
 .. code-block:: console
 
-    $ accessionflow upload /tmp/accessionflow-quickstart/labelled http://localhost:8080 \
+    $ accessionflow upload xnat /tmp/accessionflow-quickstart/labelled http://localhost:8080 \
         --user admin --password admin
 
 

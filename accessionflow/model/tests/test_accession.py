@@ -367,7 +367,7 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             project_field="StudyID",
             subject_field="PatientID",
             session_field="StudyInstanceUID",
-            scan_field="SeriesDescription",
+            acquisition_field="SeriesDescription",
         )
         staged_sessions.append(
             imaging_session.save(

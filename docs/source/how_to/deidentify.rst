@@ -76,13 +76,17 @@ fallback for any project without its own:
 
     deid-specs/
         __default__/
-            medimage@dicom-series.json
+            medimage/
+                dicom-series.json
+                dicom-series.transforms.yaml
         MYPROJECT/
-            medimage@dicom-series.json
+            medimage/
+                dicom-series.json
 
-Within each project directory, there's one JSON spec file per format, named after the
-format's MIME-like identifier with ``/`` replaced by ``@`` (e.g.
-``medimage/dicom-series`` becomes ``medimage@dicom-series.json``). A spec also covers
+Within each project directory, there's one spec file per format, at the path given by
+the format's MIME-like identifier (e.g. ``medimage/dicom-series`` is
+``medimage/dicom-series.json``), alongside any side-car files the recipe format uses
+(e.g. ``dicom-series.transforms.yaml``). A spec also covers
 more specific sub-formats — e.g. a spec for the broader ``medimage/dicom-collection``
 format applies to ``medimage/dicom-series`` sessions too if there's no more specific
 match.
