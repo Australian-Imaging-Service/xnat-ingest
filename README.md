@@ -1,4 +1,6 @@
 
+<img src="./docs/source/_static/images/logo-text.png" alt="Logo Small" style="float: right; width: 100mm">
+
 # AccessionFlow
 
 [![CI/CD](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml)
@@ -6,7 +8,6 @@
 [![PyPI](https://img.shields.io/pypi/v/accessionflow.svg)](https://pypi.python.org/pypi/accessionflow/)
 [![Documentation Status](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://australian-imaging-service.github.io/accessionflow/)
 
-<img src="./docs/source/_static/images/logo-text.png" alt="Logo Small" style="float: right; width: 100mm">
 
 Accessioning is the process of formally receiving material from a source and registering
 it in a managed collection (it doesn't require RIS accession numbers). AccessionFlow is a
