@@ -113,9 +113,7 @@ def imaging_session() -> Accession:
     ]
     return Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=scans,
     )
 
@@ -317,7 +315,7 @@ def test_unlink_keep_metadata(tmp_path: Path, imaging_session: Accession) -> Non
     # resources
     reloaded = Accession.load(session_dir)
     assert reloaded.uid == saved.uid
-    assert reloaded.project_id == saved.project_id
+    assert reloaded.labels["project"] == saved.labels["project"]
     for scan_id, scan in reloaded.scans.items():
         assert scan.resources == {}
         assert (
@@ -364,9 +362,11 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
 
     for imaging_session in imaging_sessions:
         imaging_session.label(
-            project_field="StudyID",
-            subject_field="PatientID",
-            session_field="StudyInstanceUID",
+            label_fields={
+                "project": "StudyID",
+                "subject": "PatientID",
+                "session": "StudyInstanceUID",
+            },
             acquisition_field="SeriesDescription",
         )
         staged_sessions.append(
@@ -823,9 +823,7 @@ def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> No
 
     session = Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -854,9 +852,7 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
 
     session = Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -896,9 +892,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
 
     session = Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -925,9 +919,7 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
 def _clash_session() -> Accession:
     return Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -979,9 +971,7 @@ def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
 
     session = Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -1024,9 +1014,7 @@ def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
 
     session = Accession(
         uid="12345",
-        project_id="PROJECTID",
-        subject_id="SUBJECTID",
-        session_id="SESSIONID",
+        labels={"project": "PROJECTID", "subject": "SUBJECTID", "session": "SESSIONID"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -1106,9 +1094,7 @@ def _png_clash_session(tmp_path: Path) -> tuple[Accession, ty.Any]:
     fileset1 = Png(_png(tmp_path / "a.png"))
     session = Accession(
         uid="12345",
-        project_id="P",
-        subject_id="S",
-        session_id="V",
+        labels={"project": "P", "subject": "S", "session": "V"},
         scans=[
             Acquisition(
                 id=CLASH_SCAN_ID,
@@ -1231,9 +1217,9 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
 
     session = Accession.from_metadata_yaml(yaml_path)
 
-    assert session.project_id == "PROJ"
-    assert session.subject_id == "SUBJ"
-    assert session.session_id == "VIS"
+    assert session.labels["project"] == "PROJ"
+    assert session.labels["subject"] == "SUBJ"
+    assert session.labels["session"] == "VIS"
     assert session.scans == {}
     assert dict(session.metadata) == metadata
 
@@ -1289,9 +1275,7 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
 
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="VIS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "VIS"},
         scans=[],
     )
     session.add_session_resource("radiology-doc-report", pdf)
@@ -1360,11 +1344,13 @@ def test_id_escape(tmp_path: Path) -> None:
     assert len(sessions) == 1
 
     sessions[0].label(
-        project_field="StudyID",
-        subject_field="PatientID",
-        session_field="AccessionNumber",
+        label_fields={
+            "project": "StudyID",
+            "subject": "PatientID",
+            "session": "AccessionNumber",
+        },
     )
-    assert sessions[0].subject_id == "INSTRUMENT_SURNAME_FIRST_NAME"
+    assert sessions[0].labels["subject"] == "INSTRUMENT_SURNAME_FIRST_NAME"
 
 
 def test_label_unresolvable_field_uses_placeholder_instead_of_raising(
@@ -1374,16 +1360,18 @@ def test_label_unresolvable_field_uses_placeholder_instead_of_raising(
     metadata should produce a placeholder ID (and flag the session via
     'invalid_ids'), rather than raising and losing the session entirely"""
     imaging_session.label(
-        project_field="ThisFieldDoesNotExistInTheMetadata",
-        subject_field="PatientID",
-        session_field="AccessionNumber",
+        label_fields={
+            "project": "ThisFieldDoesNotExistInTheMetadata",
+            "subject": "PatientID",
+            "session": "AccessionNumber",
+        },
     )
-    assert imaging_session.project_id.startswith(
+    assert imaging_session.labels["project"].startswith(
         "INVALID_MISSING_THISFIELDDOESNOTEXISTINTHEMETADATA_"
     )
     assert imaging_session.invalid_ids
     # the other, resolvable fields are unaffected
-    assert not imaging_session.subject_id.startswith("INVALID_MISSING_")
+    assert not imaging_session.labels["subject"].startswith("INVALID_MISSING_")
 
 
 # ---------------------------------------------------------------------------
@@ -1504,10 +1492,12 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> DeidTestFile:
 
 def test_deidentify_empty_session(tmp_path: Path) -> None:
     session = Accession(
-        uid="12345", project_id="PROJ", subject_id="SUBJ", session_id="SESS", scans=[]
+        uid="12345",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
+        scans=[],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
-    assert deid_session.project_id == "PROJ"
+    assert deid_session.labels["project"] == "PROJ"
     assert deid_session.scans == {}
     assert reid_mdata == {}
 
@@ -1517,9 +1507,7 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
     f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
@@ -1536,9 +1524,7 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path, recipe_file: Path) ->
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(
@@ -1553,9 +1539,7 @@ def test_deidentify_missing_recipe_file_raises(tmp_path: Path) -> None:
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
@@ -1572,9 +1556,7 @@ def test_deidentify_missing_recipe_file_warns(
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     with caplog.at_level(logging.WARNING, logger="accessionflow"):
@@ -1594,9 +1576,7 @@ def test_deidentify_merges_reid_metadata_across_resources(
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[
             Acquisition(id="1", type="scan-a", resources={"FILE": f1}),
             Acquisition(id="2", type="scan-b", resources={"FILE": f2}),
@@ -1629,9 +1609,7 @@ def test_deidentify_passes_max_workers_to_resource(
     f.deidentify = functools.partial(_capturing_deidentify_impl, f)
     session = Accession(
         uid="12345",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     session.deidentify(
@@ -1658,9 +1636,7 @@ def test_deidentify_carries_session_level_resources(tmp_path: Path) -> None:
 
     session = Accession(
         uid="PROJ.SUBJ.SESS",
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=1)})],
     )
     session.add_session_resource("report", File.sample(seed=42))

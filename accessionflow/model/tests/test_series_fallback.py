@@ -155,10 +155,12 @@ def test_missing_description_survives_following_label_stage(tmp_path, descriptio
             **_publication_kwargs(tmp_path / "staged", store)
         )[0]
     missing = session.label(
-        project_field="Unused",
-        constant_project_id="proj",
-        subject_field="PatientID",
-        session_field="StudyInstanceUID",
+        label_fields={
+            "project": "Unused",
+            "subject": "PatientID",
+            "session": "StudyInstanceUID",
+        },
+        constant_labels={"project": "proj"},
         acquisition_field="SeriesDescription",
     )
     assert missing == {}

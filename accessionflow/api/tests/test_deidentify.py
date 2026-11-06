@@ -26,6 +26,7 @@ PROJECT_ID = "PROJ"
 SUBJECT_ID = "SUBJ"
 VISIT_ID = "SESS"
 SESSION_NAME = f"{PROJECT_ID}.{SUBJECT_ID}.{VISIT_ID}"
+SESSION_LABELS = dict(zip(("project", "subject", "session"), SESSION_NAME.split(".")))
 
 REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101", "PatientID": "PID001"}
 
@@ -46,9 +47,7 @@ def _stage(input_dir: Path, name: str) -> Path:
     project_id, subject_id, session_id = name.split(".")
     Accession(
         uid=name,
-        project_id=project_id,
-        subject_id=subject_id,
-        session_id=session_id,
+        labels={"project": project_id, "subject": subject_id, "session": session_id},
         scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=1)})],
     ).save(input_dir)
     return input_dir / name
@@ -767,9 +766,7 @@ def test_deidentify_end_to_end_directory_structure(tmp_path: Path) -> None:
     # path in Accession.deidentify() and doesn't require a real deid spec.
     session = Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[
             Acquisition(
                 id=scan_id,
@@ -829,9 +826,7 @@ def test_deidentify_retires_a_late_scan_with_existing_output(
     # The late scan, alone, under the same session name.
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[
             Acquisition(id="2", type="late", resources={"RES": File.sample(seed=2)})
         ],
@@ -848,9 +843,7 @@ def _late_scan(input_dir: Path, resources: dict) -> None:
     """A late scan, alone, staged under the same session name."""
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[Acquisition(id="2", type="late", resources=resources)],
     ).save(input_dir)
 
@@ -958,9 +951,7 @@ def test_deidentify_runs_for_new_files_of_a_scan_the_output_already_has(
     # another name.
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=7)})],
     ).save(input_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
@@ -987,9 +978,7 @@ def test_deidentify_runs_for_another_resource_of_a_scan_the_output_already_has(
         assert deidentify(**kwargs) == []
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[Acquisition(id="1", type="T", resources={"OTHER": File.sample(seed=1)})],
     ).save(input_dir)
     with patch.object(Accession, "deidentify", _mock_deidentify_passthrough):
@@ -1050,9 +1039,7 @@ def test_deidentify_runs_again_for_a_copied_file_with_new_content(
     corrected.write_bytes(b"the corrected result")
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[Acquisition(id="1", type="T", resources={"RES": File(corrected)})],
     ).save(input_dir)
 
@@ -1076,9 +1063,7 @@ def test_deidentify_saves_a_directory_resource(tmp_path: Path):
     (contents / "b.txt").write_text("b")
     Accession(
         uid=SESSION_NAME,
-        project_id=PROJECT_ID,
-        subject_id=SUBJECT_ID,
-        session_id=VISIT_ID,
+        labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
         scans=[Acquisition(id="1", type="T", resources={"DIR": Directory(contents)})],
     ).save(input_dir)
 
@@ -1121,9 +1106,7 @@ def test_deidentify_does_not_trust_a_stale_input_manifest(tmp_path: Path):
     def stage() -> Path:
         Accession(
             uid=SESSION_NAME,
-            project_id=PROJECT_ID,
-            subject_id=SUBJECT_ID,
-            session_id=VISIT_ID,
+            labels={"project": PROJECT_ID, "subject": SUBJECT_ID, "session": VISIT_ID},
             scans=[
                 Acquisition(id="1", type="T", resources={"DIR": Directory(contents)})
             ],
@@ -1200,7 +1183,7 @@ def test_deidentify_keeps_only_uid_in_output_metadata(
 
     for relative_path in metadata_paths:
         expected = (
-            {"__uid__": SESSION_NAME}
+            {"__uid__": SESSION_NAME, "__labels__": SESSION_LABELS}
             if relative_path == Path("__METADATA__.json")
             else {}
         )
@@ -1239,7 +1222,9 @@ def test_deidentify_hashes_uid_and_records_it_for_reid(
     expected = hmac.new(b"site-secret", original.encode(), hashlib.sha256).hexdigest()
     output_session = output_dir / SESSION_NAME
     assert json.loads((output_session / "__METADATA__.json").read_text()) == {
-        "__uid__": expected
+        "__uid__": expected,
+        # The labels are always kept, as they are needed to reload the session
+        "__labels__": SESSION_LABELS,
     }
     assert Accession.load(output_session).uid == expected
     # The original isn't left in any sidecar of the output

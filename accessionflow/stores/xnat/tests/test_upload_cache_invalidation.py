@@ -53,7 +53,10 @@ def _upload_one_session(tmp_path: Path, uploaded: bool) -> ty.List[str]:
         mock.patch.object(
             XnatLocalSessionListing, "all_uploaded", return_value=uploaded
         ),
-        mock.patch("accessionflow.stores.xnat.api.store_api.Accession.load"),
+        mock.patch(
+            "accessionflow.stores.xnat.api.store_api.Accession.load",
+            return_value=mock.MagicMock(store_type=None),
+        ),
     ):
         store(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
     return events

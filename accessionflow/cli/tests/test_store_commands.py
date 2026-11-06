@@ -31,9 +31,12 @@ def test_get_store_names_the_installed_plugins() -> None:
         get_store("not-a-store")
 
 
-def test_store_needs_three_label_levels() -> None:
-    with pytest.raises(ValueError, match="exactly 3"):
-        Store(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
+def test_store_needs_a_label_level() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        Store(name="flat", title="Flat", labels=())
+    # Any number of levels, or levels named when labelling, are fine
+    Store(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
+    Store(name="free", title="Free", labels=None)
 
 
 def test_store_rejects_repeated_label_names() -> None:
@@ -88,11 +91,15 @@ def test_label_xnat_maps_scan_to_acquisition(
     )
     assert result.exit_code == 0, result.output
     kwargs = label.call_args.kwargs
-    assert kwargs["project_field"] == "StudyComments"
-    assert kwargs["subject_field"] == "{PatientID}_{StudyDate:%Y%m%d}"
-    assert kwargs["session_field"] == "AccessionNumber"
+    assert kwargs["label_fields"] == {
+        "project": "StudyComments",
+        "subject": "{PatientID}_{StudyDate:%Y%m%d}",
+        "session": "AccessionNumber",
+    }
+    assert list(kwargs["label_fields"]) == ["project", "subject", "session"]
     assert kwargs["acquisition_field"] == "ProtocolName"
-    assert kwargs["project_id"] == "PROJ"
+    assert kwargs["constant_labels"] == {"project": "PROJ"}
+    assert kwargs["store_type"] == "xnat"
     assert kwargs["single_resource"] is False  # XNAT scans hold several resources
 
 
@@ -143,10 +150,10 @@ def test_label_xnat_options_keep_their_env_vars(
     )
     assert result.exit_code == 0, result.output
     kwargs = label.call_args.kwargs
-    assert kwargs["project_field"] == "StudyID"
-    assert kwargs["session_field"] == "StudyInstanceUID"
+    assert kwargs["label_fields"]["project"] == "StudyID"
+    assert kwargs["label_fields"]["session"] == "StudyInstanceUID"
     assert kwargs["acquisition_field"] == "SeriesNumber"
-    assert kwargs["project_id"] == "PROJ"
+    assert kwargs["constant_labels"] == {"project": "PROJ"}
 
 
 def test_label_command_follows_store_config(
@@ -185,12 +192,13 @@ def test_label_command_follows_store_config(
         )
         assert result.exit_code == 0, result.output
         kwargs = label.call_args.kwargs
-        assert (
-            kwargs["project_field"],
-            kwargs["subject_field"],
-            kwargs["session_field"],
-            kwargs["acquisition_field"],
-        ) == ("StudyID", "PatientID", "AccessionNumber", None)
+        assert kwargs["label_fields"] == {
+            "study": "StudyID",
+            "participant": "PatientID",
+            "visit": "AccessionNumber",
+        }
+        assert kwargs["acquisition_field"] is None
+        assert kwargs["store_type"] == "testrepo"
         assert kwargs["single_resource"] is False
     finally:
         del label_group.commands["testrepo"]

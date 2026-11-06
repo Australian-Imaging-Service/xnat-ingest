@@ -68,19 +68,24 @@ def test_label_calls_load_label_save_for_each_session(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
 
     assert errors == []
     mock_load.assert_called_once()
     mock_session.label.assert_called_once_with(
-        project_field=PROJECT_FIELD,
-        subject_field=SUBJECT_FIELD,
-        session_field=SESSION_FIELD,
-        constant_project_id=None,
+        label_fields={
+            "project": PROJECT_FIELD,
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
         acquisition_field=None,
+        constant_labels=None,
+        store_type=None,
     )
     # save() is handed the BUILD directory, not the output directory: a session
     # that does not exist yet is built under __build__ and renamed into place, so
@@ -131,9 +136,11 @@ def test_label_leaves_no_partial_session_under_its_real_name_when_save_dies(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
 
     assert len(errors) == 1
@@ -171,9 +178,11 @@ def test_label_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> Non
         return label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
 
     assert label_pass() == []
@@ -206,9 +215,11 @@ def test_label_routes_invalid_ids_to_invalid_subdir(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
 
     assert len(errors) == 1
@@ -230,9 +241,11 @@ def test_label_passes_acquisition_field(collated_dir: Path, tmp_path: Path) -> N
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             acquisition_field=SCAN_FIELD,
         )
 
@@ -248,13 +261,17 @@ def test_label_passes_constant_project_id(collated_dir: Path, tmp_path: Path) ->
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
-            project_id="FIXED_PROJECT",
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
+            constant_labels={"project": "FIXED_PROJECT"},
         )
 
-    assert mock_session.label.call_args.kwargs["constant_project_id"] == "FIXED_PROJECT"
+    assert mock_session.label.call_args.kwargs["constant_labels"] == {
+        "project": "FIXED_PROJECT"
+    }
 
 
 def test_label_collects_errors_without_raising(
@@ -269,9 +286,11 @@ def test_label_collects_errors_without_raising(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
 
     assert len(errors) == 1
@@ -290,9 +309,11 @@ def test_label_raise_errors_propagates(collated_dir: Path, tmp_path: Path) -> No
             label(
                 input_dir=collated_dir,
                 output_dir=output_dir,
-                project_field=PROJECT_FIELD,
-                subject_field=SUBJECT_FIELD,
-                session_field=SESSION_FIELD,
+                label_fields={
+                    "project": PROJECT_FIELD,
+                    "subject": SUBJECT_FIELD,
+                    "session": SESSION_FIELD,
+                },
                 raise_errors=True,
             )
 
@@ -311,9 +332,11 @@ def test_label_deletes_source_dir_on_success_when_unlink_source_all(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             unlink_source="all",
         )
 
@@ -333,9 +356,11 @@ def test_label_leaves_source_dir_when_unlink_source_none(
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             unlink_source=None,
         )
 
@@ -358,9 +383,11 @@ def test_label_keep_metadata_preserves_session_without_resources(
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             unlink_source="keep-metadata",
         )
 
@@ -382,9 +409,11 @@ def test_label_does_not_delete_on_failure_even_if_unlink_source_all(
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             unlink_source="all",
         )
 
@@ -422,9 +451,11 @@ def test_label_end_to_end_resolves_ids_from_collated_metadata(
     errors = label(
         input_dir=collated_dir,
         output_dir=output_dir,
-        project_field=PROJECT_FIELD,
-        subject_field=SUBJECT_FIELD,
-        session_field=SESSION_FIELD,
+        label_fields={
+            "project": PROJECT_FIELD,
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
         acquisition_field=SCAN_FIELD,
     )
 
@@ -467,9 +498,11 @@ def test_label_loads_dicomdir_resource(dicom_dir: Path, tmp_path: Path) -> None:
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
         )
         == []
     )
@@ -507,14 +540,16 @@ def test_label_end_to_end_routes_datatypes_to_separate_projects(
     report_output = tmp_path / "report-labelled"
     common_args = {
         "input_dir": collated_dir,
-        "project_field": PROJECT_FIELD,
-        "subject_field": SUBJECT_FIELD,
-        "session_field": SESSION_FIELD,
+        "label_fields": {
+            "project": PROJECT_FIELD,
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
     }
     assert (
         label(
             output_dir=dicom_output,
-            project_id="DICOM_PROJECT",
+            constant_labels={"project": "DICOM_PROJECT"},
             include=[DicomSeries],
             **common_args,
         )
@@ -523,7 +558,7 @@ def test_label_end_to_end_routes_datatypes_to_separate_projects(
     assert (
         label(
             output_dir=report_output,
-            project_id="REPORT_PROJECT",
+            constant_labels={"project": "REPORT_PROJECT"},
             include=[File],
             **common_args,
         )
@@ -532,8 +567,8 @@ def test_label_end_to_end_routes_datatypes_to_separate_projects(
 
     dicom_session = Accession.load(next(iter(list_session_dirs(dicom_output))))
     report_session = Accession.load(next(iter(list_session_dirs(report_output))))
-    assert dicom_session.project_id == "DICOM_PROJECT"
-    assert report_session.project_id == "REPORT_PROJECT"
+    assert dicom_session.labels["project"] == "DICOM_PROJECT"
+    assert report_session.labels["project"] == "REPORT_PROJECT"
     assert dicom_session.resources
     assert all(
         isinstance(resource.fileset, DicomSeries)
@@ -568,9 +603,11 @@ def test_label_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
     errors = label(
         input_dir=collated_dir,
         output_dir=output_dir,
-        project_field="ThisFieldDoesNotExistInTheMetadata",
-        subject_field=SUBJECT_FIELD,
-        session_field=SESSION_FIELD,
+        label_fields={
+            "project": "ThisFieldDoesNotExistInTheMetadata",
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
     )
 
     assert len(errors) == 1
@@ -608,9 +645,11 @@ def test_label_skips_duplicate_invalid_sessions(
     errors1 = label(
         input_dir=collated_dir,
         output_dir=output_dir,
-        project_field="NonExistentField",
-        subject_field=SUBJECT_FIELD,
-        session_field=SESSION_FIELD,
+        label_fields={
+            "project": "NonExistentField",
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
     )
     assert len(errors1) == 1
     invalid_dir = output_dir / INVALID_DIRNAME
@@ -621,9 +660,11 @@ def test_label_skips_duplicate_invalid_sessions(
     errors2 = label(
         input_dir=collated_dir,
         output_dir=output_dir,
-        project_field="NonExistentField",
-        subject_field=SUBJECT_FIELD,
-        session_field=SESSION_FIELD,
+        label_fields={
+            "project": "NonExistentField",
+            "subject": SUBJECT_FIELD,
+            "session": SESSION_FIELD,
+        },
     )
     assert errors2 == []
     entries_after_second = list(invalid_dir.iterdir())
@@ -651,9 +692,11 @@ def test_label_single_resource_rejects_acquisition_with_several(
         errors = label(
             input_dir=collated_dir,
             output_dir=tmp_path / "labelled",
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             single_resource=True,
         )
     assert len(errors) == 1
@@ -676,9 +719,11 @@ def test_label_single_resource_counts_only_included_resources(
         errors = label(
             input_dir=collated_dir,
             output_dir=tmp_path / "labelled",
-            project_field=PROJECT_FIELD,
-            subject_field=SUBJECT_FIELD,
-            session_field=SESSION_FIELD,
+            label_fields={
+                "project": PROJECT_FIELD,
+                "subject": SUBJECT_FIELD,
+                "session": SESSION_FIELD,
+            },
             include=[DicomSeries],
             single_resource=True,
         )

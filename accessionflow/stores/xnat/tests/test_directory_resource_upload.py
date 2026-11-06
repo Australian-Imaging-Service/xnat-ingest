@@ -72,7 +72,7 @@ def _upload(
     staging = tmp_path / "staged"
     (staging / "proj.subj.sess").mkdir(parents=True)
     session = Accession(
-        uid="uid", project_id="proj", subject_id="subj", session_id="sess"
+        uid="uid", labels={"project": "proj", "subject": "subj", "session": "sess"}
     )
     session.add_resource("1", "scan", "DATA", fileset)
     if after_staging is not None:
