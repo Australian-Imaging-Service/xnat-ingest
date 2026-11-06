@@ -294,13 +294,13 @@ reconstructed.
 2. Label project/subject/session IDs
 -----------------------------------------
 
-``label`` reads the collated sessions and works out which XNAT project/subject/session
+``label xnat`` reads the collated sessions and works out which XNAT project/subject/session
 each one belongs to, from metadata fields, writing the result under
 ``<project>.<subject>.<session>`` directories in ``OUTPUT_DIR``.
 
 .. code-block:: console
 
-    $ accessionflow label /data/staging/collated /data/staging/labelled
+    $ accessionflow label xnat /data/staging/collated /data/staging/labelled
 
 * ``INPUT_DIR`` — the ``collate`` output directory (``XINGEST_INPUT_DIR``)
 * ``OUTPUT_DIR`` — where labelled sessions are written (``XINGEST_OUTPUT_DIR``)
@@ -354,10 +354,10 @@ source and writes only matching resources:
 
 .. code-block:: console
 
-    $ accessionflow label /data/staging/collated /data/staging/dicom-labelled \
+    $ accessionflow label xnat /data/staging/collated /data/staging/dicom-labelled \
         --include medimage/dicom-series --constant-project-id DICOM_PROJECT
 
-    $ accessionflow label /data/staging/collated /data/staging/report-labelled \
+    $ accessionflow label xnat /data/staging/collated /data/staging/report-labelled \
         --include application/pdf --constant-project-id REPORT_PROJECT
 
 Multiple ``--include`` options use OR semantics. Datatype filtering cannot be
@@ -449,7 +449,7 @@ projects/subjects/sessions/scans/resources as needed.
 
 .. code-block:: console
 
-    $ accessionflow upload /data/staging/labelled xnat.example.org \
+    $ accessionflow upload xnat /data/staging/labelled xnat.example.org \
         --user my-upload-user --password my-upload-password
 
 * ``STAGED`` — the ``label`` output directory, or an S3 bucket URI
@@ -537,6 +537,6 @@ confirm nothing was dropped.
 
 .. code-block:: console
 
-    $ accessionflow check-upload /data/staging/labelled xnat.example.org
+    $ accessionflow check-upload xnat /data/staging/labelled xnat.example.org
 
 It takes the same ``STAGED``/``SERVER``/credential options as ``upload``.

@@ -159,7 +159,7 @@ def test_missing_description_survives_following_label_stage(tmp_path, descriptio
         constant_project_id="proj",
         subject_field="PatientID",
         session_field="StudyInstanceUID",
-        scan_field="SeriesDescription",
+        acquisition_field="SeriesDescription",
     )
     assert missing == {}
     assert session.scans["1_2_3_4"].type == "Series_1_2_3_4"

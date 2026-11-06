@@ -12,9 +12,14 @@ from accessionflow.helpers.arg_types import OnResourceClash
 from accessionflow.helpers.logging import logger
 from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
-from accessionflow.helpers.xnat_scan_types import xnat_resource_label_from_sop_class
 from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
+
+# The DICOM sample label follows XNAT's rule until packaging is configured by the
+# repository plugin
+from accessionflow.repositories.xnat.scan_types import (
+    xnat_resource_label_from_sop_class,
+)
 
 from .collate_api import BUILD_NAME_DEFAULT
 

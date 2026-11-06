@@ -1062,12 +1062,12 @@ class Accession:
         project_field: str,
         subject_field: str,
         session_field: str,
-        scan_field: str | None = None,
+        acquisition_field: str | None = None,
         constant_project_id: str | None = None,
     ) -> None:
         """Assigns project, subject and session IDs to the session, extracted from its
         metadata. Also resolves a description for each scan in the session, if
-        'scan_field' is provided.
+        'acquisition_field' is provided.
 
         Parameters
         ----------
@@ -1080,7 +1080,7 @@ class Accession:
         constant_project_id : str
             Override the project ID loaded from the metadata (useful when invoking
             manually)
-        scan_field : str, optional
+        acquisition_field : str, optional
             metadata field to extract a description for each scan from. Scans for which
             the field can't be resolved are left without a description (saved with a
             trailing-dot '<scan_id>.' directory name)
@@ -1106,10 +1106,10 @@ class Accession:
             self.metadata, missing_ids=missing_ids
         )
 
-        if scan_field is not None:
+        if acquisition_field is not None:
             for scan in self.scans.values():
                 try:
-                    description = IDSpec(scan_field).get_value(
+                    description = IDSpec(acquisition_field).get_value(
                         scan.metadata, escape=False
                     )
                     if not description.strip():
@@ -1120,7 +1120,7 @@ class Accession:
                         "Could not resolve a description for scan '%s' from field "
                         "'%s', using scan ID instead",
                         scan.id,
-                        scan_field,
+                        acquisition_field,
                     )
                     scan.type = scan.type or "Series_" + scan.id
         return missing_ids

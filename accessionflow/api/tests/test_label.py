@@ -80,7 +80,7 @@ def test_label_calls_load_label_save_for_each_session(
         subject_field=SUBJECT_FIELD,
         session_field=SESSION_FIELD,
         constant_project_id=None,
-        scan_field=None,
+        acquisition_field=None,
     )
     # save() is handed the BUILD directory, not the output directory: a session
     # that does not exist yet is built under __build__ and renamed into place, so
@@ -221,7 +221,7 @@ def test_label_routes_invalid_ids_to_invalid_subdir(
     assert (output_dir / INVALID_DIRNAME / "PROJ.SUBJ.SESS").is_dir()
 
 
-def test_label_passes_scan_field(collated_dir: Path, tmp_path: Path) -> None:
+def test_label_passes_acquisition_field(collated_dir: Path, tmp_path: Path) -> None:
     output_dir = tmp_path / "labelled"
     output_dir.mkdir()
 
@@ -233,10 +233,10 @@ def test_label_passes_scan_field(collated_dir: Path, tmp_path: Path) -> None:
             project_field=PROJECT_FIELD,
             subject_field=SUBJECT_FIELD,
             session_field=SESSION_FIELD,
-            scan_field=SCAN_FIELD,
+            acquisition_field=SCAN_FIELD,
         )
 
-    assert mock_session.label.call_args.kwargs["scan_field"] == SCAN_FIELD
+    assert mock_session.label.call_args.kwargs["acquisition_field"] == SCAN_FIELD
 
 
 def test_label_passes_constant_project_id(collated_dir: Path, tmp_path: Path) -> None:
@@ -425,7 +425,7 @@ def test_label_end_to_end_resolves_ids_from_collated_metadata(
         project_field=PROJECT_FIELD,
         subject_field=SUBJECT_FIELD,
         session_field=SESSION_FIELD,
-        scan_field=SCAN_FIELD,
+        acquisition_field=SCAN_FIELD,
     )
 
     assert errors == []
@@ -629,3 +629,58 @@ def test_label_skips_duplicate_invalid_sessions(
     entries_after_second = list(invalid_dir.iterdir())
     assert len(entries_after_second) == 1
     assert entries_after_second[0] == entries_after_first[0]
+
+
+def _scan(scan_id: str, *resource_names: str) -> MagicMock:
+    scan = MagicMock()
+    scan.id = scan_id
+    scan.resources = {name: MagicMock() for name in resource_names}
+    return scan
+
+
+def test_label_single_resource_rejects_acquisition_with_several(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    mock_session = _mock_session()
+    mock_session.label.return_value = {}
+    mock_session.scans = {
+        "1": _scan("1", "DICOM"),
+        "2": _scan("2", "DICOM", "NIFTI"),
+    }
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=tmp_path / "labelled",
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            single_resource=True,
+        )
+    assert len(errors) == 1
+    assert "{'2': ['DICOM', 'NIFTI']}" in errors[0]
+    mock_session.save.assert_not_called()
+    assert (collated_dir / f"{Accession.PRE_LABEL_PREFIX}some-uid").exists()
+
+
+def test_label_single_resource_counts_only_included_resources(
+    collated_dir: Path, tmp_path: Path
+) -> None:
+    mock_session = _mock_session()
+    mock_session.label.return_value = {}
+    scan = _scan("1", "DICOM", "NIFTI")
+    scan.resources["DICOM"].matches_datatypes.return_value = True
+    scan.resources["NIFTI"].matches_datatypes.return_value = False
+    mock_session.scans = {"1": scan}
+    mock_session.resources = list(scan.resources.values())
+    with patch.object(Accession, "load", return_value=mock_session):
+        errors = label(
+            input_dir=collated_dir,
+            output_dir=tmp_path / "labelled",
+            project_field=PROJECT_FIELD,
+            subject_field=SUBJECT_FIELD,
+            session_field=SESSION_FIELD,
+            include=[DicomSeries],
+            single_resource=True,
+        )
+    assert errors == []
+    mock_session.save.assert_called_once()

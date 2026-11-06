@@ -45,18 +45,36 @@ def _existing_invalid_uids(invalid_dir: Path) -> set[str]:
     return uids
 
 
+def _acquisitions_with_several_resources(
+    session: Accession, include: ty.Sequence[type[FileSet]]
+) -> dict[str, list[str]]:
+    """The acquisitions of the session that will be saved with more than one
+    resource, with the names of those resources"""
+    several = {}
+    for scan in session.scans.values():
+        names = [
+            name
+            for name, resource in scan.resources.items()
+            if not include or resource.matches_datatypes(include)
+        ]
+        if len(names) > 1:
+            several[scan.id] = names
+    return several
+
+
 def label(
     input_dir: Path,
     output_dir: Path,
     project_field: str,
     subject_field: str,
     session_field: str,
-    scan_field: str | None = None,
+    acquisition_field: str | None = None,
     project_id: str | None = None,
     copy_mode: FileSet.CopyMode = FileSet.CopyMode.hardlink_or_copy,
     unlink_source: str | None = None,
     raise_errors: bool = False,
     include: ty.Sequence[type[FileSet]] = (),
+    single_resource: bool = False,
 ) -> list[str]:
     """Sorts the input files into sessions and stages them into the staging directory.
 
@@ -72,9 +90,10 @@ def label(
         Field name to use for extracting the subject ID from the input files.
     session_field: str
         Field name to use for extracting the session ID from the input files.
-    scan_field: str | None
-        Field name to use for extracting a description for each scan. Scans for which the field
-        can't be resolved are left without a description.
+    acquisition_field: str | None
+        Field name to use for extracting a description for each acquisition (e.g. the
+        XNAT scan type). Acquisitions for which the field can't be resolved are left
+        without a description.
     project_id: str | None
         If provided, this project ID will be used for all sessions instead of extracting it from the input files.
         Useful for instruments that upload to a single project.
@@ -93,6 +112,11 @@ def label(
     include: Sequence[type[FileSet]]
         Only stage resources matching at least one of these datatypes. An empty
         sequence stages all resources.
+    single_resource: bool
+        If True, the repository holds a single resource per acquisition, so a session
+        with an acquisition that would be saved with more than one resource (after
+        filtering by `include`) is an error, and is left in place to be reprocessed
+        (e.g. with `include` set to select one).
 
     Notes
     -----
@@ -169,12 +193,21 @@ def label(
                 )
                 continue
 
+            if single_resource and (
+                several := _acquisitions_with_several_resources(session, include)
+            ):
+                raise ValueError(
+                    f"Cannot label '{session_listing.name}' as the repository expects "
+                    "a single resource per acquisition, but some acquisitions have "
+                    f"several: {several}. Select one with the include option"
+                )
+
             missing_ids = session.label(
                 project_field=project_field,
                 subject_field=subject_field,
                 session_field=session_field,
                 constant_project_id=project_id,
-                scan_field=scan_field,
+                acquisition_field=acquisition_field,
             )
 
             if missing_ids:

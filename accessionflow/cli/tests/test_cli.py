@@ -38,21 +38,21 @@ from moto import mock_aws
 from accessionflow.api.label_api import INVALID_DIRNAME
 from accessionflow.cli import (
     attach_cmd,
-    check_upload_cmd,
     collate_cmd,
     deidentify_cmd,
     fields_cmd,
-    label_cmd,
     package_cmd,
-    upload_cmd,
 )
-from accessionflow.helpers.arg_types import (
-    MimeType,  # type: ignore[import-untyped]
-    XnatLogin,
-)
+from accessionflow.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
 from accessionflow.model.resource import Resource
+from accessionflow.repositories.xnat.arg_types import XnatLogin
+from accessionflow.repositories.xnat.cli import (
+    check_upload_cmd,
+    label_cmd,
+    upload_cmd,
+)
 from conftest import get_raw_data_files, show_cli_trace
 
 
