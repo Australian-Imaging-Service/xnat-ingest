@@ -498,11 +498,11 @@ def _files_held_in(
 class ResourceComparison:
     """How a staged resource compares with what XNAT actually holds.
 
-    Shared by the upload path and api/check_upload_api.py so the two cannot
+    Shared by the upload path and api/check_store_api.py so the two cannot
     drift apart.
 
     NOTE THE ORIENTATION: `missing` means files WE hold that XNAT does not, the
-    ones an upload could supply. check_upload_api names its locals the other way
+    ones an upload could supply. check_store_api names its locals the other way
     round.
     """
 
@@ -539,7 +539,7 @@ def compare_resource_with_xnat(
     would call a healthy resource corrupt, so a file with no digest is compared
     by NAME only and recorded in `without_checksums`. `comparable` means at
     least one remote digest exists, not that every file was verified by content.
-    api/check_upload_api.py guards the same way.
+    api/check_store_api.py guards the same way.
     """
     local_names = set(local_checksums)
     xnat_names = set(xnat_checksums)

@@ -2,7 +2,7 @@
 
 `upload` and `attach` declared --require-manifest/--dont-require-manifest with
 default None, and the loaders read None as "not required". So a resource without
-its manifest was uploaded as it was, although upload() and attach() both default
+its manifest was uploaded as it was, although store() and attach() both default
 to True.
 """
 
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from accessionflow.cli import attach_cmd
-from accessionflow.stores.xnat.cli import upload_cmd
+from accessionflow.stores.xnat.cli import store_cmd
 from conftest import show_cli_trace
 
 CLEAN_ENV = {
@@ -25,7 +25,7 @@ CLEAN_ENV = {
 }
 
 
-@pytest.mark.parametrize("cmd", [upload_cmd, attach_cmd])
+@pytest.mark.parametrize("cmd", [store_cmd, attach_cmd])
 def test_require_manifest_option_defaults_to_true(cmd: ty.Any) -> None:
     (option,) = [p for p in cmd.params if p.name == "require_manifest"]
     assert option.default is True
@@ -46,13 +46,13 @@ def test_upload_passes_require_manifest(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.store_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.store_cli.store") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
         result = cli_runner(
-            upload_cmd,
+            store_cmd,
             ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
             + flags,
             env={**CLEAN_ENV, "ACFLOW_REQUIRE_MANIFEST": env_value},
@@ -73,13 +73,13 @@ def test_upload_passes_no_uid_check(
     cli_runner: ty.Any, flags: list[str], env_value: ty.Optional[str], expected: bool
 ) -> None:
     with (
-        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.store_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.store_cli.store") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.return_value = []
         result = cli_runner(
-            upload_cmd,
+            store_cmd,
             ["/staged", "https://xnat.example.org", "--user", "u", "--password", "p"]
             + flags,
             env={**CLEAN_ENV, "ACFLOW_NO_UID_CHECK": env_value},

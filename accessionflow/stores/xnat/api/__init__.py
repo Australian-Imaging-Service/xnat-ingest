@@ -1,4 +1,4 @@
-from .check_upload_api import check_upload
-from .upload_api import upload
+from .check_store_api import check_store
+from .store_api import store
 
-__all__ = ["upload", "check_upload"]
+__all__ = ["store", "check_store"]

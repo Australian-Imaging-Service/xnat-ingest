@@ -3,7 +3,7 @@ Basic ingest workflow
 
 This walks through the minimum needed to get files from a directory on disk into an
 XNAT project: **collate** the raw files into scans/resources, **label** each session a
-project/subject/session ID, then **upload** to XNAT. Each stage is a separate CLI
+project/subject/session ID, then **store** them in XNAT. Each stage is a separate CLI
 sub-command and writes its output to a directory that the next stage reads from, so
 they can be run as a chain, on separate schedules, or repeatedly with ``--loop``.
 
@@ -402,7 +402,7 @@ generic FileFormats ZIP converter:
         --output-resource auto \
             medimage/vnd.australianimagingservice.dicom-sample
 
-Point ``upload`` at the packaged output. The input remains untouched unless
+Point ``store`` at the packaged output. The input remains untouched unless
 ``--unlink-source`` is supplied, and a new session is exposed in the output only
 after every conversion and manifest has been written successfully.
 Packaging rejects samples from different DICOM studies in one session. The upload
@@ -432,24 +432,24 @@ GIFs. Converter options go after the target type, e.g.
 ``medimage/vnd.xnat.snapshots:thumbnail_size=128`` (the default is 256 pixels on
 the longest side).
 
-The label of the snapshots output doesn't matter. ``upload`` always stores
+The label of the snapshots output doesn't matter. ``store`` always stores
 snapshots in the scan's ``SNAPSHOTS`` resource, marking the files as the
-``ORIGINAL`` and ``THUMBNAIL`` images that XNAT displays, and ``check-upload`` looks
+``ORIGINAL`` and ``THUMBNAIL`` images that XNAT displays, and ``check-store`` looks
 for them there.
 
 Only resources that match the source datatype are converted. A scan with just one
 PNG holds an ``image/png`` resource, not an ``image/png+set-of``, so it gets no
 snapshots from the command above.
 
-3. Upload to XNAT
+3. Store in XNAT
 --------------------
 
-``upload`` takes the labelled sessions and pushes them to an XNAT instance, creating
+``store`` takes the labelled sessions and pushes them to an XNAT instance, creating
 projects/subjects/sessions/scans/resources as needed.
 
 .. code-block:: console
 
-    $ accessionflow upload xnat /data/staging/labelled xnat.example.org \
+    $ accessionflow store xnat /data/staging/labelled xnat.example.org \
         --user my-upload-user --password my-upload-password
 
 * ``STAGED`` — the ``label`` output directory, or an S3 bucket URI
@@ -503,7 +503,7 @@ metadata.
 
 Sessions already on XNAT hold their previous value, which a hashed UID won't match.
 While moving to hashed UIDs, pass ``--no-uid-check`` (``ACFLOW_NO_UID_CHECK``) to
-``upload`` and ``check-upload``. This skips only the UID comparison: the subject is
+``store`` and ``check-store``. This skips only the UID comparison: the subject is
 still checked where it is known, and the value on XNAT isn't changed, so these
 sessions will be refused again once the option is removed unless their values are
 updated. Session-only uploads have no known subject, so they aren't checked at all
@@ -531,12 +531,12 @@ their local grouping identity must already match the remote field.
 4. Check what made it up
 ----------------------------
 
-``check-upload`` compares a staging directory against what's actually present on the
-XNAT server and logs anything that's missing — useful to run after ``upload`` to
+``check-store`` compares a staging directory against what's actually present on the
+XNAT server and logs anything that's missing — useful to run after ``store`` to
 confirm nothing was dropped.
 
 .. code-block:: console
 
-    $ accessionflow check-upload xnat /data/staging/labelled xnat.example.org
+    $ accessionflow check-store xnat /data/staging/labelled xnat.example.org
 
-It takes the same ``STAGED``/``SERVER``/credential options as ``upload``.
+It takes the same ``STAGED``/``SERVER``/credential options as ``store``.

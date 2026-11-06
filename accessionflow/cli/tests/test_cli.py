@@ -49,9 +49,9 @@ from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
 from accessionflow.model.resource import Resource
 from accessionflow.stores.xnat.arg_types import XnatLogin
 from accessionflow.stores.xnat.cli import (
-    check_upload_cmd,
+    check_store_cmd,
     label_cmd,
-    upload_cmd,
+    store_cmd,
 )
 from conftest import get_raw_data_files, show_cli_trace
 
@@ -539,7 +539,7 @@ def test_stage_and_upload(
     source_dir = str(attached_dir)
 
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -575,7 +575,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -663,7 +663,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1353,7 +1353,7 @@ def test_check_upload_missing_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1375,7 +1375,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1482,7 +1482,7 @@ def test_check_upload_empty_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1514,7 +1514,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1622,7 +1622,7 @@ def test_check_upload_missing_resource(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1654,7 +1654,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1753,7 +1753,7 @@ def test_check_upload_checksum_fail(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             str(labelled_dir),
             "--always-include",
@@ -1802,7 +1802,7 @@ def test_check_upload_checksum_fail(
     )
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1914,7 +1914,7 @@ def test_upload_snapshots_display_in_xnat(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             str(packaged_dir),
             # Photographs have no DICOM modality to choose the session type from, and
@@ -1958,7 +1958,7 @@ def test_upload_snapshots_display_in_xnat(
     # check-upload finds the snapshots under the label they were uploaded with
     check_upload_log_file = tmp_path / "check-upload-logs.log"
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             str(packaged_dir),
             "--always-include",

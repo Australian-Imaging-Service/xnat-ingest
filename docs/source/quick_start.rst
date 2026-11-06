@@ -55,7 +55,7 @@ scan (downloaded and cached the first time it's run). Substitute your own direct
 DICOM files here instead if you have some handy.
 
 
-4. Collate, label and upload
+4. Collate, label and store
 ------------------------------
 
 Collate the files into scans/resources:
@@ -79,7 +79,7 @@ Then upload to XNAT
 
 .. code-block:: console
 
-    $ accessionflow upload xnat /tmp/accessionflow-quickstart/labelled http://localhost:8080 \
+    $ accessionflow store xnat /tmp/accessionflow-quickstart/labelled http://localhost:8080 \
         --user admin --password admin
 
 

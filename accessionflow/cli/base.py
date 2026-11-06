@@ -13,7 +13,7 @@ def cli() -> None:
     pass
 
 
-class StoreGroup(click.Group):
+class DataStoreGroup(click.Group):
     """A stage with one subcommand per store, e.g. 'label xnat'.
 
     The subcommands are registered by the store plugins, which are loaded the
@@ -53,12 +53,46 @@ class StoreGroup(click.Group):
         return super().resolve_command(ctx, args)
 
 
-def store_group(name: str, help: str) -> StoreGroup:
+def data_store_group(name: str, help: str) -> DataStoreGroup:
     """Add a stage to the CLI whose subcommands are provided by store plugins"""
-    group = StoreGroup(
+    group = DataStoreGroup(
         name=name,
-        help=f"{help}\n\nRun 'accessionflow {name} <store> --help' for the "
-        "options for each store.",
+        help=f"{help}\n\nRun 'accessionflow {name} <data-store> --help' for the "
+        "options for each data store.",
     )
     cli.add_command(group)
     return group
+
+
+class DeprecatedAlias(DataStoreGroup):
+    """A hidden former name of a stage, e.g. 'upload' for 'store', which runs the
+    stage's subcommands after warning that the name is deprecated"""
+
+    def __init__(self, name: str, target: DataStoreGroup) -> None:
+        super().__init__(
+            name=name,
+            hidden=True,
+            help=f"Deprecated name of '{target.name}'",
+        )
+        self.target = target
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return self.target.list_commands(ctx)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        return self.target.get_command(ctx, cmd_name)
+
+    def invoke(self, ctx: click.Context) -> object:
+        click.echo(
+            f"Warning: 'accessionflow {self.name}' is deprecated and will be removed "
+            f"in a future release, use 'accessionflow {self.target.name}' instead",
+            err=True,
+        )
+        return super().invoke(ctx)
+
+
+def deprecated_alias(name: str, target: DataStoreGroup) -> DeprecatedAlias:
+    """Add a hidden former name of a stage to the CLI"""
+    alias = DeprecatedAlias(name, target)
+    cli.add_command(alias)
+    return alias

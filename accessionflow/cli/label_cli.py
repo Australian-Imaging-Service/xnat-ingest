@@ -10,11 +10,11 @@ from accessionflow.helpers.arg_types import CopyModeParamType, LoggerConfig, Mim
 from accessionflow.helpers.logging import logger, set_logger_handling
 from accessionflow.model.store_config import Store
 
-from .base import store_group
+from .base import data_store_group
 
-label_group = store_group(
+label_group = data_store_group(
     name="label",
-    help="""Assigns the IDs a store needs, extracted from session metadata, to
+    help="""Assigns the IDs a data store needs, extracted from session metadata, to
 sessions that have already been collated into acquisitions/resources""",
 )
 
@@ -35,7 +35,7 @@ reviewed/reprocessed rather than silently lost.
 """
 
 
-def make_label_command(store: Store) -> click.Command:
+def make_label_command(data_store: Store) -> click.Command:
     """Make the 'label <store>' subcommand from the store's configuration
     and register it with the 'label' group.
 
@@ -46,7 +46,7 @@ def make_label_command(store: Store) -> click.Command:
 
     Parameters
     ----------
-    store : Store
+    data_store : Store
         the configuration of the store
 
     Returns
@@ -54,10 +54,10 @@ def make_label_command(store: Store) -> click.Command:
     click.Command
         the 'label <store>' subcommand
     """
-    prefix = store.envvar_prefix
-    top = store.labels[0]
-    level_names = [level.name for level in store.labels]
-    acquisition = store.acquisition
+    prefix = data_store.envvar_prefix
+    top = data_store.labels[0]
+    level_names = [level.name for level in data_store.labels]
+    acquisition = data_store.acquisition
 
     def label_cmd(
         input_dir: Path,
@@ -86,7 +86,7 @@ def make_label_command(store: Store) -> click.Command:
 
         # The model holds the labels as project, subject and session IDs for now
         project_field, subject_field, session_field = (
-            label_fields[f"label_{i}"] for i in range(len(store.labels))
+            label_fields[f"label_{i}"] for i in range(len(data_store.labels))
         )
 
         # Run the label process in a loop if loop is set to a positive value,
@@ -105,7 +105,7 @@ def make_label_command(store: Store) -> click.Command:
                 raise_errors=raise_errors,
                 copy_mode=copy_mode,
                 include=[include_type.datatype for include_type in include_types],
-                single_resource=not store.multiple_resources,
+                single_resource=not data_store.multiple_resources,
             )
             if loop < 0:
                 break
@@ -122,7 +122,7 @@ def make_label_command(store: Store) -> click.Command:
             time.sleep(sleep_time)
 
     label_options: list[click.Parameter] = []
-    for i, level in enumerate(store.labels):
+    for i, level in enumerate(data_store.labels):
         envvar = level.envvar(prefix)
         # An explicit default of None would count as a value for 'required' in
         # click >= 8.3, so a level without a default is given none at all
@@ -179,9 +179,9 @@ def make_label_command(store: Store) -> click.Command:
     command = _common_label_options(
         prefix,
         click.command(
-            name=store.name,
+            name=data_store.name,
             help=LABEL_HELP.format(
-                title=store.title,
+                title=data_store.title,
                 levels="/".join(level_names),
                 acquisitions=f"{acquisition.name}s" if acquisition else "acquisitions",
                 dirname=".".join(f"<{n}>" for n in level_names),

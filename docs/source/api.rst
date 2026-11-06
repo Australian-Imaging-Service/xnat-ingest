@@ -18,9 +18,9 @@ evoke the same modular behaviour via a Python workflow.
 
 .. autofunction:: accessionflow.api.package
 
-.. autofunction:: accessionflow.stores.xnat.api.upload
+.. autofunction:: accessionflow.stores.xnat.api.store
 
-.. autofunction:: accessionflow.stores.xnat.api.check_upload
+.. autofunction:: accessionflow.stores.xnat.api.check_store
 
 .. autofunction:: accessionflow.api.attach
 

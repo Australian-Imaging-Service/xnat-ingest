@@ -2,8 +2,8 @@ Deployment tips
 ===============
 
 Rather than a one-off run, most nodes want ``collate``/``label``/``deidentify``/
-``upload`` running continuously, each watching its input directory and picking up new
-files as they arrive. Every stage except ``check-upload`` supports this directly via
+``store`` running continuously, each watching its input directory and picking up new
+files as they arrive. Every stage except ``check-store`` supports this directly via
 ``--loop <seconds>``: instead of running once and exiting, the command re-runs itself
 every ``<seconds>`` seconds, forever, in a single process.
 
@@ -26,9 +26,9 @@ the CLI as its entrypoint, so each stage becomes a single long-running container
         ghcr.io/australian-imaging-service/accessionflow \
         collate /input /staging/collated --loop 300
 
-Repeat with ``label``, optionally ``deidentify``, and ``upload`` as separate
+Repeat with ``label``, optionally ``deidentify``, and ``store`` as separate
 containers, each mounting the previous stage's output as its input, chained through a
-shared staging area on disk (or an S3 bucket, which ``upload``/``check-upload`` can
+shared staging area on disk (or an S3 bucket, which ``store``/``check-store`` can
 read from directly).
 
 Docker Compose
@@ -75,7 +75,7 @@ The same shape maps onto a Kubernetes ``Deployment`` per stage (one replica each
 ``restartPolicy: Always``), with the staging directories on a shared
 ``PersistentVolumeClaim`` mounted into each Pod, and connection details (XNAT host,
 user, password) injected via a ``ConfigMap``/``Secret`` as ``ACFLOW_*`` environment
-variables rather than passed as command-line flags. ``check-upload`` doesn't support
+variables rather than passed as command-line flags. ``check-store`` doesn't support
 ``--loop``, so it's a natural fit for a ``CronJob`` instead, run periodically to audit
 what has and hasn't made it to XNAT rather than as an always-on service.
 

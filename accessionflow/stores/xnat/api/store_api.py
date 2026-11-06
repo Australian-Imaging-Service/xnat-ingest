@@ -105,7 +105,7 @@ def _staged_upload_batch(
         yield upload_dir
 
 
-def upload(
+def store(
     input_dir: str,
     xnat_repo: Xnat,
     always_include: ty.Sequence[str | FileSet] = (),
@@ -801,7 +801,7 @@ def session_upload_verdict(
 ) -> ty.Optional[str]:
     """Summarise how a session's upload went, or None if it went cleanly.
 
-    Kept separate from upload() because the SUCCESS branch is the one that
+    Kept separate from store() because the SUCCESS branch is the one that
     misled operators: resources skipped as "already uploaded" never entered
     `to_upload`, so they could never reach `resource_errors`, so a session that
     delivered a fraction of its files still logged "Successfully uploaded all

@@ -8,7 +8,7 @@ import pytest
 
 from accessionflow.exceptions import UnsupportedModalityError
 from accessionflow.model.accession import Accession
-from accessionflow.stores.xnat.api import upload_api
+from accessionflow.stores.xnat.api import store_api
 from accessionflow.stores.xnat.remotes import get_xnat_session, xnat_session_type
 
 
@@ -148,13 +148,13 @@ def test_upload_passes_modality_to_get_xnat_session(tmp_path: Path):
     }
     repo = SimpleNamespace(server="fake://xnat", connection=connection)
     with (
-        mock.patch.object(upload_api.Accession, "load", return_value=session),
-        mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
+        mock.patch.object(store_api.Accession, "load", return_value=session),
+        mock.patch.object(store_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
-            upload_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")
+            store_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")
         ) as get_session,
     ):
-        errors = upload_api.upload(
+        errors = store_api.store(
             str(staging),
             repo,
             always_include=["all"],

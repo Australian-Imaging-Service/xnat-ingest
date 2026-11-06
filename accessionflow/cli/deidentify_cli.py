@@ -185,7 +185,7 @@ only written if --reid-dir is given; see that option.
     help=(
         "Comma-separated metadata keys to retain in output sidecars "
         "(ACFLOW_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
-        "__store__ are always retained, as they are needed to identify a session."
+        "__data_store__ are always retained, as they are needed to identify a session."
     ),
 )
 @click.option(
@@ -257,7 +257,7 @@ def deidentify_cmd(
         )
         # The return value was previously discarded, so a session that failed or was
         # left incomplete produced no signal above this function at all. collate_cmd and
-        # upload_cmd both summarise it the same way.
+        # store_cmd both summarise it the same way.
         if errors:
             logger.error(
                 "Deidentification completed with %s errors:\n\n%s",

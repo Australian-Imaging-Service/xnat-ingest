@@ -3,16 +3,17 @@ from pathlib import Path
 
 import click
 
-from accessionflow.cli.upload_cli import check_upload_group
+from accessionflow.cli.store_cli import check_store_group
 from accessionflow.helpers.arg_types import LoggerConfig, StoreCredentials
 from accessionflow.helpers.logging import set_logger_handling
 from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS
-from accessionflow.stores.xnat.api.check_upload_api import check_upload
+from accessionflow.stores.xnat.api.check_store_api import check_store
 
 
-@check_upload_group.command(
+@check_store_group.command(
     name="xnat",
-    help="""Checks staging directory against uploaded files and logs all files that aren't uploaded
+    help="""Checks what has been deposited in an XNAT data store against the staging
+directory it was deposited from, and logs all files that haven't been
 
 STAGED is either a directory that the files for each session are collated to before they
 are uploaded to XNAT or an S3 bucket to download the files from.
@@ -149,7 +150,7 @@ by setting the "ACFLOW_HOST" environment variable.
         "isn't changed (ACFLOW_NO_UID_CHECK env. var)"
     ),
 )
-def check_upload_cmd(
+def check_store_cmd(
     input_dir: str,
     server: str,
     user: str,
@@ -173,7 +174,7 @@ def check_upload_cmd(
         clean_format=True,
     )
 
-    check_upload(
+    check_store(
         input_dir=input_dir,
         server=server,
         user=user,

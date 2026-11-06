@@ -5,7 +5,7 @@ from unittest import mock
 import pytest
 
 from accessionflow.exceptions import SessionIdentityRefused
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api.store_api import store
 from accessionflow.stores.xnat.remotes import XnatLocalSessionListing
 from accessionflow.stores.xnat.tests.test_upload_cache_invalidation import (
     FakeRepo,
@@ -23,11 +23,9 @@ def test_only_identity_refusal_emits_identity_event(
     with mock.patch.object(XnatLocalSessionListing, "all_uploaded", side_effect=error):
         if raise_errors:
             with pytest.raises(type(error)):
-                upload(
-                    str(tmp_path), FakeRepo(events), wait_period=0, raise_errors=True
-                )
+                store(str(tmp_path), FakeRepo(events), wait_period=0, raise_errors=True)
         else:
-            assert len(upload(str(tmp_path), FakeRepo(events), wait_period=0)) == 1
+            assert len(store(str(tmp_path), FakeRepo(events), wait_period=0)) == 1
     alerts = [
         r for r in caplog.records if getattr(r, "event", "") == "xnat_identity_refused"
     ]

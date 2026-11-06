@@ -1,15 +1,15 @@
 from .attach_cli import attach_cmd
-from .base import StoreGroup, cli, store_group
+from .base import DataStoreGroup, cli, data_store_group
 from .collate_cli import collate_cmd, collate_orthanc_cmd
 from .deidentify_cli import deidentify_cmd
 from .fields_cli import fields_cmd
 from .label_cli import label_group, make_label_command
 from .package_cli import package_cmd
-from .upload_cli import check_upload_group, upload_group
+from .store_cli import check_store_group, store_group
 
 __all__ = [
     "attach_cmd",
-    "check_upload_group",
+    "check_store_group",
     "cli",
     "collate_cmd",
     "collate_orthanc_cmd",
@@ -18,7 +18,7 @@ __all__ = [
     "label_group",
     "make_label_command",
     "package_cmd",
+    "data_store_group",
+    "DataStoreGroup",
     "store_group",
-    "StoreGroup",
-    "upload_group",
 ]

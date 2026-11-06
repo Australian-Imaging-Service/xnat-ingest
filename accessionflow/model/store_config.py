@@ -54,18 +54,18 @@ class LabelLevel:
 
 
 def _check_labels(
-    store: "Store", attribute: ty.Any, labels: tuple[LabelLevel, ...]
+    data_store: "Store", attribute: ty.Any, labels: tuple[LabelLevel, ...]
 ) -> None:
     if len(labels) != MODEL_LABEL_LEVELS:
         raise ValueError(
-            f"Store '{store.name}' has {len(labels)} label levels, but "
+            f"Store '{data_store.name}' has {len(labels)} label levels, but "
             f"sessions can only be labelled with exactly {MODEL_LABEL_LEVELS} for now"
         )
     names = [level.name for level in labels]
-    if store.acquisition is not None:
-        names.append(store.acquisition.name)
+    if data_store.acquisition is not None:
+        names.append(data_store.acquisition.name)
     if len(set(names)) != len(names):
-        raise ValueError(f"Store '{store.name}' has repeated label names: {names}")
+        raise ValueError(f"Store '{data_store.name}' has repeated label names: {names}")
 
 
 @attrs.frozen

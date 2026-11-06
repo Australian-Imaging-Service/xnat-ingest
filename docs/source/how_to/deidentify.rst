@@ -3,7 +3,7 @@ Deidentification
 
 For sites where the ``label``-ed sessions still contain identifiable data (e.g. a
 clinical scanner staging DICOMs before upload), insert a ``deidentify`` step between
-``label`` and ``upload``. It strips patient-identifying fields from each session and
+``label`` and ``store``. It strips patient-identifying fields from each session and
 writes the deidentified copy, and — only if ``--reid-dir`` is given — a
 re-identification mapping so the process can be reversed later if needed (e.g. to look
 up a scan for a clinical follow-up).
@@ -14,7 +14,7 @@ up a scan for a clinical follow-up).
         /etc/accessionflow/deid-specs --reid-dir /data/staging/reid
 
 * ``INPUT_DIR`` — the ``label`` output directory (``ACFLOW_INPUT_DIR``)
-* ``OUTPUT_DIR`` — where deidentified sessions are written; point ``upload`` at this
+* ``OUTPUT_DIR`` — where deidentified sessions are written; point ``store`` at this
   directory instead of the ``label`` output (``ACFLOW_OUTPUT_DIR``)
 * ``SPEC_DIR`` — the deidentification specs, one directory per project (see below)
   (``ACFLOW_SPEC_DIR``)

@@ -16,4 +16,4 @@ A plugin package
 - may have a `cli` subpackage, imported when the CLI first looks up a
   store's subcommand, that registers the plugin's subcommands, e.g.
   `label xnat` by calling `accessionflow.cli.make_label_command(STORE)`,
-  and `upload xnat` with `@accessionflow.cli.upload_group.command(name="xnat")`
+  and `store xnat` with `@accessionflow.cli.store_group.command(name="xnat")`
