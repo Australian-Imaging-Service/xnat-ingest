@@ -1,4 +1,4 @@
-"""upload() must not decide from a stale view of XNAT, and must not grow memory.
+"""store() must not decide from a stale view of XNAT, and must not grow memory.
 
 `upload --loop` holds one XNAT connection for the life of the process, and
 xnatpy caches what it reads on it. An operator who deletes a partially uploaded
@@ -16,7 +16,7 @@ import typing as ty
 from pathlib import Path
 from unittest import mock
 
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api.store_api import store
 from accessionflow.stores.xnat.remotes import XnatLocalSessionListing
 
 
@@ -53,9 +53,9 @@ def _upload_one_session(tmp_path: Path, uploaded: bool) -> ty.List[str]:
         mock.patch.object(
             XnatLocalSessionListing, "all_uploaded", return_value=uploaded
         ),
-        mock.patch("accessionflow.stores.xnat.api.upload_api.Accession.load"),
+        mock.patch("accessionflow.stores.xnat.api.store_api.Accession.load"),
     ):
-        upload(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
+        store(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
     return events
 
 

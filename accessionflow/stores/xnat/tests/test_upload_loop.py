@@ -30,7 +30,7 @@ from unittest.mock import MagicMock, patch
 
 import requests.exceptions
 
-from accessionflow.stores.xnat.cli import upload_cmd
+from accessionflow.stores.xnat.cli import store_cmd
 from conftest import show_cli_trace
 
 STAGED = "/staged"
@@ -65,9 +65,9 @@ def _run_loop(
     extra_args: ty.Sequence[str] = (),
 ) -> ty.Tuple[ty.Any, MagicMock, MagicMock]:
     with (
-        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
-        patch("accessionflow.stores.xnat.cli.upload_cli.time.sleep") as mock_sleep,
+        patch("accessionflow.stores.xnat.cli.store_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.store_cli.store") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.store_cli.time.sleep") as mock_sleep,
     ):
         if xnat_side_effect is not None:
             mock_xnat_cls.side_effect = xnat_side_effect
@@ -77,7 +77,7 @@ def _run_loop(
         mock_sleep.side_effect = sleep_side_effect
 
         result = cli_runner(
-            upload_cmd,
+            store_cmd,
             COMMON_ARGS + ["--loop", "1"] + list(extra_args),
             env=CLEAN_ENV,
         )
@@ -101,7 +101,7 @@ def test_loop_holds_single_xnat_connection_across_iterations(
 
 
 def test_loop_reopens_connection_after_transient_error(cli_runner: ty.Any) -> None:
-    """A transient network error from upload() must close and re-open the
+    """A transient network error from store() must close and re-open the
     held connection, then keep looping rather than crashing the daemon."""
     result, mock_xnat_cls, mock_upload = _run_loop(
         cli_runner,
@@ -121,7 +121,7 @@ def test_loop_reopens_connection_after_transient_error(cli_runner: ty.Any) -> No
 def test_loop_reconnects_after_detecting_auth_failure_in_returned_errors(
     cli_runner: ty.Any,
 ) -> None:
-    """upload() doesn't raise on a stale/expired session -- it swallows the
+    """store() doesn't raise on a stale/expired session -- it swallows the
     401/403 per session and returns it as an error string. --loop must
     detect that signature and force a reconnect, otherwise every
     subsequent session would be rejected until the process is restarted."""
@@ -350,15 +350,15 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
     the caller instead of being swallowed -- there's no daemon to keep
     alive, so callers need to see the failure."""
     with (
-        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
-        patch("accessionflow.stores.xnat.cli.upload_cli.upload") as mock_upload,
+        patch("accessionflow.stores.xnat.cli.store_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.store_cli.store") as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
         mock_upload.side_effect = requests.exceptions.ConnectionError(
             "connection reset by peer"
         )
 
-        result = cli_runner(upload_cmd, COMMON_ARGS, env=CLEAN_ENV)
+        result = cli_runner(store_cmd, COMMON_ARGS, env=CLEAN_ENV)
 
     assert isinstance(result.exception, requests.exceptions.ConnectionError), (
         show_cli_trace(result)
@@ -369,15 +369,15 @@ def test_one_shot_mode_reraises_transient_error_instead_of_looping(
 
 def test_date_field_is_passed_to_upload(cli_runner: ty.Any) -> None:
     with (
-        patch("accessionflow.stores.xnat.cli.upload_cli.Xnat") as mock_xnat_cls,
+        patch("accessionflow.stores.xnat.cli.store_cli.Xnat") as mock_xnat_cls,
         patch(
-            "accessionflow.stores.xnat.cli.upload_cli.upload", return_value=[]
+            "accessionflow.stores.xnat.cli.store_cli.store", return_value=[]
         ) as mock_upload,
     ):
         mock_xnat_cls.return_value = MagicMock()
 
         result = cli_runner(
-            upload_cmd,
+            store_cmd,
             COMMON_ARGS + ["--date", "CaptureDate"],
             env=CLEAN_ENV,
         )

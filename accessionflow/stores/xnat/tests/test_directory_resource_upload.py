@@ -17,7 +17,7 @@ from fileformats.generic import Directory, File
 from accessionflow.helpers.remotes import calculate_checksums
 from accessionflow.model.accession import Accession
 from accessionflow.model.resource import Resource
-from accessionflow.stores.xnat.api import upload_api
+from accessionflow.stores.xnat.api import store_api
 
 
 def _directory(tmp_path):
@@ -92,21 +92,21 @@ def _upload(
     connection.get_json.side_effect = get_json
     repo = SimpleNamespace(server="fake://xnat", connection=connection)
     with (
-        mock.patch.object(upload_api.Accession, "load", return_value=session),
-        mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
+        mock.patch.object(store_api.Accession, "load", return_value=session),
+        mock.patch.object(store_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
-            upload_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")
+            store_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")
         ),
         mock.patch.object(
-            upload_api, "get_xnat_resource", return_value=(remote, only_files)
+            store_api, "get_xnat_resource", return_value=(remote, only_files)
         ),
         mock.patch.object(
-            upload_api,
+            store_api,
             "get_xnat_checksums",
             side_effect=lambda resource: dict(resource.held),
         ),
     ):
-        errors = upload_api.upload(
+        errors = store_api.store(
             str(staging),
             repo,
             always_include=["all"],
@@ -301,7 +301,7 @@ def test_batch_stages_absolute_file_link_bytes(tmp_path, monkeypatch, cross_devi
             raise OSError(errno.EXDEV, "simulated cross-device target")
 
         monkeypatch.setattr(Path, "hardlink_to", exdev)
-    with upload_api._staged_upload_batch(source, [link]) as batch:
+    with store_api._staged_upload_batch(source, [link]) as batch:
         staged = batch / "link.bin"
         assert not staged.is_symlink()
         assert staged.read_bytes() == target.read_bytes()
@@ -320,5 +320,5 @@ def test_regular_file_hardlink_failure_is_not_hidden(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "hardlink_to", exdev)
     with pytest.raises(OSError, match="regular-file error"):
-        with upload_api._staged_upload_batch(source, [path]):
+        with store_api._staged_upload_batch(source, [path]):
             pytest.fail("The hardlink must fail")

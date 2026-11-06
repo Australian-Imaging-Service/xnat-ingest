@@ -48,7 +48,7 @@ Attaching files after cleanup (metadata skeletons)
 --------------------------------------------------
 
 Attached files sometimes turn up late — after a session's primary DICOMs have
-already been through ``label``/``deidentify``/``upload`` and had their local copies
+already been through ``label``/``deidentify``/``store`` and had their local copies
 cleaned up. ``attach`` doesn't need to know or care whether that's happened: if
 ``label`` (and/or ``deidentify``) was run with ``--unlink-source keep-metadata``
 rather than ``all``, the session and scan directories are still there — just without

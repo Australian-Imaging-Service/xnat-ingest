@@ -27,9 +27,9 @@ flowchart LR
     Scanner(["Scanner / instrument"]) --> Collate["collate"]
     Collate --> Label["label"]
     Label --> Deidentify["deidentify (optional)"]
-    Deidentify --> Upload["upload"]
-    Upload --> XNAT[("XNAT")]
-    Upload -.-> CheckUpload["check-upload"]
+    Deidentify --> Store["store"]
+    Store --> XNAT[("XNAT")]
+    Store -.-> CheckStore["check-store"]
 
     Extra(["files without\nsorting metadata"]) -.-> Attach["attach (optional)"]
     Collate -.-> Attach

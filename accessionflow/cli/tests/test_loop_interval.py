@@ -17,7 +17,7 @@ class StopLoop(Exception):
 # looked up in
 XNAT_COMMANDS = {
     "label": "accessionflow.cli.label_cli",
-    "upload": "accessionflow.stores.xnat.cli.upload_cli",
+    "store": "accessionflow.stores.xnat.cli.store_cli",
 }
 
 CASES = [
@@ -30,8 +30,8 @@ CASES = [
         ["http://orthanc.test", "{in}", "{out}", "user", "password"],
     ),
     (
-        "upload",
-        "upload",
+        "store",
+        "store",
         ["{in}", "https://xnat.test", "--user", "user", "--password", "password"],
     ),
 ]
@@ -61,7 +61,7 @@ def test_loop_interval(
     for name in ["in", "spec"]:
         (tmp_path / name).mkdir()
     args = [arg.format(**paths) for arg in extra]
-    if api_name not in ("collate_orthanc", "upload"):
+    if api_name not in ("collate_orthanc", "store"):
         args = [paths["in"], paths["out"]] + args
     args += ["--loop", str(loop)]
     now = [100.0]
@@ -90,7 +90,7 @@ def test_loop_interval(
     )
     log = MagicMock()
     monkeypatch.setattr(module, "logger", log)
-    if api_name == "upload":
+    if api_name == "store":
         monkeypatch.setattr(module, "Xnat", MagicMock())
     # Keep a developer's ACFLOW_* environment out of this CLI invocation.
     import os

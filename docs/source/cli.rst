@@ -5,7 +5,7 @@ AccessionFlow's command line interface consists of a number of sub-commands unde
 `accessionflow` command. See :doc:`/how_to/pipeline` for how these fit together into a
 pipeline.
 
-The ``label``, ``upload`` and ``check-upload`` stages have a subcommand for each
+The ``label``, ``store`` and ``check-store`` stages have a subcommand for each
 store, provided by the store's plugin, e.g. ``accessionflow label xnat``.
 
 
@@ -28,12 +28,12 @@ store, provided by the store's plugin, e.g. ``accessionflow label xnat``.
    :prog: accessionflow package
 
 
-.. click:: accessionflow.stores.xnat.cli.upload_cli:upload_cmd
-   :prog: accessionflow upload xnat
+.. click:: accessionflow.stores.xnat.cli.store_cli:store_cmd
+   :prog: accessionflow store xnat
 
 
-.. click:: accessionflow.stores.xnat.cli.check_upload_cli:check_upload_cmd
-   :prog: accessionflow check-upload xnat
+.. click:: accessionflow.stores.xnat.cli.check_store_cli:check_store_cmd
+   :prog: accessionflow check-store xnat
 
 
 .. click:: accessionflow.cli.attach_cli:attach_cmd

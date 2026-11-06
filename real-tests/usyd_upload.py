@@ -2,13 +2,13 @@ import os
 
 from click.testing import CliRunner
 
-from accessionflow.cli import upload_cli
+from accessionflow.stores.xnat.cli import store_cmd
 from accessionflow.utils import show_cli_trace
 
 runner = CliRunner()
 
 result = runner.invoke(
-    upload_cli,
+    store_cmd,
     [],
     env={
         "ACFLOW_STAGED": "s3://ais-s3-tbp-s3bucket-1afz0bzdw5jd6/STAGING/STAGED",  # os.environ["ACFLOW_STAGED"],

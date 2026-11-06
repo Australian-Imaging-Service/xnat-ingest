@@ -40,8 +40,8 @@ from accessionflow.cli import (
     attach_cmd,
     collate_cmd,
     deidentify_cmd,
-    fields_cmd,
     package_cmd,
+    select_fields_cmd,
 )
 from accessionflow.helpers.arg_types import MimeType  # type: ignore[import-untyped]
 from accessionflow.helpers.metadata import Metadata
@@ -49,9 +49,9 @@ from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
 from accessionflow.model.resource import Resource
 from accessionflow.stores.xnat.arg_types import XnatLogin
 from accessionflow.stores.xnat.cli import (
-    check_upload_cmd,
+    check_store_cmd,
     label_cmd,
-    upload_cmd,
+    store_cmd,
 )
 from conftest import get_raw_data_files, show_cli_trace
 
@@ -216,7 +216,7 @@ def test_xnat_login_cli_envvar(tmp_path: Path, cli_runner: ty.Any) -> None:
     ]
 
 
-def test_fields_cli_envvar(
+def test_select_fields_cli_envvar(
     tmp_path: Path,
     cli_runner: ty.Any,
 ) -> None:
@@ -233,14 +233,14 @@ def test_fields_cli_envvar(
         },
     ):
         result = cli_runner(
-            fields_cmd,
+            select_fields_cmd,
             [str(input_dir), str(output_dir)],
         )
 
     assert result.exit_code == 0, show_cli_trace(result)
 
 
-def test_fields_cli_accepts_multiple_mappings(
+def test_select_fields_cli_accepts_multiple_mappings(
     tmp_path: Path,
     cli_runner: ty.Any,
 ) -> None:
@@ -249,7 +249,7 @@ def test_fields_cli_accepts_multiple_mappings(
     output_dir = tmp_path / "output"
 
     result = cli_runner(
-        fields_cmd,
+        select_fields_cmd,
         [
             str(input_dir),
             str(output_dir),
@@ -265,7 +265,7 @@ def test_fields_cli_accepts_multiple_mappings(
     assert result.exit_code == 0, show_cli_trace(result)
 
 
-def test_fields_cli_rejects_duplicate_field_names(
+def test_select_fields_cli_rejects_duplicate_field_names(
     tmp_path: Path,
     cli_runner: ty.Any,
 ) -> None:
@@ -274,7 +274,7 @@ def test_fields_cli_rejects_duplicate_field_names(
     output_dir = tmp_path / "output"
 
     result = cli_runner(
-        fields_cmd,
+        select_fields_cmd,
         [
             str(input_dir),
             str(output_dir),
@@ -539,7 +539,7 @@ def test_stage_and_upload(
     source_dir = str(attached_dir)
 
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -575,7 +575,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -663,7 +663,7 @@ def test_stage_and_upload(
 
     # Run upload a second time, and check that already uploaded sessions are skipped
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1353,7 +1353,7 @@ def test_check_upload_missing_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1375,7 +1375,7 @@ def test_check_upload_missing_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1482,7 +1482,7 @@ def test_check_upload_empty_scan(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1514,7 +1514,7 @@ def test_check_upload_empty_scan(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1622,7 +1622,7 @@ def test_check_upload_missing_resource(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1654,7 +1654,7 @@ def test_check_upload_missing_resource(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1753,7 +1753,7 @@ def test_check_upload_checksum_fail(
     # Run upload only including the MyFormatGz files to induce an error in check-upload
     # when checking for all files
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             str(labelled_dir),
             "--always-include",
@@ -1802,7 +1802,7 @@ def test_check_upload_checksum_fail(
     )
 
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             source_dir,
             "--always-include",
@@ -1914,7 +1914,7 @@ def test_upload_snapshots_display_in_xnat(
     assert result.exit_code == 0, show_cli_trace(result)
 
     result = cli_runner(
-        upload_cmd,
+        store_cmd,
         [
             str(packaged_dir),
             # Photographs have no DICOM modality to choose the session type from, and
@@ -1958,7 +1958,7 @@ def test_upload_snapshots_display_in_xnat(
     # check-upload finds the snapshots under the label they were uploaded with
     check_upload_log_file = tmp_path / "check-upload-logs.log"
     result = cli_runner(
-        check_upload_cmd,
+        check_store_cmd,
         [
             str(packaged_dir),
             "--always-include",
@@ -2048,10 +2048,10 @@ def test_deidentify_cli_dicom(
 
     # 3. Project spec mapping DicomSeries to an empty spec dict
 
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    project_spec_dir.mkdir(parents=True)
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    project_recipe_dir.mkdir(parents=True)
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text(DICOM_DEID_SPEC)
     (medimage_dir / "dicom-series.transforms.yaml").write_text(
@@ -2070,7 +2070,7 @@ def test_deidentify_cli_dicom(
         [
             str(labelled_dir),
             str(output_dir),
-            str(spec_dir),
+            str(recipe_dir),
             "--reid-dir",
             str(reid_dir),
             "--raise-errors",
@@ -2149,9 +2149,9 @@ def test_deidentify_cli_dicom_missing_transform(
     assert result.exit_code == 0, show_cli_trace(result)
 
     # 4. Spec with var:anon_patient_name but NO transforms file
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir(parents=True)
     (medimage_dir / "dicom-series").write_text(SPEC_WITH_MISSING_VAR)
 
@@ -2163,7 +2163,7 @@ def test_deidentify_cli_dicom_missing_transform(
         [
             str(labelled_dir),
             str(output_dir),
-            str(spec_dir),
+            str(recipe_dir),
             "--reid-dir",
             str(reid_dir),
             "--raise-errors",
@@ -2223,10 +2223,10 @@ def test_deidentify_cli_dicom_encrypted_reid(
     )
     assert result.exit_code == 0, show_cli_trace(result)
 
-    spec_dir = tmp_path / "spec"
-    project_spec_dir = spec_dir / PROJECT_ID
-    project_spec_dir.mkdir(parents=True)
-    medimage_dir = project_spec_dir / "medimage"
+    recipe_dir = tmp_path / "recipes"
+    project_recipe_dir = recipe_dir / PROJECT_ID
+    project_recipe_dir.mkdir(parents=True)
+    medimage_dir = project_recipe_dir / "medimage"
     medimage_dir.mkdir()
     (medimage_dir / "dicom-series").write_text("Dummy spec")
 
@@ -2258,7 +2258,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
             [
                 str(labelled_dir),
                 str(output_dir),
-                str(spec_dir),
+                str(recipe_dir),
                 "--reid-dir",
                 str(reid_dir),
                 "--raise-errors",
@@ -2306,10 +2306,10 @@ def test_deidentify_cmd_metadata_allowlist(
     monkeypatch.delenv("ACFLOW_METADATA_ALLOWLIST", raising=False)
 
     input_dir = tmp_path / "input"
-    spec_dir = tmp_path / "spec"
+    recipe_dir = tmp_path / "recipes"
     output_dir = tmp_path / "output"
     input_dir.mkdir()
-    spec_dir.mkdir()
+    recipe_dir.mkdir()
 
     with patch(
         "accessionflow.cli.deidentify_cli.deidentify",
@@ -2317,7 +2317,7 @@ def test_deidentify_cmd_metadata_allowlist(
     ) as mock_deidentify:
         result = cli_runner(
             deidentify_cmd,
-            [str(input_dir), str(output_dir), str(spec_dir), "--loop", "-1"],
+            [str(input_dir), str(output_dir), str(recipe_dir), "--loop", "-1"],
         )
 
     assert result.exit_code == 0, show_cli_trace(result)
@@ -2332,7 +2332,7 @@ def test_deidentify_cmd_metadata_allowlist(
             [
                 str(input_dir),
                 str(output_dir),
-                str(spec_dir),
+                str(recipe_dir),
                 "--loop",
                 "-1",
                 "--metadata-allowlist",

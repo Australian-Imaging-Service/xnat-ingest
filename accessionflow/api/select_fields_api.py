@@ -14,7 +14,7 @@ from accessionflow.model.accession import Accession
 from .collate_api import BUILD_NAME_DEFAULT
 
 
-def fields(
+def select_fields(
     input_dir: Path,
     output_dir: Path,
     extract: ty.Mapping[str, IDSpec],

@@ -8,7 +8,7 @@ from moto import mock_aws
 
 from accessionflow.helpers.arg_types import StoreCredentials
 from accessionflow.helpers.remotes import iterate_s3_sessions
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api.store_api import store
 from accessionflow.stores.xnat.remotes import (
     XnatS3SessionListing,
     XnatS3SessionOnlyListing,
@@ -159,7 +159,7 @@ def test_uploads_s3_pdf_to_existing_session_resource(
         )
         repo = _Repo()
         with patch.object(XnatS3SessionOnlyListing, "all_uploaded", return_value=False):
-            errors = upload(
+            errors = store(
                 input_dir=f"s3://{BUCKET}/desired_structure",
                 xnat_repo=repo,  # type: ignore[arg-type]
                 always_include=("all",),
@@ -199,7 +199,7 @@ def test_s3_session_label_upload_fails_when_session_is_missing(
                 match="No XNAT session found with label '000077'",
             ),
         ):
-            upload(
+            store(
                 input_dir=f"s3://{BUCKET}/desired_structure",
                 xnat_repo=repo,  # type: ignore[arg-type]
                 always_include=("all",),

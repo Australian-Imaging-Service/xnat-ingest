@@ -222,7 +222,7 @@ class S3SessionListing(SessionListing):
     def cache_path(self) -> Path:
         """Download the session once and reuse it for the life of the listing.
 
-        api/upload_api.py reads this four times for a single upload. Downloading
+        api/store_api.py reads this four times for a single upload. Downloading
         inside a property meant each read re-fetched the whole session, so a
         1.2 GB session was pulled from S3 four times over. The download is
         guarded by a lock as well as the flag, because the property is reachable

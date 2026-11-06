@@ -1,6 +1,6 @@
 """S3SessionListing.cache_path must download the session exactly once.
 
-`cache_path` is read four times by api/upload_api.py (lines 172, 181, 198, 216).
+`cache_path` is read four times by api/store_api.py (lines 172, 181, 198, 216).
 It was a plain property that performed the download as a side effect, so a
 single upload re-fetched the entire session from S3 four times over.
 
@@ -72,13 +72,13 @@ def _make_listing(
 def test_cache_path_downloads_each_object_once(tmp_path: Path) -> None:
     """Reading cache_path repeatedly must not re-fetch the session.
 
-    upload_api reads it four times for a single upload. Re-downloading is not
+    store_api reads it four times for a single upload. Re-downloading is not
     merely wasteful: it is what allows two downloads to race on one path.
     """
     bucket = RecordingBucket()
     listing, expected = _make_listing(tmp_path, bucket)
 
-    for _ in range(4):  # mirrors the four reads in upload_api.py
+    for _ in range(4):  # mirrors the four reads in store_api.py
         assert listing.cache_path == tmp_path
 
     assert bucket.download_count == len(expected), (

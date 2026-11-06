@@ -4,11 +4,12 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import click
 import pytest
 from click.testing import CliRunner
 
 from accessionflow.cli import cli, label_group, make_label_command
-from accessionflow.model.store_config import (
+from accessionflow.model.store import (
     LabelLevel,
     Store,
     get_store,
@@ -47,14 +48,14 @@ def test_store_rejects_repeated_label_names() -> None:
 
 def test_stages_list_the_plugin_subcommands() -> None:
     runner = CliRunner()
-    for stage in ("label", "upload", "check-upload"):
+    for stage in ("label", "store", "check-store"):
         result = runner.invoke(cli, [stage, "--help"], env=CLEAN_ENV)
         assert result.exit_code == 0, result.output
         assert "xnat" in result.output
 
 
 def test_missing_store_plugin_is_explained() -> None:
-    result = CliRunner().invoke(cli, ["upload", "nope", "x"], env=CLEAN_ENV)
+    result = CliRunner().invoke(cli, ["store", "nope", "x"], env=CLEAN_ENV)
     assert result.exit_code == 2
     assert "no store plugin named 'nope' is installed" in result.output
     assert "accessionflow.stores.nope" in result.output
@@ -102,13 +103,13 @@ def test_label_single_resource_follows_store_config(
 
     label = MagicMock(return_value=[])
     monkeypatch.setattr(label_cli, "label", label)
-    store = Store(
+    data_store = Store(
         name="singleres",
         title="Single",
         labels=(LabelLevel("a", "A"), LabelLevel("b", "B"), LabelLevel("c", "C")),
         multiple_resources=False,
     )
-    make_label_command(store)
+    make_label_command(data_store)
     try:
         (tmp_path / "in").mkdir()
         result = CliRunner().invoke(
@@ -156,7 +157,7 @@ def test_label_command_follows_store_config(
 
     label = MagicMock(return_value=[])
     monkeypatch.setattr(label_cli, "label", label)
-    store = Store(
+    data_store = Store(
         name="testrepo",
         title="Test",
         labels=(
@@ -166,7 +167,7 @@ def test_label_command_follows_store_config(
         ),
         envvar_prefix="TESTREPO_",
     )
-    command = make_label_command(store)
+    command = make_label_command(data_store)
     try:
         assert label_group.commands["testrepo"] is command
         options = {opt for param in command.params for opt in param.opts}
@@ -193,3 +194,74 @@ def test_label_command_follows_store_config(
         assert kwargs["single_resource"] is False
     finally:
         del label_group.commands["testrepo"]
+
+
+@pytest.mark.parametrize(
+    "old,new", [("upload", "store"), ("check-upload", "check-store")]
+)
+def test_former_stage_names_still_work(old: str, new: str) -> None:
+    """The stages' names before they were renamed run the same subcommands, warn
+    that they are deprecated, and are hidden from the help"""
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["--help"], env=CLEAN_ENV)
+    assert new in help_result.output
+    assert f"  {old} " not in help_result.output
+    result = runner.invoke(cli, [old, "xnat", "--help"], env=CLEAN_ENV)
+    assert result.exit_code == 0, result.output
+    assert f"'accessionflow {old}' is deprecated" in result.output
+    assert f"'accessionflow {new}' instead" in result.output
+    alias, target = cli.commands[old], cli.commands[new]
+    assert isinstance(alias, click.Group) and isinstance(target, click.Group)
+    ctx = click.Context(cli)
+    assert alias.get_command(ctx, "xnat") is target.get_command(ctx, "xnat")
+
+
+def test_former_stage_name_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import accessionflow.stores.xnat.cli.store_cli as store_cli
+
+    monkeypatch.setattr(store_cli, "Xnat", MagicMock())
+    monkeypatch.setattr(store_cli, "store", MagicMock(return_value=[]))
+    (tmp_path / "staged").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        [
+            "upload",
+            "xnat",
+            str(tmp_path / "staged"),
+            "https://xnat.test",
+            "--user",
+            "u",
+            "--password",
+            "p",
+        ],
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code == 0, result.output
+    assert "'accessionflow upload' is deprecated" in result.output
+    assert "'accessionflow store'" in result.output
+    store_cli.store.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_former_fields_name_still_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import accessionflow.cli.select_fields_cli as select_fields_cli
+
+    select_fields = MagicMock(return_value=[])
+    monkeypatch.setattr(select_fields_cli, "select_fields", select_fields)
+    (tmp_path / "in").mkdir()
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["--help"], env=CLEAN_ENV)
+    assert "select-fields" in help_result.output
+    assert "  fields " not in help_result.output
+    result = runner.invoke(
+        cli,
+        ["fields", str(tmp_path / "in"), str(tmp_path / "out"), "--extract", "a", "b"],
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code == 0, result.output
+    assert "'accessionflow fields' is deprecated" in result.output
+    assert "'accessionflow select-fields' instead" in result.output
+    select_fields.assert_called_once()

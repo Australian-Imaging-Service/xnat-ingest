@@ -16,18 +16,18 @@ import xnat
 from frametree.xnat import Xnat
 from xnat.exceptions import XNATResponseError
 
-from accessionflow.cli.upload_cli import upload_group
+from accessionflow.cli.store_cli import store_group
 from accessionflow.helpers.arg_types import LoggerConfig, StoreCredentials
 from accessionflow.helpers.logging import logger, set_logger_handling
 from accessionflow.helpers.remotes import DEFAULT_MAX_WORKERS
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api.store_api import store
 from accessionflow.stores.xnat.arg_types import UploadMethod
 
 
-@upload_group.command(
+@store_group.command(
     name="xnat",
-    help="""uploads all sessions found in the staging directory (as prepared by the
-`label xnat` sub-command) to XNAT.
+    help="""Deposits the labelled accessions in a staging directory (as prepared by the
+`label xnat` sub-command) in an XNAT data store, by uploading them to it.
 
 STAGED is either a directory that the files for each session are collated to before they
 are uploaded to XNAT or an S3 bucket to download the files from.
@@ -148,7 +148,7 @@ by setting the "ACFLOW_HOST" environment variable.
 )
 @click.option(
     "--require-manifest/--dont-require-manifest",
-    # True, as in upload(). None was read as "not required", so a resource
+    # True, as in store(). None was read as "not required", so a resource
     # without its manifest was uploaded as it was.
     default=True,
     envvar="ACFLOW_REQUIRE_MANIFEST",
@@ -263,7 +263,7 @@ by setting the "ACFLOW_HOST" environment variable.
         "isn't changed (ACFLOW_NO_UID_CHECK env. var)"
     ),
 )
-def upload_cmd(
+def store_cmd(
     staged: str,
     server: str,
     user: str,
@@ -325,7 +325,7 @@ def upload_cmd(
 
     # Open ONE XNAT connection for the whole `--loop` lifetime.
     #
-    # Previously upload() created a fresh Xnat() and called xnat.connect()
+    # Previously store() created a fresh Xnat() and called xnat.connect()
     # on every iteration. Each connect rebuilds Python classes from the
     # server's XSD schema (xnat.build_model / xnat.convert_xsd) and those
     # generated objects accumulate in xnatpy's module-level state, producing
@@ -369,13 +369,13 @@ def upload_cmd(
             pass
 
     def _is_auth_failure(error_messages: ty.List[str]) -> bool:
-        """Detect whether any error returned by upload() is an XNAT auth
+        """Detect whether any error returned by store() is an XNAT auth
         failure (HTTP 401/403).
 
         These are CONNECTION-level failures, not per-session data problems:
         XNAT expires the held connection's server-side session (JSESSIONID)
         after its configured timeout, after which every call on the held
-        connection returns 401 and never recovers on its own. upload()
+        connection returns 401 and never recovers on its own. store()
         catches these as per-session "skip" errors and returns them as
         strings, so they never reach the transient-error handler below — the
         daemon would otherwise 401 every session forever until manually
@@ -406,7 +406,7 @@ def upload_cmd(
                     time.sleep(loop)
                     continue
             try:
-                errors = upload(
+                errors = store(
                     input_dir=staged,
                     xnat_repo=xnat_repo,
                     always_include=always_include,

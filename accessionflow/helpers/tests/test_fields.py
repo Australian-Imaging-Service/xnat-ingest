@@ -4,7 +4,7 @@ from unittest.mock import patch
 from fileformats.generic import File
 from fileformats.testing import MyFormat
 
-from accessionflow.api.fields_api import fields
+from accessionflow.api.select_fields_api import select_fields
 from accessionflow.helpers.arg_types import IDSpec
 from accessionflow.helpers.fields import Fields
 from accessionflow.model.accession import Accession
@@ -44,7 +44,7 @@ def test_fields_writes_fields_file(tmp_path: Path) -> None:
     input_dir.mkdir()
     _staged_session(input_dir)
 
-    errors = fields(
+    errors = select_fields(
         input_dir=input_dir,
         output_dir=output_dir,
         extract={"preserved_field": IDSpec("session-field")},
@@ -62,7 +62,7 @@ def test_fields_preserves_resources_and_metadata(tmp_path: Path) -> None:
     input_dir.mkdir()
     _session, source_dir = _staged_session(input_dir)
 
-    errors = fields(
+    errors = select_fields(
         input_dir=input_dir,
         output_dir=output_dir,
         extract={"preserved_field": IDSpec("session-field")},
@@ -94,7 +94,7 @@ def test_fields_preserves_existing_fields(tmp_path: Path) -> None:
     session.fields["existing_field"] = "from-upstream"
     session.save(input_dir)
 
-    errors = fields(
+    errors = select_fields(
         input_dir=input_dir,
         output_dir=output_dir,
         extract={"preserved_field": IDSpec("session-field")},
@@ -114,7 +114,7 @@ def test_fields_skips_unresolvable_mapping(tmp_path: Path) -> None:
     input_dir.mkdir()
     _staged_session(input_dir)
 
-    errors = fields(
+    errors = select_fields(
         input_dir=input_dir,
         output_dir=output_dir,
         extract={
@@ -137,7 +137,7 @@ def test_fields_does_not_finalize_output_when_extraction_fails(
     _session, source_dir = _staged_session(input_dir)
 
     with patch.object(Fields, "extract", side_effect=RuntimeError("extraction failed")):
-        errors = fields(
+        errors = select_fields(
             input_dir=input_dir,
             output_dir=output_dir,
             extract={"preserved_field": IDSpec("session-field")},

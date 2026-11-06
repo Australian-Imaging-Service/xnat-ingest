@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from accessionflow.cli import upload_cli
+from accessionflow.stores.xnat.cli import store_cmd
 from accessionflow.utils import show_cli_trace
 
 PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
@@ -8,7 +8,7 @@ PATTERN = "{PatientName.family_name}_{PatientName.given_name}_{SeriesDate}.*"
 runner = CliRunner()
 
 result = runner.invoke(
-    upload_cli,
+    store_cmd,
     [
         "/Users/tclo7153/Data/TBP/TEST-STAGING/",
         "http://localhost:8080",

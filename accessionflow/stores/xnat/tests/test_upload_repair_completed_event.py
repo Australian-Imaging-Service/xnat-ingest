@@ -1,12 +1,12 @@
-"""upload() emits xnat_repair_completed only when the session's verdict is clean.
+"""store() emits xnat_repair_completed only when the session's verdict is clean.
 
 test_repair_completed_message.py pins the WORDING of the line. This pins WHERE
-it is logged: inside upload()'s `if msg is None:` gate, once per session, after
+it is logged: inside store()'s `if msg is None:` gate, once per session, after
 every re-sent resource has been verified. Moving the logger call out of the
 gate, or emitting it per resource as each upload finishes, passes the helper
 tests and fails these.
 
-No XNAT is needed. The session is staged on disk for real and upload() runs
+No XNAT is needed. The session is staged on disk for real and store() runs
 for real, including the thread pool, the batch staging and the post-upload
 checksum comparison. Only the four calls that would reach XNAT are replaced:
 FrameSet.load, get_xnat_session, get_xnat_resource and get_xnat_checksums.
@@ -25,8 +25,8 @@ import pytest
 
 from accessionflow.exceptions import IncompleteCheckumsException
 from accessionflow.helpers.logging import JsonFormatter, logger
-from accessionflow.stores.xnat.api import upload_api
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api import store_api
+from accessionflow.stores.xnat.api.store_api import store
 
 EVENT = "xnat_repair_completed"
 UPLOADED = "Successfully uploaded all files in"
@@ -145,7 +145,7 @@ def json_log() -> ty.Iterator[JsonCapture]:
 
 
 def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]:
-    """Drive the real upload() with each scan's re-send outcome, keyed by scan id."""
+    """Drive the real store() with each scan's re-send outcome, keyed by scan id."""
     observed_date_fields = kwargs.pop("_observed_date_fields", None)
 
     def fake_get_xnat_resource(
@@ -168,16 +168,16 @@ def _run(staging: Path, outcomes: dict[str, str], **kwargs: ty.Any) -> list[str]
         return FakeExperiment()
 
     with (
-        mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
+        mock.patch.object(store_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
-            upload_api, "get_xnat_session", side_effect=fake_get_xnat_session
+            store_api, "get_xnat_session", side_effect=fake_get_xnat_session
         ),
-        mock.patch.object(upload_api, "get_xnat_resource", fake_get_xnat_resource),
+        mock.patch.object(store_api, "get_xnat_resource", fake_get_xnat_resource),
         mock.patch.object(
-            upload_api, "get_xnat_checksums", lambda xresource: xresource.listing()
+            store_api, "get_xnat_checksums", lambda xresource: xresource.listing()
         ),
     ):
-        return upload(
+        return store(
             input_dir=str(staging),
             xnat_repo=FakeRepo(),  # type: ignore[arg-type]
             always_include=["all"],
@@ -223,7 +223,7 @@ def test_failed_repair_emits_no_completion(
     )
     assert json_log.events() == [], (
         "xnat_repair_completed was logged for a repair whose re-send failed: "
-        "it must sit inside upload()'s `if msg is None:` gate"
+        "it must sit inside store()'s `if msg is None:` gate"
     )
     assert not any(UPLOADED in m for m in json_log.messages())
 

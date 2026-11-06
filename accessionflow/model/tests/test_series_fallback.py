@@ -117,7 +117,7 @@ def test_two_unnumbered_series_remain_separate(tmp_path):
     assert fake.labelled.count(("study", "done")) == 1
     # FrameTree keys its resource entries by type/resource, not by scan ID.
     # Calling every unnamed type "unknown" would collide during column selection.
-    from accessionflow.model.store import AccessionMockStore
+    from accessionflow.model.mock_store import AccessionMockStore
 
     store = AccessionMockStore(sessions[0])
     store.populate_row(store.row)

@@ -1,9 +1,9 @@
 """The completed-repair line, and the two phrases it must NOT contain.
 
 Downstream alert rules (the AIS-Edge charts) report a repair ATTEMPT on
-"Repaired <N> incomplete resource", which upload() logs before the verdict,
+"Repaired <N> incomplete resource", which store() logs before the verdict,
 and an upload on "Successfully uploaded all files in". This line exists so an
-alert can say a repair COMPLETED, and upload() logs it only after a clean
+alert can say a repair COMPLETED, and store() logs it only after a clean
 verdict. If it contained either phrase, a completion would be counted as a new
 attempt, or reported as an ordinary upload.
 
@@ -14,7 +14,7 @@ changed with it.
 
 import re
 
-from accessionflow.stores.xnat.api.upload_api import repair_completed_message
+from accessionflow.stores.xnat.api.store_api import repair_completed_message
 
 # What the downstream rules match. This line must stay clear of both.
 ATTEMPT_FILTER = re.compile(r"Repaired [0-9]+ incomplete resource")

@@ -27,7 +27,7 @@ from accessionflow.stores.xnat.remotes import (
 from accessionflow.stores.xnat.scan_types import SNAPSHOTS_RESOURCE_LABEL
 
 
-def check_upload(
+def check_store(
     input_dir: str,
     server: str,
     user: str,

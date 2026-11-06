@@ -70,6 +70,6 @@ A minimal example of a custom script that loads a staged session and inspects it
         print(scan.metadata.get("SeriesDescription"))
 
 The :doc:`API functions </api>` that back each CLI sub-command (``collate``, ``label``,
-``deidentify``, ``upload``, ``attach``, ...) are themselves just plain Python
+``deidentify``, ``store``, ``attach``, ...) are themselves just plain Python
 functions built on these model classes, so they're usable directly from a script
 without going through the CLI at all if that's a better fit for what you're building.

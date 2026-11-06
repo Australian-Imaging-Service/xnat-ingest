@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from accessionflow.api.fields_api import fields
+from accessionflow.api.select_fields_api import select_fields
 from accessionflow.helpers.arg_types import (
     FieldMapping,
     IDSpec,
@@ -12,11 +12,11 @@ from accessionflow.helpers.arg_types import (
 )
 from accessionflow.helpers.logging import logger, set_logger_handling
 
-from .base import cli
+from .base import cli, deprecated_command_alias
 
 
 @cli.command(
-    name="fields",
+    name="select-fields",
     help="Extract session metadata into XNAT fields and write staged sessions.",
 )
 @click.argument(
@@ -63,7 +63,7 @@ from .base import cli
     envvar="ACFLOW_ADDITIONAL_LOGGERS",
 )
 @click.option("--raise-errors/--dont-raise-errors", default=False)
-def fields_cmd(
+def select_fields_cmd(
     input_dir: Path,
     output_dir: Path,
     extract: tuple[FieldMapping, ...],
@@ -87,7 +87,7 @@ def fields_cmd(
 
     while True:
         started = time.monotonic()
-        errors = fields(
+        errors = select_fields(
             input_dir=input_dir,
             output_dir=output_dir,
             extract=field_specs,
@@ -110,3 +110,8 @@ def fields_cmd(
             sleep_time,
         )
         time.sleep(sleep_time)
+
+
+# The command's name before it was renamed, kept so that existing deployments keep
+# working while they move over
+deprecated_command_alias("fields", select_fields_cmd)

@@ -10,7 +10,7 @@ from moto import mock_aws
 
 from accessionflow.helpers.arg_types import StoreCredentials
 from accessionflow.helpers.remotes import iterate_s3_sessions
-from accessionflow.stores.xnat.api.upload_api import upload
+from accessionflow.stores.xnat.api.store_api import store
 from accessionflow.stores.xnat.remotes import XnatS3SessionListing
 
 BUCKET = "tempdir-test-bucket"
@@ -39,7 +39,7 @@ def _first_session(bucket_path: str, temp_dir: Path) -> ty.Iterator[ty.Any]:
 def test_session_dir_is_removed_when_the_caller_stops_early(
     staged_bucket: str, tmp_path: Path
 ) -> None:
-    """upload() can stop mid-iteration, e.g. on a transient error. The session
+    """store() can stop mid-iteration, e.g. on a transient error. The session
     download must still be removed."""
     sessions = _first_session(staged_bucket, tmp_path)
     listing = next(sessions)
@@ -80,14 +80,14 @@ class _Repo:
 def test_upload_removes_the_session_download_when_it_fails(
     staged_bucket: str, tmp_path: Path
 ) -> None:
-    """upload() must close the iterator itself. A caller that keeps the
-    exception also keeps upload()'s frame, and so the open iterator, alive."""
+    """store() must close the iterator itself. A caller that keeps the
+    exception also keeps store()'s frame, and so the open iterator, alive."""
     kept: ty.Optional[BaseException] = None
     with mock.patch.object(
         XnatS3SessionListing, "all_uploaded", side_effect=RuntimeError("XNAT is down")
     ):
         try:
-            upload(
+            store(
                 input_dir=staged_bucket,
                 xnat_repo=_Repo(),  # type: ignore[arg-type]
                 store_credentials=CREDENTIALS,
