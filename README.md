@@ -1,8 +1,6 @@
 
 <img src="./docs/source/_static/images/logo-text.png" alt="Logo Small" style="float: right; width: 100mm">
 
-# AccessionFlow
-
 [![CI/CD](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Australian-Imaging-Service/accessionflow/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/Australian-Imaging-Service/accessionflow/graph/badge.svg?token=V860ZYIKQ3)](https://codecov.io/gh/Australian-Imaging-Service/accessionflow)
 [![PyPI](https://img.shields.io/pypi/v/accessionflow.svg)](https://pypi.python.org/pypi/accessionflow/)
