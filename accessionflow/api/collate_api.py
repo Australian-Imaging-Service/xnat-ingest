@@ -15,7 +15,7 @@ from ..helpers.arg_types import (
     PathMetadataRegex,
 )
 from ..helpers.logging import logger
-from ..model.session import ImagingSession
+from ..model.accession import Accession
 
 BUILD_NAME_DEFAULT = "__build__"
 
@@ -170,7 +170,7 @@ def collate(
 
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         files_path=input_paths,
         datatypes=datatypes,
         session_field=session,
@@ -277,7 +277,7 @@ def collate_orthanc(
 
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    sessions = ImagingSession.from_orthanc(  # noqa
+    sessions = Accession.from_orthanc(  # noqa
         url=url,
         output_dir=output_dir,
         store_dir=store_dir,
@@ -311,7 +311,7 @@ def collate_orthanc(
 
 
 def save_sessions_to_dir(
-    sessions: list[ImagingSession],
+    sessions: list[Accession],
     msg: str,
     build_dir,
     copy_mode: FileSet.CopyMode,
@@ -354,7 +354,7 @@ def save_sessions_to_dir(
                 str(saved_dir),
             )
             session_output_dir = output_dir.joinpath(*session.staging_relpath)
-            ImagingSession.move_dir(saved_dir, session_output_dir)
+            Accession.move_dir(saved_dir, session_output_dir)
             if unlink_source is not None:
                 # 'all' and 'keep-metadata' are equivalent here: this session's source
                 # files may live in a directory shared with other, not-yet-processed

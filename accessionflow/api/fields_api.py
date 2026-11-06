@@ -9,7 +9,7 @@ from tqdm import tqdm
 from ..helpers.arg_types import IDSpec
 from ..helpers.logging import logger
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
-from ..model.session import ImagingSession
+from ..model.accession import Accession
 from .collate_api import BUILD_NAME_DEFAULT
 
 
@@ -29,7 +29,7 @@ def fields(
 
     for listing in tqdm(listings, desc=f"Extracting fields from '{input_dir}'"):
         try:
-            session = ImagingSession.load(
+            session = Accession.load(
                 listing.cache_path,
                 check_checksums=True,
             )

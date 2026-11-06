@@ -9,7 +9,7 @@ import pytest
 from accessionflow.api import upload_api
 from accessionflow.exceptions import UnsupportedModalityError
 from accessionflow.helpers.remotes import get_xnat_session, xnat_session_type
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 class _XnatClass:
@@ -45,7 +45,7 @@ def _xproject(experiments=None):
 
 
 def _session(modality=None):
-    session = ImagingSession(
+    session = Accession(
         uid="uid", project_id="proj", subject_id="subj", session_id="sess"
     )
     session.metadata = {} if modality is None else {"Modality": modality}
@@ -148,7 +148,7 @@ def test_upload_passes_modality_to_get_xnat_session(tmp_path: Path):
     }
     repo = SimpleNamespace(server="fake://xnat", connection=connection)
     with (
-        mock.patch.object(upload_api.ImagingSession, "load", return_value=session),
+        mock.patch.object(upload_api.Accession, "load", return_value=session),
         mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
             upload_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")

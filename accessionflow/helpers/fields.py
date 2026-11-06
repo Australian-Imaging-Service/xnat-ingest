@@ -1,6 +1,6 @@
 import typing as ty
 
-from ..exceptions import ImagingSessionParseError
+from ..exceptions import AccessionParseError
 from .arg_types import IDSpec
 from .logging import logger
 from .metadata import Metadata
@@ -41,7 +41,7 @@ class Fields(Metadata):
         for field_name, spec in specs.items():
             try:
                 extracted[field_name] = spec.get_value(metadata, escape=False)
-            except (ImagingSessionParseError, IndexError, ValueError, TypeError) as e:
+            except (AccessionParseError, IndexError, ValueError, TypeError) as e:
                 logger.warning(
                     "Could not resolve XNAT field '%s' from '%s', skipping: %s",
                     field_name,

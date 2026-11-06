@@ -41,9 +41,9 @@ from accessionflow.helpers.arg_types import (
     PathMetadataRegex,
 )
 from accessionflow.helpers.metadata import Metadata
-from accessionflow.model.session import (
-    ImagingScan,
-    ImagingSession,
+from accessionflow.model.accession import (
+    Accession,
+    Acquisition,
     _datatype_resource_label,
     _glob_to_regex,
     _load_recipe,
@@ -81,7 +81,7 @@ RAW_COLUMNS: ty.List[ty.Tuple[str, str, str]] = [
 
 
 @pytest.fixture
-def imaging_session() -> ImagingSession:
+def imaging_session() -> Accession:
     dicoms = [
         DicomSeries(d.iterdir())
         for d in (
@@ -104,14 +104,14 @@ def imaging_session() -> ImagingSession:
         )
     ]
     scans = [
-        ImagingScan(
+        Acquisition(
             id=str(d.metadata["SeriesNumber"]),
             type=str(d.metadata["SeriesDescription"]),
             resources={"DICOM": d},
         )
         for d in dicoms
     ]
-    return ImagingSession(
+    return Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
@@ -190,7 +190,7 @@ def raw_frameset(tmp_path: Path) -> FrameSet:
 #     condition=platform.system() == "Linux", reason="Not working on ubuntu"
 # )
 def test_session_select_resources(
-    imaging_session: ImagingSession, dataset: FrameSet, tmp_path: Path
+    imaging_session: Accession, dataset: FrameSet, tmp_path: Path
 ) -> None:
 
     assoc_dir = tmp_path / "assoc"
@@ -246,9 +246,7 @@ def test_session_select_resources(
     )
 
 
-def test_session_save_roundtrip(
-    tmp_path: Path, imaging_session: ImagingSession
-) -> None:
+def test_session_save_roundtrip(tmp_path: Path, imaging_session: Accession) -> None:
 
     # Save imaging sessions to a temporary directory
     saved, _ = imaging_session.save(tmp_path)
@@ -256,7 +254,7 @@ def test_session_save_roundtrip(
 
     # Calculate where the session should have been saved to
     session_dir = tmp_path.joinpath(*imaging_session.staging_relpath)
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
 
     # Check that reloaded session matches saved session, should match the original just
     # the paths should be different
@@ -264,12 +262,12 @@ def test_session_save_roundtrip(
 
     # Save again to the same location (files shouldn't be overwritten)
     reloaded.save(tmp_path)
-    rereloaded = ImagingSession.load(session_dir)
+    rereloaded = Accession.load(session_dir)
     assert rereloaded == saved
 
     # # Load from saved directory, this time only using directory structure instead of
     # # manifest. Should be the same with the exception of the detected fileformats
-    # loaded_no_manifest = ImagingSession.load(session_dir, require_manifest=False)
+    # loaded_no_manifest = Accession.load(session_dir, require_manifest=False)
     # for scan in loaded_no_manifest.scans.values():
     #     for key, resource in list(scan.resources.items()):
     #         if key == "DICOM":
@@ -278,7 +276,7 @@ def test_session_save_roundtrip(
     # assert loaded_no_manifest == saved
 
 
-def test_unlink_keep_metadata(tmp_path: Path, imaging_session: ImagingSession) -> None:
+def test_unlink_keep_metadata(tmp_path: Path, imaging_session: Accession) -> None:
     """unlink(keep_metadata=True) should remove resource directories in their
     entirety, while leaving the scan/session-level metadata behind so the session
     can still be reloaded (e.g. by 'attach' to work out which scan a
@@ -317,7 +315,7 @@ def test_unlink_keep_metadata(tmp_path: Path, imaging_session: ImagingSession) -
 
     # The skeleton should still be loadable, with scan-level metadata intact but no
     # resources
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
     assert reloaded.uid == saved.uid
     assert reloaded.project_id == saved.project_id
     for scan_id, scan in reloaded.scans.items():
@@ -348,7 +346,7 @@ def test_stage_raw_data_directly(raw_frameset: FrameSet, tmp_path: Path) -> None
             StudyInstanceUID=f"StudyInstanceUID{i}",
         )
 
-    imaging_sessions = ImagingSession.from_paths(
+    imaging_sessions = Accession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[
             SyngoMi_Vr20b_ListMode,
@@ -397,7 +395,7 @@ def test_path_metadata_regex_extracts_named_groups(tmp_path: Path) -> None:
     raw_data_dir.mkdir(parents=True)
     get_pet_image(out_dir=raw_data_dir)
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         f"{raw_data_dir}/**/*",
         datatypes=[DicomSeries],
         session_field=[IDSpec("StudyInstanceUID")],
@@ -420,7 +418,7 @@ def test_path_metadata_regex_no_match_raises(tmp_path: Path) -> None:
     get_pet_image(out_dir=raw_data_dir)
 
     with pytest.raises(ValueError, match="Could not extract metadata"):
-        ImagingSession.from_paths(
+        Accession.from_paths(
             f"{raw_data_dir}/**/*",
             datatypes=[DicomSeries],
             session_field=[IDSpec("StudyInstanceUID")],
@@ -439,7 +437,7 @@ def test_from_paths_injects_datatype_metadata_field(tmp_path: Path) -> None:
     src.mkdir()
     (src / "a.txt").write_text("x")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         src,
         datatypes=[File],
         session_field=[IDSpec("sess")],
@@ -463,7 +461,7 @@ def test_from_paths_resource_label_defaults_to_mime_like_type_name(
     src.mkdir()
     (src / "a.txt").write_text("x")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         src,
         datatypes=[File],
         session_field=[IDSpec("__datatype__")],
@@ -508,7 +506,7 @@ def test_recursive_collect_prunes_on_match(tmp_path: Path) -> None:
     from fileformats.generic import DirectoryOf
     from fileformats.text import Csv
 
-    from accessionflow.model.session import _recursive_collect
+    from accessionflow.model.accession import _recursive_collect
 
     root = _tree(tmp_path / "export")
     got = set(_recursive_collect(root, [DirectoryOf[Json]], [DirectoryOf[Csv]]))
@@ -528,7 +526,7 @@ def test_from_paths_recursive_pulls_nested_directory_datatype(tmp_path: Path) ->
     from fileformats.text import Csv, Plain
 
     root = _tree(tmp_path / "export")
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         root,
         datatypes=[DirectoryOf[Json]],
         session_field=[IDSpec("__datatype__")],
@@ -572,7 +570,7 @@ def test_from_paths_recursive_allow_unrecognised_wildcard_pulls_only_wanted_dirs
     (lesion / "report.csv").write_text("a,b\n1,2\n")
     (root / "loose_at_root.txt").write_text("junk")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         root,
         datatypes=[DirectoryOf[Json]],
         session_field=[IDSpec("__datatype__")],
@@ -599,7 +597,7 @@ def test_from_paths_recursive_raises_on_unlisted_type(tmp_path: Path) -> None:
     (root / "mystery.unknownext").write_text("not a recognised type")
 
     with pytest.raises(FormatRecognitionError, match="mystery"):
-        ImagingSession.from_paths(
+        Accession.from_paths(
             root,
             datatypes=[DirectoryOf[Json]],
             session_field=[IDSpec("__datatype__")],
@@ -614,7 +612,7 @@ def test_from_paths_recursive_rejects_bare_generic_directory(tmp_path: Path) -> 
 
     root = _tree(tmp_path / "export")
     with pytest.raises(ValueError, match="generic/directory"):
-        ImagingSession.from_paths(
+        Accession.from_paths(
             root,
             datatypes=[Directory],
             session_field=[IDSpec("__datatype__")],
@@ -656,7 +654,7 @@ def test_from_paths_exclude_path_drops_recognised_by_relative_depth(
     (root / "uuid" / "stamp").mkdir(parents=True)
     (root / "uuid" / "stamp" / "deep.txt").write_text("drop")  # relative depth 3
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         root,
         datatypes=[File],
         session_field=[IDSpec("__datatype__")],
@@ -726,7 +724,7 @@ def test_from_paths_recursive_extracts_nested_dirs_from_canfield_shaped_tree(
 
     root = _canfield_shaped_tree(tmp_path / "raw")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         root,
         datatypes=[DirectoryOf[Json], DirectoryOf[Csv]],
         session_field=[IDSpec("session")],
@@ -762,7 +760,7 @@ def test_from_paths_scan_id_defaults_to_resource_label(tmp_path: Path) -> None:
     src.mkdir()
     (src / "a.txt").write_text("x")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         src,
         datatypes=[File],
         session_field=[IDSpec("__datatype__")],
@@ -782,7 +780,7 @@ def test_from_paths_datatype_scoped_scan_spec_falls_through(tmp_path: Path) -> N
     src.mkdir()
     (src / "a.txt").write_text("x")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         src,
         datatypes=[File],
         session_field=[IDSpec("__datatype__")],
@@ -803,7 +801,7 @@ def test_from_paths_session_spec_not_matching_type_raises_clearly(
     (src / "a.txt").write_text("x")
 
     with pytest.raises(TypeError, match="apply to a File"):
-        ImagingSession.from_paths(
+        Accession.from_paths(
             src,
             datatypes=[File],
             session_field=[IDSpec("StudyInstanceUID", "medimage/dicom-collection")],
@@ -823,13 +821,13 @@ def test_clash_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> No
     file1 = File.sample(seed=1)
     file1_cpy = file1.copy(tmp_path / "file1")
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: file1},
@@ -854,13 +852,13 @@ def test_clash_overwrite(caplog: pytest.LogCaptureFixture) -> None:
     file1 = File.sample(seed=1)
     file2 = File.sample(seed=2)
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: file1},
@@ -896,13 +894,13 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     file1 = File.sample(seed=1)
     file2 = File.sample(seed=2)
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: file1},
@@ -924,14 +922,14 @@ def test_clash_avoid(caplog: pytest.LogCaptureFixture) -> None:
     ]
 
 
-def _clash_session() -> ImagingSession:
-    return ImagingSession(
+def _clash_session() -> Accession:
+    return Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: File.sample(seed=1)},
@@ -979,13 +977,13 @@ def test_clash_merge(caplog: pytest.LogCaptureFixture) -> None:
     file1 = File.sample(seed=1)
     file2 = File.sample(seed=2)
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: file1},
@@ -1024,13 +1022,13 @@ def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
     fileset1.metadata.update({"LesionID": "L1", "View": "dermoscopy"})
     fileset2.metadata.update({"LesionID": "L1", "View": "clinical"})
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJECTID",
         subject_id="SUBJECTID",
         session_id="SESSIONID",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: fileset1},
@@ -1059,7 +1057,7 @@ def test_clash_merge_saves_combined_resource(tmp_path: Path) -> None:
 
     saved, _ = session.save(tmp_path / "staged")
     session_dir = (tmp_path / "staged").joinpath(*session.staging_relpath)
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
 
     reloaded_resource = reloaded.scans[CLASH_SCAN_ID].resources[CLASH_RESOURCE_NAME]
     assert sorted(p.name for p in reloaded_resource.fileset.fspaths) == [
@@ -1102,17 +1100,17 @@ def _jpg(path: Path) -> Path:
     return path
 
 
-def _png_clash_session(tmp_path: Path) -> tuple[ImagingSession, ty.Any]:
+def _png_clash_session(tmp_path: Path) -> tuple[Accession, ty.Any]:
     from fileformats.image.raster import Png
 
     fileset1 = Png(_png(tmp_path / "a.png"))
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="P",
         subject_id="S",
         session_id="V",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id=CLASH_SCAN_ID,
                 type=CLASH_SCAN_TYPE,
                 resources={CLASH_RESOURCE_NAME: fileset1},
@@ -1222,7 +1220,7 @@ def test_add_resource_clash_spec_remerge_into_existing_setof(tmp_path: Path) -> 
 
 def test_from_metadata_yaml(tmp_path: Path) -> None:
     metadata = {
-        ImagingSession.UID_METADATA_KEY: "12345",
+        Accession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_GivenName",
         "PatientID": "PID001",
         "StudyDate": "20230101",
@@ -1231,7 +1229,7 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
     with open(yaml_path, "w") as f:
         yaml.dump(metadata, f)
 
-    session = ImagingSession.from_metadata_yaml(yaml_path)
+    session = Accession.from_metadata_yaml(yaml_path)
 
     assert session.project_id == "PROJ"
     assert session.subject_id == "SUBJ"
@@ -1242,7 +1240,7 @@ def test_from_metadata_yaml(tmp_path: Path) -> None:
 
 def test_attach_files_metadata_only(tmp_path: Path) -> None:
     metadata = {
-        ImagingSession.UID_METADATA_KEY: "12345",
+        Accession.UID_METADATA_KEY: "12345",
         "PatientName": "FamilyName_Given_Name",
         "PatientID": "PID001",
     }
@@ -1250,7 +1248,7 @@ def test_attach_files_metadata_only(tmp_path: Path) -> None:
     with open(yaml_path, "w") as f:
         yaml.dump(metadata, f)
 
-    session = ImagingSession.from_metadata_yaml(yaml_path)
+    session = Accession.from_metadata_yaml(yaml_path)
 
     # Verify metadata-only session
     assert session.scans == {}
@@ -1289,7 +1287,7 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     """Session-level resources (no-dot dirs) survive a save/load roundtrip."""
     pdf = File.sample(seed=42)
 
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
@@ -1302,7 +1300,7 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
     assert "radiology-doc-report" in saved.session_resources
 
     session_dir = tmp_path.joinpath(*session.staging_relpath)
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
 
     assert "radiology-doc-report" in reloaded.session_resources
     assert (
@@ -1312,7 +1310,7 @@ def test_session_resource_save_roundtrip(tmp_path: Path) -> None:
 
 
 def test_session_save_filters_scan_and_session_resources(
-    tmp_path: Path, imaging_session: ImagingSession
+    tmp_path: Path, imaging_session: Accession
 ) -> None:
     imaging_session.add_session_resource("report", File.sample(seed=42))
 
@@ -1330,7 +1328,7 @@ def test_session_save_filters_scan_and_session_resources(
 
 
 def test_session_save_include_requires_a_matching_resource(
-    tmp_path: Path, imaging_session: ImagingSession
+    tmp_path: Path, imaging_session: Accession
 ) -> None:
     with pytest.raises(ValueError, match="No resources .* match"):
         imaging_session.save(tmp_path, include=[SyngoMi_Vr20b_ListMode])
@@ -1351,7 +1349,7 @@ def test_id_escape(tmp_path: Path) -> None:
         StudyInstanceUID="StudyInstanceUID1",
     )
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         f"{raw_data_dir}/**/*.ptd",
         datatypes=[SyngoMi_Vr20b_ListMode, SyngoMi_Vr20b_CountRate],
         session_field=[IDSpec("StudyInstanceUID")],
@@ -1370,7 +1368,7 @@ def test_id_escape(tmp_path: Path) -> None:
 
 
 def test_label_unresolvable_field_uses_placeholder_instead_of_raising(
-    imaging_session: ImagingSession,
+    imaging_session: Accession,
 ) -> None:
     """A project/subject/session field that can't be resolved from the session's
     metadata should produce a placeholder ID (and flag the session via
@@ -1441,7 +1439,7 @@ def test_metadata_diff_mapping_replaced_by_non_mapping() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ImagingSession.deidentify tests
+# Accession.deidentify tests
 # ---------------------------------------------------------------------------
 
 DEIDENTIFY_REID_MDATA = {"PatientName": "John Doe", "DOB": "19800101"}
@@ -1505,7 +1503,7 @@ def _make_deid_fileset(seed: int, expected_reid: dict) -> DeidTestFile:
 
 
 def test_deidentify_empty_session(tmp_path: Path) -> None:
-    session = ImagingSession(
+    session = Accession(
         uid="12345", project_id="PROJ", subject_id="SUBJ", session_id="SESS", scans=[]
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
@@ -1517,12 +1515,12 @@ def test_deidentify_empty_session(tmp_path: Path) -> None:
 def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
     """Resources without contains_phi are copied as-is; no reid metadata collected."""
     f = File.sample(seed=1)  # no contains_phi attr → getattr returns False → copy path
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+        scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(tmp_path / "dest")
     assert "1" in deid_session.scans
@@ -1536,12 +1534,12 @@ def test_deidentify_no_phi_copies_files(tmp_path: Path) -> None:
 def test_deidentify_collects_reid_metadata(tmp_path: Path, recipe_file: Path) -> None:
     """deidentify() returns reid metadata from resources that implement deidentify."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+        scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     deid_session, reid_mdata = session.deidentify(
         tmp_path / "dest", recipe_files={DeidTestFile: recipe_file}
@@ -1553,12 +1551,12 @@ def test_deidentify_collects_reid_metadata(tmp_path: Path, recipe_file: Path) ->
 def test_deidentify_missing_recipe_file_raises(tmp_path: Path) -> None:
     """No recipe files with require_matching_recipe_file=True raises KeyError."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+        scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     with pytest.raises(KeyError):
         session.deidentify(
@@ -1572,12 +1570,12 @@ def test_deidentify_missing_recipe_file_warns(
     """No recipe files with require_matching_recipe_file=False logs a warning and
     proceeds."""
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+        scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     with caplog.at_level(logging.WARNING, logger="accessionflow"):
         deid_session, reid_mdata = session.deidentify(
@@ -1594,14 +1592,14 @@ def test_deidentify_merges_reid_metadata_across_resources(
     """Reid metadata from multiple resources is collated into a single dict."""
     f1 = _make_deid_fileset(seed=1, expected_reid={"PatientName": "Alice"})
     f2 = _make_deid_fileset(seed=2, expected_reid={"DOB": "19901201"})
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
         scans=[
-            ImagingScan(id="1", type="scan-a", resources={"FILE": f1}),
-            ImagingScan(id="2", type="scan-b", resources={"FILE": f2}),
+            Acquisition(id="1", type="scan-a", resources={"FILE": f1}),
+            Acquisition(id="2", type="scan-b", resources={"FILE": f2}),
         ],
     )
     _, reid_mdata = session.deidentify(
@@ -1629,12 +1627,12 @@ def test_deidentify_passes_max_workers_to_resource(
 
     f = _make_deid_fileset(seed=1, expected_reid=DEIDENTIFY_REID_MDATA)
     f.deidentify = functools.partial(_capturing_deidentify_impl, f)
-    session = ImagingSession(
+    session = Accession(
         uid="12345",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="test-scan", resources={"FILE": f})],
+        scans=[Acquisition(id="1", type="test-scan", resources={"FILE": f})],
     )
     session.deidentify(
         tmp_path / "dest", recipe_files={DeidTestFile: recipe_file}, max_workers=3
@@ -1655,15 +1653,15 @@ def test_deidentify_carries_session_level_resources(tmp_path: Path) -> None:
     comes out short, is reported incomplete, and correctly refuses to unlink its
     input -- for ever, because the next run drops it again.
     """
-    from accessionflow.model.scan import ImagingScan
-    from accessionflow.model.session import ImagingSession
+    from accessionflow.model.accession import Accession
+    from accessionflow.model.acquisition import Acquisition
 
-    session = ImagingSession(
+    session = Accession(
         uid="PROJ.SUBJ.SESS",
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="T", resources={"RES": File.sample(seed=1)})],
+        scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=1)})],
     )
     session.add_session_resource("report", File.sample(seed=42))
     assert "report" in session.session_resources

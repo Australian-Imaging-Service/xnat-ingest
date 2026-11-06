@@ -15,7 +15,7 @@ from ..helpers.arg_types import (
     OnResourceClash,
 )
 from ..helpers.logging import logger, set_logger_handling
-from ..model.session import ImagingSession
+from ..model.accession import Accession
 
 DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
 
@@ -180,7 +180,7 @@ only written if --reid-dir is given; see that option.
 @click.option(
     "--metadata-allowlist",
     type=str,
-    default=ImagingSession.UID_METADATA_KEY,
+    default=Accession.UID_METADATA_KEY,
     envvar="XINGEST_METADATA_ALLOWLIST",
     callback=lambda context, param, value: tuple(
         key.strip() for key in value.split(",") if key.strip()

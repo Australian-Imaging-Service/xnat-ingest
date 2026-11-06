@@ -33,14 +33,14 @@ These classes represent an imaging session as it moves through the pipeline stag
 above: a session contains scans, each of which contains one or more resources (e.g.
 the original DICOM files, a derived NIfTI conversion).
 
-.. autoclass:: accessionflow.model.session.ImagingSession
+.. autoclass:: accessionflow.model.accession.Accession
     :members: uid, project_id, subject_id, session_id, scans, session_resources, run_uid,
         metadata, from_paths, label, deidentify, attach_files, save, load
 
-.. autoclass:: accessionflow.model.scan.ImagingScan
+.. autoclass:: accessionflow.model.acquisition.Acquisition
     :members: id, type, resources, attached, metadata, save, load
 
-.. autoclass:: accessionflow.model.resource.ImagingResource
+.. autoclass:: accessionflow.model.resource.Resource
     :members: name, fileset, checksums, scan, metadata, save, load
 
-.. autofunction:: accessionflow.model.session.recipe_formats_for
+.. autofunction:: accessionflow.model.accession.recipe_formats_for

@@ -26,8 +26,8 @@ from accessionflow.helpers.xnat_scan_types import (
     xnat_resource_label_from_sop_class,
     xnat_scan_type_from_sop_class,
 )
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.scan import ImagingScan
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
 
 
 def test_list_session_dirs_includes_no_dot_dirs(tmp_path: Path) -> None:
@@ -261,8 +261,8 @@ def test_split_resource_by_modality_splits_a_mixed_series(tmp_path: Path) -> Non
     _write_dicom(tmp_path / "pt2.dcm", _PET_IMAGE_SOP_CLASS, "PT")
     _write_dicom(tmp_path / "sr1.dcm", _DOSE_REPORT_SR_SOP_CLASS, "SR")
     series = DicomSeries(list(tmp_path.iterdir()))
-    scan = ImagingScan(id="6", type="chest_pt")
-    resource = ImagingResource(name="DICOM", fileset=series, scan=scan)
+    scan = Acquisition(id="6", type="chest_pt")
+    resource = Resource(name="DICOM", fileset=series, scan=scan)
 
     parts = split_resource_by_modality(resource)
 
@@ -286,8 +286,8 @@ def test_split_resource_by_modality_no_split_for_uniform_series(
     _write_dicom(tmp_path / "pt1.dcm", _PET_IMAGE_SOP_CLASS, "PT")
     _write_dicom(tmp_path / "pt2.dcm", _PET_IMAGE_SOP_CLASS, "PT")
     series = DicomSeries(list(tmp_path.iterdir()))
-    scan = ImagingScan(id="6", type="chest_pt")
-    resource = ImagingResource(name="DICOM", fileset=series, scan=scan)
+    scan = Acquisition(id="6", type="chest_pt")
+    resource = Resource(name="DICOM", fileset=series, scan=scan)
 
     assert split_resource_by_modality(resource) == [resource]
 
@@ -308,8 +308,8 @@ def test_split_resource_by_modality_ignores_non_dicom_resources(tmp_path: Path) 
     converted NIfTI, a brain mask or any other non-DICOM resource by"""
     a_file = tmp_path / "notes.txt"
     a_file.write_text("not DICOM")
-    scan = ImagingScan(id="6", type="chest_pt")
-    resource = ImagingResource(name="NOTES", fileset=File(a_file), scan=scan)
+    scan = Acquisition(id="6", type="chest_pt")
+    resource = Resource(name="NOTES", fileset=File(a_file), scan=scan)
 
     assert split_resource_by_modality(resource) == [resource]
 
@@ -376,7 +376,7 @@ def test_get_xnat_resource_uses_dicom_image_sop_class(
     dicom_path = tmp_path / "image.dcm"
     _write_dicom(dicom_path, sop_class_uid, "PT")
     scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
-    resource = ImagingResource(
+    resource = Resource(
         name=expected_label,
         fileset=DicomImage(dicom_path),
         checksums={"image.dcm": "digest"},
@@ -400,7 +400,7 @@ def test_get_xnat_resource_rejects_wrong_dicom_image_label(tmp_path: Path) -> No
     dicom_path = tmp_path / "image.dcm"
     _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
     scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
-    resource = ImagingResource(
+    resource = Resource(
         name="secondary",
         fileset=DicomImage(dicom_path),
         checksums={"image.dcm": "digest"},
@@ -417,7 +417,7 @@ def test_get_xnat_resource_rejects_dicom_image_without_sop_class(
     dicom_path = tmp_path / "image.dcm"
     _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
     scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
-    resource = ImagingResource(
+    resource = Resource(
         name="DICOM",
         fileset=DicomImage(dicom_path),
         checksums={"image.dcm": "digest"},
@@ -434,7 +434,7 @@ def test_get_xnat_resource_rejects_conflicting_scan_datatype(tmp_path: Path) -> 
     dicom_path = tmp_path / "image.dcm"
     _write_dicom(dicom_path, _PET_IMAGE_SOP_CLASS, "PT")
     scan = MagicMock(id="602", type="PET", path="proj:subj:sess:602-PET")
-    resource = ImagingResource(
+    resource = Resource(
         name="DICOM",
         fileset=DicomImage(dicom_path),
         checksums={"image.dcm": "digest"},
@@ -516,7 +516,7 @@ def test_get_xnat_resource_scan_without_sop_class_inherits_session_type() -> Non
 
 def _zipped_series_resource(
     tmp_path: Path, sop_class_uid: str, fileset_type=Zip[DicomSeries]
-) -> ImagingResource:
+) -> Resource:
     """The package stage's DICOM-zip: a zip of a series, with the series' SOP
     class in its metadata and a label XNAT never changes."""
     zip_path = tmp_path / "archive.zip"
@@ -524,7 +524,7 @@ def _zipped_series_resource(
         z.writestr("a.dcm", b"not parsed by this test")
     scan = MagicMock(id="3", type="t2", path="proj:subj:sess:3-t2")
     scan.session = MagicMock(path="proj:subj:sess")
-    resource = ImagingResource(
+    resource = Resource(
         name="DICOM-zip",
         fileset=fileset_type(zip_path),
         checksums={"archive.zip": "digest"},
@@ -590,7 +590,7 @@ def test_get_xnat_resource_plain_zip_sop_metadata_sets_scan_type(
         z.writestr("listmode.ptd", b"raw")
     scan = MagicMock(id="602", type="602", path="proj:subj:sess:602-602")
     scan.session = MagicMock(path="proj:subj:sess")
-    resource = ImagingResource(
+    resource = Resource(
         name="LISTMODE",
         fileset=Zip(zip_path),
         checksums={"listmode.zip": "digest"},

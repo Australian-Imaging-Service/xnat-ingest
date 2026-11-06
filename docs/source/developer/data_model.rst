@@ -21,24 +21,48 @@ Nothing stops you from reading these JSON files directly, but the
 structure — handling checksums, deidentification, and staging consistently with the
 rest of the pipeline:
 
-* :class:`~accessionflow.model.session.ImagingSession` — a whole session: its
+* :class:`~accessionflow.model.accession.Accession` — a whole session: its
   project/subject/session IDs, scans, session-level resources, and metadata. Load an
-  existing one from disk with :meth:`ImagingSession.load
-  <accessionflow.model.session.ImagingSession.load>`, or build one from scratch with
-  :meth:`ImagingSession.from_paths
-  <accessionflow.model.session.ImagingSession.from_paths>`.
-* :class:`~accessionflow.model.scan.ImagingScan` — one scan within a session, and the
+  existing one from disk with :meth:`Accession.load
+  <accessionflow.model.accession.Accession.load>`, or build one from scratch with
+  :meth:`Accession.from_paths
+  <accessionflow.model.accession.Accession.from_paths>`.
+* :class:`~accessionflow.model.acquisition.Acquisition` — one scan within a session, and the
   resources attached to it.
-* :class:`~accessionflow.model.resource.ImagingResource` — one resource: a ``FileSet``,
+* :class:`~accessionflow.model.resource.Resource` — one resource: a ``FileSet``,
   its checksums, and its metadata.
+
+Terms
+-----
+
+The model is named so that it isn't specific to imaging or to one repository:
+
+Accession
+    Everything received from one subject on one occasion and handed from stage to
+    stage, e.g. an imaging session or a sequencing run. Its ID labels (e.g. project,
+    subject and session for XNAT) are set by the ``label`` stage. An accession is not
+    a RIS accession number: DICOM's ``AccessionNumber`` is just one metadata field that
+    can be used to label it.
+Acquisition
+    One distinct dataset within an accession, e.g. a scan or a sequencing library. For
+    DICOM it is one series, not DICOM's narrower sense of an acquisition within a
+    series.
+Resource
+    A set of files holding one form of an acquisition's data, e.g. its DICOM or NIfTI
+    version, or of the accession itself for session-level resources.
+
+The directory layout and the ``project``/``subject``/``session`` attributes still use
+XNAT's terms. These classes were previously named ``ImagingSession``, ``ImagingScan``
+and ``ImagingResource``, in the ``xnat_ingest.model.session``, ``.scan`` and
+``.resource`` modules.
 
 A minimal example of a custom script that loads a staged session and inspects it:
 
 .. code-block:: python
 
-    from accessionflow.model.session import ImagingSession
+    from accessionflow.model.accession import Accession
 
-    session = ImagingSession.load("/data/staging/labelled/MYPROJECT.subject1.1")
+    session = Accession.load("/data/staging/labelled/MYPROJECT.subject1.1")
 
     print(session.project_id, session.subject_id, session.session_id)
     for scan_id, scan in session.scans.items():

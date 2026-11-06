@@ -12,7 +12,7 @@ from accessionflow.helpers.remotes import (
     get_xnat_checksums,
     get_xnat_resource,
 )
-from accessionflow.model.resource import ImagingResource
+from accessionflow.model.resource import Resource
 
 RESOURCE_URI = "/data/experiments/E1/resources/DATA"
 CANONICAL_URI = "/data/experiments/E1/resources/97/files/"
@@ -43,7 +43,7 @@ def _local(tmp_path, names):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"synthetic file {index}".encode())
         files.append(path)
-    return ImagingResource("DATA", FileSet(files))
+    return Resource("DATA", FileSet(files))
 
 
 @pytest.mark.parametrize("relative_name", [False, True])

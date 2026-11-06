@@ -9,7 +9,7 @@ from fileformats.core import FileSet
 from fileformats.image.raster import Jpeg, Png
 from fileformats.text import Csv, Plain, Tsv
 
-from accessionflow.exceptions import ImagingSessionParseError
+from accessionflow.exceptions import AccessionParseError
 from accessionflow.helpers.arg_types import (
     SEMICOLON_LIST,
     ClashSpec,
@@ -21,9 +21,9 @@ from accessionflow.helpers.arg_types import (
     row_frequency_converter,
     table_file_converter,
 )
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
 
 # ── existing plain-field / slice syntax, unaffected by the new format-string mode ──
 
@@ -44,7 +44,7 @@ def test_negative_index() -> None:
 
 
 def test_plain_field_missing_raises_without_missing_ids() -> None:
-    with pytest.raises(ImagingSessionParseError):
+    with pytest.raises(AccessionParseError):
         IDSpec("SeriesNumber").get_value({})
 
 
@@ -101,7 +101,7 @@ def test_date_format_spec_collapses_list_to_single_formatted_value() -> None:
 def test_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
     spec = IDSpec("{PatientID}_{AcquisitionDate:%Y%m%d}")
     with pytest.raises(
-        ImagingSessionParseError,
+        AccessionParseError,
         match=(
             r"Field 'AcquisitionDate'.*resolves to multiple values "
             r"after formatting: \['20260304', '20260305'\]"
@@ -124,7 +124,7 @@ def test_non_date_format_spec_collapses_list_to_single_formatted_value() -> None
 def test_non_date_format_spec_rejects_list_with_multiple_formatted_values() -> None:
     spec = IDSpec("{PatientID}_{VisitNumber:02d}")
     with pytest.raises(
-        ImagingSessionParseError,
+        AccessionParseError,
         match=(
             r"Field 'VisitNumber'.*resolves to multiple values after formatting: "
             r"\['03', '04'\]"
@@ -150,7 +150,7 @@ def test_missing_field_in_compound_specifier_uses_placeholder() -> None:
 
 def test_missing_field_in_compound_specifier_raises_without_missing_ids() -> None:
     spec = IDSpec("{PatientID}_{AccessionNumber}")
-    with pytest.raises(ImagingSessionParseError):
+    with pytest.raises(AccessionParseError):
         spec.get_value({"PatientID": "subj01"})
 
 
@@ -177,7 +177,7 @@ def test_directly_referencing_all_digit_key_raises_clearly() -> None:
     positional index rather than a keyword lookup, so this can't be supported - but
     it should fail with a clear, catchable error rather than a raw IndexError"""
     spec = IDSpec("{00100010}")
-    with pytest.raises(ImagingSessionParseError):
+    with pytest.raises(AccessionParseError):
         spec.get_value({"00100010": "private tag value"}, missing_ids={})
 
 
@@ -224,22 +224,22 @@ def tsv_table(tmp_path: Path) -> Tsv:
     return Tsv(path)
 
 
-def _session(**metadata: object) -> ImagingSession:
-    session = ImagingSession(uid="sess-uid")
+def _session(**metadata: object) -> Accession:
+    session = Accession(uid="sess-uid")
     session.metadata.update(metadata)
     return session
 
 
-def _scan(**metadata: object) -> ImagingScan:
-    scan = ImagingScan(id="1", type="t1")
+def _scan(**metadata: object) -> Acquisition:
+    scan = Acquisition(id="1", type="t1")
     scan.metadata.update(metadata)
     return scan
 
 
-def _resource(tmp_path: Path, **metadata: object) -> ImagingResource:
+def _resource(tmp_path: Path, **metadata: object) -> Resource:
     fspath = tmp_path / "datafile.txt"
     fspath.write_text("some data")
-    resource = ImagingResource(name="DICOM", fileset=Plain(fspath))
+    resource = Resource(name="DICOM", fileset=Plain(fspath))
     resource.metadata.update(metadata)
     return resource
 

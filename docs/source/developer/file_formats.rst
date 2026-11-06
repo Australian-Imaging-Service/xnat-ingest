@@ -19,8 +19,8 @@ look for in the input paths at all. Within a matched session, ``--scan``/
 ``--resource`` (:class:`~accessionflow.helpers.arg_types.IDSpec`) then decide which
 scan and resource each file belongs to, based on values read out of the file's own
 metadata (e.g. DICOM ``SeriesNumber``, ``ImageType``) — see
-:class:`~accessionflow.model.resource.ImagingResource` and
-:class:`~accessionflow.model.scan.ImagingScan`.
+:class:`~accessionflow.model.resource.Resource` and
+:class:`~accessionflow.model.acquisition.Acquisition`.
 
 Reading metadata
 ---------------------
@@ -42,7 +42,7 @@ The ``deidentify`` command works the same way: ``MedicalImagingData.deidentify``
 declared as an ``@extra`` (in ``fileformats-medimage``), and the concrete
 implementation for each format is registered with ``@extra_implementation`` in an
 extras package (e.g. ``dicom_deidentify`` in ``fileformats-medimage-extras``).
-``ImagingSession.deidentify`` (see :class:`~accessionflow.model.session.ImagingSession`)
+``Accession.deidentify`` (see :class:`~accessionflow.model.accession.Accession`)
 only decides *which* recipe file applies to a given resource — the actual
 deidentification logic is entirely delegated to whatever's registered for that
 resource's type.
@@ -53,7 +53,7 @@ Typing the ``recipe`` argument
 *AccessionFlow* never parses recipe files itself. It reads the annotation of the
 ``recipe`` argument of the registered implementation to work out which format(s) the
 recipe file should be loaded as, loads it, and passes the loaded object in (see
-:func:`~accessionflow.model.session.recipe_formats_for`). That annotation is therefore
+:func:`~accessionflow.model.accession.recipe_formats_for`). That annotation is therefore
 part of the implementation's runtime behaviour, not just a hint for type checkers,
 and must be one of:
 

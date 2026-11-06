@@ -36,9 +36,9 @@ from ..exceptions import (
     UnknownStudyIdentity,
     UnsupportedModalityError,
 )
-from ..model.resource import ImagingResource
-from ..model.scan import ImagingScan
-from ..model.session import ImagingSession
+from ..model.accession import Accession
+from ..model.acquisition import Acquisition
+from ..model.resource import Resource
 from .arg_types import StoreCredentials
 from .logging import logger
 from .metadata import Metadata
@@ -123,12 +123,12 @@ class XnatRows:
 
 
 def _grouping_uid(metadata: ty.Mapping[str, ty.Any]) -> str | None:
-    """Read the format-independent identity saved by ImagingSession."""
+    """Read the format-independent identity saved by Accession."""
     if not isinstance(metadata, ty.Mapping):
         raise SessionIdentityRefused(
             "Cannot verify session identity: malformed metadata"
         )
-    value = metadata.get(ImagingSession.UID_METADATA_KEY)
+    value = metadata.get(Accession.UID_METADATA_KEY)
     if value is None or value == "":
         return None
     if not isinstance(value, str) or not value.strip():
@@ -268,7 +268,7 @@ class SessionListing(metaclass=abc.ABCMeta):
         for relpath in sorted(self.resource_paths):
             resource_dir = self.cache_path / relpath
             if resource_dir.is_dir():
-                manifest = Json(ImagingResource.manifest_fpath(resource_dir))
+                manifest = Json(Resource.manifest_fpath(resource_dir))
                 manifests[relpath] = manifest.contents
         return manifests
 
@@ -728,8 +728,8 @@ class S3SessionListing(SessionListing):
                 continue
             fname = path_parts[-1]
             if fname not in (
-                ImagingResource.MANIFEST_FNAME,
-                ImagingResource.OLD_MANIFEST_FNAME,
+                Resource.MANIFEST_FNAME,
+                Resource.OLD_MANIFEST_FNAME,
             ):
                 continue
             relpath = "/".join(path_parts[:-1])
@@ -737,7 +737,7 @@ class S3SessionListing(SessionListing):
             # present in the same resource directory
             if (
                 relpath in manifest_fnames_by_relpath
-                and fname == ImagingResource.OLD_MANIFEST_FNAME
+                and fname == Resource.OLD_MANIFEST_FNAME
             ):
                 continue
             manifest_fnames_by_relpath[relpath] = fname
@@ -922,7 +922,7 @@ def remove_old_files_on_ssh(remote_store: str, threshold: int) -> None:
     ssh_client.close()
 
 
-def _session_date_from_metadata(session: ImagingSession, field: str) -> str:
+def _session_date_from_metadata(session: Accession, field: str) -> str:
     """Resolve a metadata field to one ISO-formatted calendar date."""
 
     try:
@@ -972,7 +972,7 @@ def _session_date_from_metadata(session: ImagingSession, field: str) -> str:
 
 
 def get_xnat_session(
-    session: ImagingSession,
+    session: Accession,
     xproject: ty.Any,
     modality: str | None = None,
     date_field: str | None = None,
@@ -982,7 +982,7 @@ def get_xnat_session(
 
     Parameters
     ----------
-    session : ImagingSession
+    session : Accession
         the session to upload
     xproject : ty.Any
         the XNAT project to upload to
@@ -1272,7 +1272,7 @@ def _report_xnat_checksum_support(checksums: ty.Mapping[str, str]) -> None:
                 )
 
 
-def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingResource]:
+def split_resource_by_modality(resource: Resource) -> ty.List[Resource]:
     """Split a DICOM scan resource that holds more than one modality into one
     resource per modality, each destined for its own scan.
 
@@ -1292,12 +1292,12 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
 
     Parameters
     ----------
-    resource : ImagingResource
+    resource : Resource
         the staged resource to check for a modality split
 
     Returns
     -------
-    list[ImagingResource]
+    list[Resource]
         `[resource]` unchanged if it isn't a DICOM scan resource, or if every file in
         it shares the same modality; otherwise one resource per modality present,
         named the same as `resource` but scanned under '<scan-id>-<modality>'
@@ -1326,10 +1326,10 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
         return [resource]
     scan = resource.scan
     return [
-        ImagingResource(
+        Resource(
             name=resource.name,
             fileset=type(resource.fileset)(fspaths),
-            scan=ImagingScan(
+            scan=Acquisition(
                 id=f"{scan.id}-{modality}", type=scan.type, session=scan.session
             ),
         )
@@ -1338,7 +1338,7 @@ def split_resource_by_modality(resource: ImagingResource) -> ty.List[ImagingReso
 
 
 def get_xnat_resource(
-    resource: ImagingResource, xsession: ty.Any
+    resource: Resource, xsession: ty.Any
 ) -> tuple[ty.Any, ty.Optional[ty.Set[str]]]:
     """Get the XNAT resource object for the given resource
 
@@ -1348,7 +1348,7 @@ def get_xnat_resource(
 
     Parameters
     ----------
-    resource : ImagingResource
+    resource : Resource
         the resource to upload
     xsession : ty.Any
         the XNAT session object

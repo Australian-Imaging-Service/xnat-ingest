@@ -52,7 +52,7 @@ from accessionflow.helpers.arg_types import (
 )
 from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import list_session_dirs, upload_file_to_s3
-from accessionflow.model.resource import ImagingResource
+from accessionflow.model.resource import Resource
 from conftest import get_raw_data_files, show_cli_trace
 
 
@@ -943,11 +943,11 @@ def test_collate_metadata_table_detailed_example(
         "lesionA-dermoscopy.png",
     ]
     lesion_a_manifest = json.loads(
-        (subj01_resources["lesionA"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+        (subj01_resources["lesionA"] / Resource.MANIFEST_FNAME).read_bytes()
     )
     assert lesion_a_manifest["datatype"] == "image/png+set-of"
     lesion_b_manifest = json.loads(
-        (subj01_resources["lesionB"] / ImagingResource.MANIFEST_FNAME).read_bytes()
+        (subj01_resources["lesionB"] / Resource.MANIFEST_FNAME).read_bytes()
     )
     assert lesion_b_manifest["datatype"] == "image/png"
     lesion_a_mdata = json.loads(
@@ -1786,7 +1786,7 @@ def test_check_upload_checksum_fail(
             ).iterdir()
             if p.is_dir()
         )
-        / ImagingResource.MANIFEST_FNAME
+        / Resource.MANIFEST_FNAME
     )
     manifest_data = manifest_file.load()
     checksums = manifest_data["checksums"]
@@ -2183,14 +2183,14 @@ def test_deidentify_cli_dicom_encrypted_reid(
 ) -> None:
     """Deidentify with --reid-encrypt-key produces a decryptable .json.enc file.
 
-    ImagingSession.deidentify is mocked so the test focuses on the encryption
+    Accession.deidentify is mocked so the test focuses on the encryption
     logic rather than the deidentification implementation.
     """
     from unittest.mock import MagicMock
 
     from cryptography.fernet import Fernet
 
-    from accessionflow.model.session import ImagingSession
+    from accessionflow.model.accession import Accession
 
     PROJECT_ID = "TESTDEIDENCPROJECT"
     PATIENT_ID = "subject1"
@@ -2252,7 +2252,7 @@ def test_deidentify_cli_dicom_encrypted_reid(
         mock_session.staging_dirname = MagicMock(return_value=session_dirname)
         return mock_session, {"PatientID": PATIENT_ID}
 
-    with patch.object(ImagingSession, "deidentify", mock_deidentify):
+    with patch.object(Accession, "deidentify", mock_deidentify):
         result = cli_runner(
             deidentify_cmd,
             [

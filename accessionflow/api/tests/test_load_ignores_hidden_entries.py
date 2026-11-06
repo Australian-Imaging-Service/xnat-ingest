@@ -19,7 +19,7 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 from accessionflow.api.collate_api import collate
 from accessionflow.helpers.arg_types import IDSpec
 from accessionflow.helpers.remotes import list_session_dirs
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 @pytest.fixture(scope="module")
@@ -46,14 +46,14 @@ def _resource_dir(session_dir: Path) -> Path:
 
 
 def test_load_ignores_a_batch_folder_left_in_a_scan(session_dir: Path) -> None:
-    before = ImagingSession.load(session_dir, require_manifest=True)
+    before = Accession.load(session_dir, require_manifest=True)
     resource_dir = _resource_dir(session_dir)
     orphan = resource_dir.parent / f".{resource_dir.name}-upload-orphan"
     orphan.mkdir()
     for fspath in resource_dir.iterdir():
         (orphan / fspath.name).hardlink_to(fspath)
 
-    session = ImagingSession.load(session_dir, require_manifest=True)
+    session = Accession.load(session_dir, require_manifest=True)
 
     scan = next(iter(session.scans.values()))
     assert set(scan.resources) == {resource_dir.name}
@@ -62,12 +62,12 @@ def test_load_ignores_a_batch_folder_left_in_a_scan(session_dir: Path) -> None:
 
 
 def test_load_ignores_a_batch_folder_left_in_a_session(session_dir: Path) -> None:
-    before = ImagingSession.load(session_dir, require_manifest=True)
+    before = Accession.load(session_dir, require_manifest=True)
     orphan = session_dir / ".notes-upload-orphan"
     orphan.mkdir()
     (orphan / "notes.txt").write_text("from a killed uploader")
 
-    session = ImagingSession.load(session_dir, require_manifest=True)
+    session = Accession.load(session_dir, require_manifest=True)
 
     assert len(session.scans) == len(before.scans)
     assert session.session_resources == {}

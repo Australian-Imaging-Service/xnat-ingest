@@ -45,7 +45,7 @@ from frametree.core.frameset import FrameSet
 from tqdm import tqdm
 
 from ..exceptions import (
-    ImagingSessionParseError,
+    AccessionParseError,
     OrthancStudyChangedError,
     StagingError,
 )
@@ -60,8 +60,8 @@ from ..helpers.arg_types import (
 )
 from ..helpers.fields import Fields
 from ..helpers.metadata import Metadata
-from .resource import ImagingResource
-from .scan import ImagingScan
+from .acquisition import Acquisition
+from .resource import Resource
 
 logger = logging.getLogger("accessionflow")
 
@@ -102,8 +102,8 @@ def _parse_datetime_to_str(date_str: str, time_str: str | None) -> str:
 
 
 def scans_converter(
-    scans: ty.Union[ty.Sequence[ImagingScan], ty.Dict[str, ImagingScan]],
-) -> dict[str, ImagingScan]:
+    scans: ty.Union[ty.Sequence[Acquisition], ty.Dict[str, Acquisition]],
+) -> dict[str, Acquisition]:
     if isinstance(scans, ty.Sequence):
         duplicates = [i for i, c in Counter(s.id for s in scans).items() if c > 1]
         if duplicates:
@@ -510,7 +510,7 @@ def _is_timestamp(value: str) -> bool:
 
 
 @attrs.define(slots=False)
-class ImagingSession:
+class Accession:
     """Representation of an imaging session to be uploaded to XNAT, which is a set of scans that
     belong together under the same project/subject/session IDs.
 
@@ -522,7 +522,7 @@ class ImagingSession:
         The subject ID of the session
     session_id: str, optional
         The session (visit) ID of the session
-    scans: ty.Dict[str, ImagingScan]
+    scans: ty.Dict[str, Acquisition]
         The scans in the session
     run_uid: ty.Optional[str]
         The run UID of the session, if it exists
@@ -532,12 +532,12 @@ class ImagingSession:
     project_id: str | None = None
     subject_id: str | None = None
     session_id: str | None = None
-    scans: ty.Dict[str, ImagingScan] = attrs.field(
+    scans: ty.Dict[str, Acquisition] = attrs.field(
         factory=dict,
         converter=scans_converter,
         validator=attrs.validators.instance_of(dict),
     )
-    session_resources: ty.Dict[str, ImagingResource] = attrs.field(factory=dict)
+    session_resources: ty.Dict[str, Resource] = attrs.field(factory=dict)
     run_uid: ty.Optional[str] = attrs.field(default=None)
     metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
@@ -624,13 +624,13 @@ class ImagingSession:
         return set(r.fileset.parent for r in self.primary_resources)
 
     @property
-    def resources(self) -> ty.List[ImagingResource]:
+    def resources(self) -> ty.List[Resource]:
         return list(self.session_resources.values()) + [
             r for p in self.scans.values() for r in p.resources.values()
         ]
 
     @property
-    def primary_resources(self) -> ty.List[ImagingResource]:
+    def primary_resources(self) -> ty.List[Resource]:
         return [
             r
             for s in self.scans.values()
@@ -655,7 +655,7 @@ class ImagingSession:
         self,
         dataset: FrameSet | None,
         always_include: ty.Sequence[str | FileSet] = (),
-    ) -> ty.Iterator[ImagingResource]:
+    ) -> ty.Iterator[Resource]:
         """Returns selected resources that match the columns in the dataset definition
 
         Parameters
@@ -683,7 +683,7 @@ class ImagingSession:
                 "Either 'dataset' or 'always_include' must be specified to select "
                 f"appropriate resources to upload from {self.name} session"
             )
-        store = ImagingSessionMockStore(self)
+        store = AccessionMockStore(self)
 
         uploaded = set()
         for mime_like in always_include:
@@ -729,7 +729,7 @@ class ImagingSession:
                         continue
                     resource = scan.resources[resource_name]
                     if not isinstance(resource.fileset, column.datatype):
-                        resource = ImagingResource(
+                        resource = Resource(
                             name=resource_name,
                             fileset=column.datatype(resource.fileset),
                             scan=scan,
@@ -816,12 +816,12 @@ class ImagingSession:
 
         Returns
         -------
-        list[ImagingSession]
+        list[Accession]
             all imaging sessions that are present in list of dicom paths
 
         Raises
         ------
-        ImagingSessionParseError
+        AccessionParseError
             if values extracted from IDs across the DICOM scans are not consistent across
             DICOM files within the session
         """
@@ -1112,11 +1112,9 @@ class ImagingSession:
                         scan.metadata, escape=False
                     )
                     if not description.strip():
-                        raise ImagingSessionParseError(
-                            "Empty optional scan description"
-                        )
+                        raise AccessionParseError("Empty optional scan description")
                     scan.type = description
-                except ImagingSessionParseError:
+                except AccessionParseError:
                     logger.debug(
                         "Could not resolve a description for scan '%s' from field "
                         "'%s', using scan ID instead",
@@ -1142,7 +1140,7 @@ class ImagingSession:
             dict[ty.Type[FileSet], tuple[ty.Type[FileSet], dict[str, str]]] | None
         ) = None,
         errors: list[str] | None = None,
-    ) -> list["ImagingSession"]:
+    ) -> list["Accession"]:
         """Stage DICOM studies from Orthanc directly into output_dir using hardlinks.
         Requires orthanc_storage_dir and output_dir to be on the same filesystem.
 
@@ -1181,7 +1179,7 @@ class ImagingSession:
             unlabelled, so it is tried again on the next pass
         Returns
         -------
-        list[ImagingSession]
+        list[Accession]
             Staged sessions loaded from output_dir.
         """
         output_dir = Path(output_dir).resolve()
@@ -1324,7 +1322,7 @@ class ImagingSession:
             issubclass(DicomSeries, src_type) for src_type in conversion_map or {}
         )
 
-        staged: list[ImagingSession] = []
+        staged: list[Accession] = []
         # The build directory and the conversion scratch directories of the
         # study being staged, for the clean-up when staging fails part way.
         current_work_dir: dict[str, ty.Any] = {}
@@ -1336,7 +1334,7 @@ class ImagingSession:
             for convert_dir in current_work_dir.pop("convert", []):
                 _remove_scratch_dir(convert_dir)
 
-        def _stage_study(study_id: str) -> ImagingSession | None:
+        def _stage_study(study_id: str) -> Accession | None:
             study = get_json(f"/studies/{study_id}")
             if wait_period:
                 try:
@@ -1494,11 +1492,11 @@ class ImagingSession:
                 checksums: dict[str, str] = dict(linked)
 
                 manifest = {"datatype": "medimage/dicom-series", "checksums": checksums}
-                ImagingResource.write_manifest(resource_dir, manifest)
+                Resource.write_manifest(resource_dir, manifest)
 
                 if convert_series:
                     try:
-                        ImagingResource.load(resource_dir, check_checksums=False).save(
+                        Resource.load(resource_dir, check_checksums=False).save(
                             scan_dir,
                             conversion_map=conversion_map,
                             calculate_checksums=False,
@@ -1649,7 +1647,7 @@ class ImagingSession:
 
         Returns
         -------
-        ImagingSession
+        Accession
             a new session with deidentified images
         dict[str, Any]
             a mapping containing the original values of metadata fields that
@@ -1889,7 +1887,7 @@ class ImagingSession:
         try:
             scan = self.scans[scan_id]
         except KeyError:
-            scan = self.scans[scan_id] = ImagingScan(
+            scan = self.scans[scan_id] = Acquisition(
                 id=scan_id, type=scan_type, attached=attached, session=self
             )
         else:
@@ -1903,7 +1901,7 @@ class ImagingSession:
                     f"Non-matching attached files ({scan.attached} and {attached}) "
                     f"for scan ID {scan_id}"
                 )
-        resource = ImagingResource(name=resource_name, fileset=fileset, scan=scan)
+        resource = Resource(name=resource_name, fileset=fileset, scan=scan)
         if metadata:
             resource.metadata.update(metadata)
         try:
@@ -1949,7 +1947,7 @@ class ImagingSession:
                 # Combine the members into a single ``SetOf[...]`` resource,
                 # classified by the union of their content types, and collate their
                 # metadata the same way a scan collates its resources' (see
-                # ``ImagingScan.metadata``): fields every member agrees on stay
+                # ``Acquisition.metadata``): fields every member agrees on stay
                 # scalar, fields that differ (e.g. a per-file 'relpath' from
                 # ``--path-metadata-regex``) become a list aligned with the merged
                 # files.
@@ -1968,7 +1966,7 @@ class ImagingSession:
                 )
                 members.append(dict(fileset.metadata))
                 merged_fileset.metadata.update(Metadata.collate(members))
-                resource = ImagingResource(
+                resource = Resource(
                     name=resource_name, fileset=merged_fileset, scan=scan
                 )
                 if metadata:
@@ -1990,9 +1988,7 @@ class ImagingSession:
                     resource_name,
                     f". {clash_hint}" if clash_hint else "",
                 )
-                resource = ImagingResource(
-                    name=resource_name, fileset=fileset, scan=scan
-                )
+                resource = Resource(name=resource_name, fileset=fileset, scan=scan)
             elif policy == "error":
                 raise KeyError(
                     f"Clash between resource names ('{resource_name}') for {scan_id} scan in "
@@ -2024,7 +2020,7 @@ class ImagingSession:
         overwrite : bool
             whether to overwrite an existing resource with the same name
         """
-        resource = ImagingResource(name=resource_name, fileset=fileset)
+        resource = Resource(name=resource_name, fileset=fileset)
         if resource_name in self.session_resources:
             existing = self.session_resources[resource_name]
             if resource.checksums == existing.checksums:
@@ -2047,7 +2043,7 @@ class ImagingSession:
 
         Returns
         -------
-        ImagingSession
+        Accession
             a session with no scans but with metadata populated
         """
         stem = yaml_path.stem
@@ -2097,7 +2093,7 @@ class ImagingSession:
 
         Returns
         -------
-        ImagingSession
+        Accession
             the loaded session
         """
         if session_dir.name.startswith(cls.PRE_LABEL_PREFIX):
@@ -2129,7 +2125,7 @@ class ImagingSession:
                 continue
             if "." in item.name:
                 # scan directory: <scan_id>.<scan_type>
-                scan = ImagingScan.load(
+                scan = Acquisition.load(
                     item,
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
@@ -2137,7 +2133,7 @@ class ImagingSession:
                 if scan.id in session.scans:
                     # Two directories, one scan ID: a dict entry would silently
                     # replace the other scan, and its files would never be saved.
-                    raise ImagingSessionParseError(
+                    raise AccessionParseError(
                         f"Two scan directories of '{session_dir}' have the scan ID "
                         f"'{scan.id}' ('{session.scans[scan.id].type}' and "
                         f"'{scan.type}'). The session needs attention."
@@ -2146,7 +2142,7 @@ class ImagingSession:
                 session.scans[scan.id] = scan
             else:
                 # session resource directory: <resource_name> (no dot)
-                resource = ImagingResource.load(
+                resource = Resource.load(
                     item,
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
@@ -2285,7 +2281,7 @@ class ImagingSession:
 
         Returns
         -------
-        ImagingSession
+        Accession
             a deidentified session with updated paths
         Path
             the path to the directory where the session is saved
@@ -2399,7 +2395,7 @@ class ImagingSession:
             session's data has already been cleaned up. Only safe to use on a
             staged session directory that this session exclusively owns — never on
             a session loaded from a shared source directory (see
-            :meth:`ImagingResource.unlink`), by default False
+            :meth:`Resource.unlink`), by default False
         """
         for scan in self.scans.values():
             for resource in scan.resources.values():
@@ -2443,7 +2439,7 @@ def fix_long_path(p: str | Path) -> Path:
     return Path(f"\\\\?\\{path_str}")
 
 
-from .store import ImagingSessionMockStore  # noqa: E402
+from .store import AccessionMockStore  # noqa: E402
 
 
 def json_serializer(obj: ty.Any) -> ty.Any:

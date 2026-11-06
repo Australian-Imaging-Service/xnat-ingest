@@ -9,7 +9,7 @@ from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.arg_types import AttachedFiles, OnResourceClash
 from ..helpers.logging import logger
-from ..model.session import ImagingSession
+from ..model.accession import Accession
 
 
 def attach(
@@ -32,17 +32,15 @@ def attach(
     errors: list[str] = []
     # Check __metadata__/ for sessions whose directories have been
     # removed. Create metadata-only sessions from the YAML files so attached files can still be discovered.
-    metadata_dir = input_dir / ImagingSession.METADATA_DIR
-    metadata_sessions: list[ImagingSession] = []
+    metadata_dir = input_dir / Accession.METADATA_DIR
+    metadata_sessions: list[Accession] = []
     if metadata_dir.is_dir():
         existing_names = {p.name for p in session_dirs}
         for yaml_path in sorted(metadata_dir.glob("*.yaml")):
             session_name = yaml_path.stem
             if session_name not in existing_names:
                 try:
-                    metadata_sessions.append(
-                        ImagingSession.from_metadata_yaml(yaml_path)
-                    )
+                    metadata_sessions.append(Accession.from_metadata_yaml(yaml_path))
                     logger.info(
                         "Created metadata-only session '%s' from '%s'",
                         session_name,
@@ -69,7 +67,7 @@ def attach(
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
         try:
-            session = ImagingSession.load(
+            session = Accession.load(
                 session_listing.cache_path,
                 require_manifest=require_manifest,
                 check_checksums=False,

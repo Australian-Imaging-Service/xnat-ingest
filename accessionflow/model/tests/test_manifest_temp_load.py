@@ -11,8 +11,8 @@ from moto import mock_aws
 from accessionflow.exceptions import DifferingCheckumsException
 from accessionflow.helpers.arg_types import StoreCredentials
 from accessionflow.helpers.remotes import iterate_s3_sessions
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
 
 
 def _saved(tmp_path: Path, directory: bool = False) -> Path:
@@ -23,9 +23,9 @@ def _saved(tmp_path: Path, directory: bool = False) -> Path:
     fileset = Directory(source) if directory else FileSet(data)
     scan = tmp_path / "edge" / "PROJECT.SUBJECT.SESSION" / "1.test"
     scan.mkdir(parents=True)
-    ImagingResource(name="DATA", fileset=fileset).save(scan)
+    Resource(name="DATA", fileset=fileset).save(scan)
     resource = scan / "DATA"
-    (resource / ImagingResource.MANIFEST_TMP_FNAME).write_text("{unfinished")
+    (resource / Resource.MANIFEST_TMP_FNAME).write_text("{unfinished")
     return resource
 
 
@@ -34,9 +34,9 @@ def test_resource_load_ignores_only_publication_temp(
     tmp_path: Path, directory: bool
 ) -> None:
     resource_dir = _saved(tmp_path, directory)
-    temporary = resource_dir / ImagingResource.MANIFEST_TMP_FNAME
+    temporary = resource_dir / Resource.MANIFEST_TMP_FNAME
 
-    loaded = ImagingResource.load(resource_dir)
+    loaded = Resource.load(resource_dir)
 
     assert len(loaded.checksums) == 1
     assert loaded.calculate_checksums() == loaded.checksums
@@ -45,16 +45,16 @@ def test_resource_load_ignores_only_publication_temp(
 
 def test_temporary_file_cannot_replace_required_manifest(tmp_path: Path) -> None:
     resource = _saved(tmp_path)
-    (resource / ImagingResource.MANIFEST_FNAME).unlink()
+    (resource / Resource.MANIFEST_FNAME).unlink()
     with pytest.raises(FileNotFoundError, match="Manifest file not found"):
-        ImagingResource.load(resource)
+        Resource.load(resource)
 
 
 def test_manifest_optional_load_does_not_upload_temporary_file(tmp_path: Path) -> None:
     resource = _saved(tmp_path)
-    (resource / ImagingResource.MANIFEST_FNAME).unlink()
+    (resource / Resource.MANIFEST_FNAME).unlink()
 
-    loaded = ImagingResource.load(resource, require_manifest=False)
+    loaded = Resource.load(resource, require_manifest=False)
 
     assert loaded.checksums is None
     assert set(loaded.calculate_checksums()) == {"payload.txt"}
@@ -76,14 +76,14 @@ def test_other_unlisted_files_are_still_refused(tmp_path: Path, name: str) -> No
     extra.write_text("not listed in the manifest")
 
     with pytest.raises(DifferingCheckumsException):
-        ImagingResource.load(resource)
+        Resource.load(resource)
 
 
 def test_temporary_file_does_not_hide_changed_resource_data(tmp_path: Path) -> None:
     resource = _saved(tmp_path)
     (resource / "payload.txt").write_text("different data")
     with pytest.raises(DifferingCheckumsException):
-        ImagingResource.load(resource)
+        Resource.load(resource)
 
 
 @pytest.mark.parametrize("extra_file", [False, True])
@@ -116,13 +116,13 @@ def test_management_load_of_s3_copy_with_publication_temp(
             assert next(listings) == 1
             listing = next(listings)
             copied = listing.cache_path
-            temporary = copied / "1.test" / "DATA" / ImagingResource.MANIFEST_TMP_FNAME
+            temporary = copied / "1.test" / "DATA" / Resource.MANIFEST_TMP_FNAME
             assert temporary.read_text() == "{unfinished"
             if extra_file:
                 with pytest.raises(DifferingCheckumsException):
-                    ImagingSession.load(copied)
+                    Accession.load(copied)
             else:
-                loaded = ImagingSession.load(copied)
+                loaded = Accession.load(copied)
                 data = loaded.scans["1"].resources["DATA"]
                 assert set(data.checksums) == {"payload.txt"}
                 assert data.calculate_checksums() == data.checksums

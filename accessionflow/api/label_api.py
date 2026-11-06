@@ -11,7 +11,7 @@ from tqdm import tqdm
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
-from ..model.session import ImagingSession
+from ..model.accession import Accession
 from .collate_api import BUILD_NAME_DEFAULT
 
 INVALID_DIRNAME = "__invalid__"
@@ -21,7 +21,7 @@ def _existing_invalid_uids(invalid_dir: Path) -> set[str]:
     """Return the set of source UIDs already saved under __invalid__/.
 
     Each subdirectory's __METADATA__.json is checked for the ``__uid__`` key
-    that ``ImagingSession.save()`` writes.  Directories whose metadata can't
+    that ``Accession.save()`` writes.  Directories whose metadata can't
     be read are silently skipped.
     """
     uids: set[str] = set()
@@ -36,7 +36,7 @@ def _existing_invalid_uids(invalid_dir: Path) -> set[str]:
         try:
             with open(meta_path) as f:
                 meta = json.load(f)
-            uid = meta.get(ImagingSession.UID_METADATA_KEY)
+            uid = meta.get(Accession.UID_METADATA_KEY)
             if uid is not None:
                 uids.add(uid)
         except (json.JSONDecodeError, OSError):
@@ -96,7 +96,7 @@ def label(
     Notes
     -----
     If a session's project/subject/session ID can't be resolved from its metadata, it
-    is saved with placeholder IDs (see `ImagingSession.label`) under an
+    is saved with placeholder IDs (see `Accession.label`) under an
     `INVALID_NAME_DEFAULT` ('__invalid__') subdirectory of `output_dir` instead of the
     regular output location, so it can be found and manually reprocessed rather than
     being lost.
@@ -149,7 +149,7 @@ def label(
                 if unlink_source in ("all", "keep-metadata")
                 else []
             )
-            session = ImagingSession.load(
+            session = Accession.load(
                 session_listing.cache_path,
             )
             resource_dirs = (
@@ -211,7 +211,7 @@ def label(
             # Only when the output does not exist yet. Re-saving over one that
             # is already there writes in place, because building elsewhere and
             # renaming in defeats the write-if-changed short-circuits in
-            # ImagingResource.save and Metadata.save, both of which are
+            # Resource.save and Metadata.save, both of which are
             # conditional on the destination existing. Losing them moves every
             # mtime on every pass, which is what stops a session from ever
             # settling long enough to be uploaded.

@@ -8,17 +8,17 @@ from fileformats.core import FileSet
 from fileformats.core.exceptions import FormatMismatchError
 from fileformats.generic import File
 
-from accessionflow.model.resource import ImagingResource
+from accessionflow.model.resource import Resource
 
 
 def test_load_legacy_manifest_fname(tmp_path: Path) -> None:
-    """ImagingResource.load should fall back to the legacy manifest filename
+    """Resource.load should fall back to the legacy manifest filename
     (OLD_MANIFEST_FNAME) for resources saved before MANIFEST_FNAME was changed"""
     src_dir = tmp_path / "in"
     src_dir.mkdir()
     fpath = src_dir / "a-file.txt"
     fpath.write_text("content")
-    resource = ImagingResource(name="my-resource", fileset=File(fpath))
+    resource = Resource(name="my-resource", fileset=File(fpath))
 
     dest_dir = tmp_path / "out"
     dest_dir.mkdir()
@@ -27,16 +27,16 @@ def test_load_legacy_manifest_fname(tmp_path: Path) -> None:
     resource_dir = dest_dir / "my-resource"
     # Simulate a resource saved by an older version of accessionflow that wrote the
     # manifest under the legacy filename
-    (resource_dir / ImagingResource.MANIFEST_FNAME).rename(
-        resource_dir / ImagingResource.OLD_MANIFEST_FNAME
+    (resource_dir / Resource.MANIFEST_FNAME).rename(
+        resource_dir / Resource.OLD_MANIFEST_FNAME
     )
 
-    loaded = ImagingResource.load(resource_dir)
+    loaded = Resource.load(resource_dir)
     assert loaded.checksums == saved.checksums
     assert loaded.datatype == saved.datatype
 
 
-def _resource(tmp_path: Path, age: float = 0.0) -> ImagingResource:
+def _resource(tmp_path: Path, age: float = 0.0) -> Resource:
     src_dir = tmp_path / "in"
     src_dir.mkdir()
     fpath = src_dir / "a-file.txt"
@@ -46,7 +46,7 @@ def _resource(tmp_path: Path, age: float = 0.0) -> ImagingResource:
         # package pass-through) is older than all files that pass wrote
         mtime = time.time() - age
         os.utime(fpath, (mtime, mtime))
-    return ImagingResource(name="my-resource", fileset=File(fpath))
+    return Resource(name="my-resource", fileset=File(fpath))
 
 
 def test_save_repairs_an_unreadable_manifest(
@@ -60,18 +60,18 @@ def test_save_repairs_an_unreadable_manifest(
     dest_dir.mkdir()
     saved = resource.save(dest_dir)
     resource_dir = dest_dir / "my-resource"
-    manifest = resource_dir / ImagingResource.MANIFEST_FNAME
+    manifest = resource_dir / Resource.MANIFEST_FNAME
     manifest.write_text("{")
     with pytest.raises(FormatMismatchError):
-        ImagingResource.load(resource_dir)
+        Resource.load(resource_dir)
 
     with caplog.at_level(logging.WARNING):
         repaired = resource.save(dest_dir)
 
     assert repaired.checksums == saved.checksums
-    assert ImagingResource.load(resource_dir).checksums == saved.checksums
+    assert Resource.load(resource_dir).checksums == saved.checksums
     assert (resource_dir / "a-file.txt").read_text() == "content"
-    assert ImagingResource.MANIFEST_FNAME in caplog.text
+    assert Resource.MANIFEST_FNAME in caplog.text
 
 
 def test_save_publishes_the_manifest_in_one_step(
@@ -96,9 +96,9 @@ def test_save_publishes_the_manifest_in_one_step(
     resource_dir = dest_dir / "my-resource"
     assert not resource_dir.exists()
     repaired = resource.save(dest_dir, overwrite=True)
-    assert ImagingResource.load(resource_dir).checksums == repaired.checksums
+    assert Resource.load(resource_dir).checksums == repaired.checksums
     assert (resource_dir / "a-file.txt").read_text() == "content"
-    assert not (resource_dir / (ImagingResource.MANIFEST_FNAME + ".tmp")).exists()
+    assert not (resource_dir / (Resource.MANIFEST_FNAME + ".tmp")).exists()
 
 
 @pytest.mark.parametrize(
@@ -123,7 +123,7 @@ def test_save_replaces_a_resource_without_a_manifest(
     dest_dir = tmp_path / "out"
     dest_dir.mkdir()
     resource_dir = dest_dir / "my-resource"
-    tmp_manifest = resource_dir / (ImagingResource.MANIFEST_FNAME + ".tmp")
+    tmp_manifest = resource_dir / (Resource.MANIFEST_FNAME + ".tmp")
 
     def die(*args: object) -> None:
         raise OSError(f"killed {died}")
@@ -131,7 +131,7 @@ def test_save_replaces_a_resource_without_a_manifest(
     if died == "before-the-move":
         monkeypatch.setattr(os, "replace", die)
     else:
-        monkeypatch.setattr(ImagingResource, "write_manifest", die)
+        monkeypatch.setattr(Resource, "write_manifest", die)
     with pytest.raises(OSError):
         resource.save(dest_dir, copy_mode=copy_mode)
     monkeypatch.undo()
@@ -141,7 +141,7 @@ def test_save_replaces_a_resource_without_a_manifest(
     repaired = resource.save(dest_dir, copy_mode=copy_mode)
 
     assert repaired.checksums == resource.checksums
-    assert ImagingResource.load(resource_dir).checksums == resource.checksums
+    assert Resource.load(resource_dir).checksums == resource.checksums
     assert (resource_dir / "a-file.txt").read_text() == "content"
     assert not tmp_manifest.exists()
 
@@ -161,5 +161,5 @@ def test_save_replaces_an_empty_resource_directory(
         repaired = resource.save(dest_dir)
 
     assert repaired.checksums == resource.checksums
-    assert ImagingResource.load(resource_dir).checksums == resource.checksums
+    assert Resource.load(resource_dir).checksums == resource.checksums
     assert "has no manifest" in caplog.text

@@ -1,6 +1,6 @@
 """CLI-level plumbing tests for `accessionflow collate-orthanc`.
 
-ImagingSession.from_orthanc is mocked here (its behaviour, including the
+Accession.from_orthanc is mocked here (its behaviour, including the
 to_process_label/processed_label filtering, is covered directly against a
 faked Orthanc REST API in model/tests/test_from_orthanc.py) -- this just
 checks that collate_orthanc_cli actually runs and passes the CLI options
@@ -21,7 +21,7 @@ from unittest.mock import patch
 from fileformats.medimage import DicomSeries, NiftiGzX
 
 from accessionflow.cli import collate_orthanc_cmd
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 from conftest import show_cli_trace
 
 
@@ -32,9 +32,7 @@ def test_collate_orthanc_cli_runs_and_passes_labels_through(
     store_dir.mkdir()
     output_dir = tmp_path / "staged"
 
-    with patch.object(
-        ImagingSession, "from_orthanc", return_value=[]
-    ) as mock_from_orthanc:
+    with patch.object(Accession, "from_orthanc", return_value=[]) as mock_from_orthanc:
         result = cli_runner(
             collate_orthanc_cmd,
             [
@@ -70,9 +68,7 @@ def test_collate_orthanc_cli_defaults_to_no_to_process_label(
     store_dir.mkdir()
     output_dir = tmp_path / "staged"
 
-    with patch.object(
-        ImagingSession, "from_orthanc", return_value=[]
-    ) as mock_from_orthanc:
+    with patch.object(Accession, "from_orthanc", return_value=[]) as mock_from_orthanc:
         result = cli_runner(
             collate_orthanc_cmd,
             [
@@ -96,9 +92,7 @@ def test_collate_orthanc_cli_passes_conversions_through(
     store_dir.mkdir()
     output_dir = tmp_path / "staged"
 
-    with patch.object(
-        ImagingSession, "from_orthanc", return_value=[]
-    ) as mock_from_orthanc:
+    with patch.object(Accession, "from_orthanc", return_value=[]) as mock_from_orthanc:
         result = cli_runner(
             collate_orthanc_cmd,
             [

@@ -38,11 +38,11 @@ from ..exceptions import IncompleteCheckumsException, SessionIdentityRefused
 from ..helpers.arg_types import StoreCredentials, UploadMethod
 from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
-from ..model.resource import ImagingResource
-from ..model.session import ImagingSession
+from ..model.accession import Accession
+from ..model.resource import Resource
 
 
-def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
+def has_scan_dicom(resources: ty.Iterable[Resource]) -> bool:
     """Whether resources include readable DICOM files attached to a scan.
 
     A full ``DicomCollection`` and a representative ``DicomImage`` can both be
@@ -56,7 +56,7 @@ def has_scan_dicom(resources: ty.Iterable[ImagingResource]) -> bool:
 
 
 def _upload_session_fields(
-    session: ImagingSession, xsession: ty.Any, connection: ty.Any
+    session: Accession, xsession: ty.Any, connection: ty.Any
 ) -> None:
     if not session.fields:
         return
@@ -278,7 +278,7 @@ def upload(
                             "Ensure the session exists on XNAT before uploading session-only resources."
                         )
                     for resource_name in session_listing.resource_paths:
-                        resource = ImagingResource.load(
+                        resource = Resource.load(
                             session_listing.cache_path / resource_name,
                             require_manifest=require_manifest,
                             check_checksums=check_checksums,
@@ -304,7 +304,7 @@ def upload(
                     )
                     continue
 
-                session = ImagingSession.load(
+                session = Accession.load(
                     session_listing.cache_path,
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,
@@ -314,7 +314,7 @@ def upload(
                 # staged by an older version, assembled by hand, or left behind by
                 # a run that died between writing the scans and writing the
                 # metadata. Refusing it was considered and rejected, because
-                # `ImagingSession.load` treats the file as optional by design and
+                # `Accession.load` treats the file as optional by design and
                 # upstream ships `upload` to people whose staging directories we
                 # have never seen. A skip that waits for ever is worse than the
                 # partial upload it prevents, because a partial upload is at
@@ -392,7 +392,7 @@ def upload(
                 # shared caches, so isn't safe to do concurrently. The actual upload
                 # of each resource's files is independent (different resources map to
                 # different scan/resource catalogs on XNAT) so is safe to fan out.
-                to_upload: list[tuple[ImagingResource, ty.Any, ty.Any]] = []
+                to_upload: list[tuple[Resource, ty.Any, ty.Any]] = []
                 incomplete_on_xnat: list[str] = []
                 repaired_on_xnat: list[str] = []
                 for resource in selected_resources:
@@ -421,7 +421,7 @@ def upload(
                         to_upload.append((part, xresource, only_files))
 
                 def _upload_resource(
-                    resource: ImagingResource,
+                    resource: Resource,
                     xresource: ty.Any,
                     only_files: ty.Optional[ty.Set[str]] = None,
                 ) -> None:
@@ -557,7 +557,7 @@ def upload(
 
                     logger.info(f"Uploaded '{resource.path}' in '{session.name}'")
 
-                resource_errors: list[tuple[ImagingResource, BaseException]] = []
+                resource_errors: list[tuple[Resource, BaseException]] = []
                 with ThreadPoolExecutor(max_workers=xnat_max_workers) as executor:
                     futures = {
                         executor.submit(
@@ -719,7 +719,7 @@ def select_files_to_upload(
     the manifest behind `only_files` is keyed to the resource directory. They
     coincide for a flat resource directory and can differ for a nested one.
 
-    ImagingResource.load() is what normally makes them agree: it recomputes the
+    Resource.load() is what normally makes them agree: it recomputes the
     manifest keys with this same `relative_to` and raises on a mismatch. That
     runs only under `check_checksums`, which also gates the post-upload
     verification, so `--dont-check-checksums` removes both ends at once. Hence

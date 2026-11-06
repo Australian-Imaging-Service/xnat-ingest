@@ -13,19 +13,19 @@ from ..helpers.logging import logger
 from ..helpers.metadata import Metadata
 from ..helpers.remotes import LocalSessionListing, list_session_dirs
 from ..helpers.xnat_scan_types import xnat_resource_label_from_sop_class
-from ..model.resource import ImagingResource
-from ..model.session import ImagingSession
+from ..model.accession import Accession
+from ..model.resource import Resource
 from .collate_api import BUILD_NAME_DEFAULT
 
 OutputResources = ty.Mapping[str, tuple[type[FileSet], ty.Mapping[str, ty.Any]]]
 
 
 def _package_session(
-    session: ImagingSession,
+    session: Accession,
     source_datatype: type[FileSet],
     output_resources: OutputResources,
     on_resource_clash: OnResourceClash,
-) -> ImagingSession:
+) -> Accession:
     """Create a session whose matching scan resources are replaced by conversions.
 
     Every conversion receives the same original fileset. In particular, a sample
@@ -137,7 +137,7 @@ def _package_session(
     # not have an XNAT scan under which named derived outputs could be attached,
     # so they pass through unchanged.
     for resource in session.session_resources.values():
-        packaged_resource = ImagingResource(resource.name, resource.fileset)
+        packaged_resource = Resource(resource.name, resource.fileset)
         packaged_resource.metadata.update(dict(resource.metadata))
         packaged.session_resources[resource.name] = packaged_resource
 
@@ -151,8 +151,8 @@ def _file_states(session_dir: Path) -> dict[Path, FileState]:
     """The data files of a staged session, as paths inside it, each with its
     size, mtime and inode. Sidecars and hidden entries are not data."""
     sidecars = {
-        ImagingResource.MANIFEST_FNAME,
-        ImagingResource.OLD_MANIFEST_FNAME,
+        Resource.MANIFEST_FNAME,
+        Resource.OLD_MANIFEST_FNAME,
         Metadata.FNAME,
     }
     states: dict[Path, FileState] = {}
@@ -167,7 +167,7 @@ def _file_states(session_dir: Path) -> dict[Path, FileState]:
     return states
 
 
-def _session_files(session: ImagingSession, session_dir: Path) -> set[Path]:
+def _session_files(session: Accession, session_dir: Path) -> set[Path]:
     """The data files a loaded session refers to, as paths inside its directory."""
     return {
         Path(path).relative_to(session_dir)
@@ -224,7 +224,7 @@ def package(
         desc=f"Packaging staged sessions found in '{input_dir}'",
     ):
         try:
-            session = ImagingSession.load(
+            session = Accession.load(
                 listing.cache_path,
                 require_manifest=require_manifest,
                 check_checksums=True,
@@ -263,7 +263,7 @@ def package(
                 shutil.rmtree(work_dir)
             try:
                 if final_dir.exists():
-                    existing = ImagingSession.load(
+                    existing = Accession.load(
                         final_dir,
                         require_manifest=require_manifest,
                         check_checksums=True,

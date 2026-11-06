@@ -14,7 +14,7 @@ from accessionflow.helpers.remotes import (
     S3SessionListing,
     get_xnat_session,
 )
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 class IdentityXnat(FakeXnat):
@@ -70,7 +70,7 @@ def staged(tmp_path, uid="group-001"):
 
 
 def session(uid="group-001"):
-    result = ImagingSession(
+    result = Accession(
         uid="original-grouping-uid",
         project_id="proj",
         subject_id="subj",

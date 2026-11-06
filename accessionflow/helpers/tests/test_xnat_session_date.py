@@ -6,7 +6,7 @@ from unittest.mock import ANY, Mock
 import pytest
 
 from accessionflow.helpers.remotes import get_xnat_session
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 class _CreatedObject:
@@ -44,8 +44,8 @@ def _clear_calls() -> None:
     _MrSessionData.calls.clear()
 
 
-def _session(date_value: ty.Any = "20260805") -> ImagingSession:
-    session = ImagingSession(
+def _session(date_value: ty.Any = "20260805") -> Accession:
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",

@@ -51,7 +51,7 @@ def _upload_one_session(tmp_path: Path, uploaded: bool) -> ty.List[str]:
     events: ty.List[str] = []
     with (
         mock.patch.object(LocalSessionListing, "all_uploaded", return_value=uploaded),
-        mock.patch("accessionflow.api.upload_api.ImagingSession.load"),
+        mock.patch("accessionflow.api.upload_api.Accession.load"),
     ):
         upload(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
     return events

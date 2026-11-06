@@ -16,8 +16,8 @@ from fileformats.generic import Directory, File
 
 from accessionflow.api import upload_api
 from accessionflow.helpers.remotes import calculate_checksums
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
 
 
 def _directory(tmp_path):
@@ -71,7 +71,7 @@ def _upload(
     """Run upload with real files and a real session, without a server."""
     staging = tmp_path / "staged"
     (staging / "proj.subj.sess").mkdir(parents=True)
-    session = ImagingSession(
+    session = Accession(
         uid="uid", project_id="proj", subject_id="subj", session_id="sess"
     )
     session.add_resource("1", "scan", "DATA", fileset)
@@ -92,7 +92,7 @@ def _upload(
     connection.get_json.side_effect = get_json
     repo = SimpleNamespace(server="fake://xnat", connection=connection)
     with (
-        mock.patch.object(upload_api.ImagingSession, "load", return_value=session),
+        mock.patch.object(upload_api.Accession, "load", return_value=session),
         mock.patch.object(upload_api.FrameSet, "load", side_effect=KeyError("none")),
         mock.patch.object(
             upload_api, "get_xnat_session", return_value=SimpleNamespace(id="E1")
@@ -125,7 +125,7 @@ def test_directory_checksums_match_manifest_walk(tmp_path):
     (outside / "excluded.bin").write_bytes(b"outside")
     (fileset.fspath / "dir-link").symlink_to(outside, target_is_directory=True)
     (fileset.fspath / "nested" / "alias.bin").symlink_to("../flat.bin")
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
 
     assert set(expected) == {
         "data/flat.bin",
@@ -141,7 +141,7 @@ def test_broken_link_checksum_raises(tmp_path):
     fileset = _directory(tmp_path)
     (fileset.fspath / "broken.bin").symlink_to("missing.bin")
     with pytest.raises(FileNotFoundError, match="broken.bin"):
-        ImagingResource("DATA", fileset)
+        Resource("DATA", fileset)
     with pytest.raises(FileNotFoundError, match="broken.bin"):
         calculate_checksums(fileset)
 
@@ -149,7 +149,7 @@ def test_broken_link_checksum_raises(tmp_path):
 @pytest.mark.parametrize("batch_size", [0, 1, 2])
 def test_directory_upload_keeps_nested_paths_and_batches(tmp_path, batch_size):
     fileset = _directory(tmp_path)
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
     remote = _RemoteResource()
     _upload(tmp_path, fileset, remote, batch_size=batch_size)
 
@@ -163,7 +163,7 @@ def test_directory_upload_keeps_nested_paths_and_batches(tmp_path, batch_size):
 
 def test_directory_repair_sends_only_missing_leaf(tmp_path):
     fileset = _directory(tmp_path)
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
     missing = "data/nested/leaf.bin"
     remote = _RemoteResource(
         {path: digest for path, digest in expected.items() if path != missing}
@@ -186,7 +186,7 @@ def test_directory_repair_keeps_name_mismatch_error(tmp_path):
 def test_one_file_batch_contains_relative_link_target_bytes(tmp_path):
     fileset = _directory(tmp_path)
     (fileset.fspath / "nested" / "alias.bin").symlink_to("../flat.bin")
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
     remote = _RemoteResource()
     _upload(tmp_path, fileset, remote, batch_size=1)
     assert remote.held == expected
@@ -201,7 +201,7 @@ def test_directory_links_are_not_followed_in_upload(tmp_path):
     (fileset.fspath / "dir-link").symlink_to(outside, target_is_directory=True)
     remote = _RemoteResource()
     _upload(tmp_path, fileset, remote)
-    assert remote.held == ImagingResource("DATA", fileset).calculate_checksums()
+    assert remote.held == Resource("DATA", fileset).calculate_checksums()
     assert not any("dir-link" in path for path in remote.held)
 
 
@@ -223,7 +223,7 @@ def test_empty_directory_upload_has_clear_error(tmp_path):
     data = tmp_path / "data"
     (data / "empty").mkdir(parents=True)
     fileset = Directory(data)
-    assert ImagingResource("DATA", fileset).calculate_checksums() == {}
+    assert Resource("DATA", fileset).calculate_checksums() == {}
     remote = _RemoteResource()
     with pytest.raises(RuntimeError) as caught:
         _upload(tmp_path, fileset, remote)
@@ -234,7 +234,7 @@ def test_empty_directory_upload_has_clear_error(tmp_path):
 def test_overlapping_roots_upload_each_leaf_once(tmp_path):
     directory = _directory(tmp_path)
     fileset = FileSet([directory.fspath, directory.fspath / "flat.bin"])
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
     remote = _RemoteResource()
     _upload(tmp_path, fileset, remote, batch_size=0)
     assert remote.batches == [expected]
@@ -255,7 +255,7 @@ def test_file_based_resource_is_unchanged(tmp_path, file_type):
         fileset = File(first)
     else:
         fileset = FileSet([first, second])
-    expected = ImagingResource("DATA", fileset).calculate_checksums()
+    expected = Resource("DATA", fileset).calculate_checksums()
     assert calculate_checksums(fileset) == expected
     remote = _RemoteResource()
     _upload(tmp_path, fileset, remote)

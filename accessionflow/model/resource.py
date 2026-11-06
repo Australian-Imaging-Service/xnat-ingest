@@ -20,11 +20,11 @@ from ..helpers.metadata import Metadata
 logger = logging.getLogger("accessionflow")
 
 if ty.TYPE_CHECKING:
-    from .scan import ImagingScan  # noqa
+    from .acquisition import Acquisition  # noqa
 
 
 @attrs.define
-class ImagingResource:
+class Resource:
     """Representation of a resource to be uploaded to XNAT, which is a set of files
     associated with a scan. There can be multiple resources associated with a scan,
     e.g. the original DICOM files, a BIDS-converted version of the scan, and a brain
@@ -38,14 +38,14 @@ class ImagingResource:
         The set of files associated with the resource
     checksums: dict[str, str]
         The checksums of the files in the resource
-    scan: ImagingScan
+    scan: Acquisition
         The scan that the resource is associated with
     """
 
     name: str
     fileset: FileSet
     checksums: dict[str, str] = attrs.field(eq=False, repr=False)
-    scan: "ImagingScan" = attrs.field(default=None, eq=False, repr=False)
+    scan: "Acquisition" = attrs.field(default=None, eq=False, repr=False)
     metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
 
     @checksums.default
@@ -148,7 +148,7 @@ class ImagingResource:
 
         Returns
         -------
-        ImagingResource
+        Resource
             The saved resource
 
         Raises

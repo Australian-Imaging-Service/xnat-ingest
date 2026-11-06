@@ -9,9 +9,9 @@ from fileformats.generic import File
 
 from accessionflow.api.label_api import label
 from accessionflow.helpers.metadata import Metadata
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
 
 
 @pytest.fixture
@@ -20,14 +20,12 @@ def source(tmp_path):
     seed.write_text("original")
     session_seed = tmp_path / "session.txt"
     session_seed.write_text("session resource")
-    session = ImagingSession(
+    session = Accession(
         uid="paths",
         scans=[
-            ImagingScan(
-                "1", "scan", resources={"RAW": ImagingResource("RAW", File(seed))}
-            )
+            Acquisition("1", "scan", resources={"RAW": Resource("RAW", File(seed))})
         ],
-        session_resources={"SESSION": ImagingResource("SESSION", File(session_seed))},
+        session_resources={"SESSION": Resource("SESSION", File(session_seed))},
     )
     for key, value in (
         ("StudyID", "PROJECT"),
@@ -60,14 +58,14 @@ def test_file_at_new_path_survives_cleanup(source, tmp_path, mode, resource):
     if resource == "session":
         payload = root / "SESSION" / "session.txt"
     late = payload.with_name("late.txt")
-    save = ImagingSession.save
+    save = Accession.save
 
     def save_then_add(self, *args, **kwargs):
         result = save(self, *args, **kwargs)
         late.write_text("late")
         return result
 
-    with patch.object(ImagingSession, "save", save_then_add):
+    with patch.object(Accession, "save", save_then_add):
         assert run(collated, tmp_path / "labelled", mode) == []
     assert late.read_text() == "late"
     assert not payload.exists()
@@ -83,7 +81,7 @@ def test_new_resource_directory_survives_cleanup(source, tmp_path, mode, resourc
     collated, root, payload = source
     parent = root / "1.scan" if resource == "scan" else root
     late = parent / "LATE" / "late.txt"
-    save = ImagingSession.save
+    save = Accession.save
 
     def save_then_add(self, *args, **kwargs):
         result = save(self, *args, **kwargs)
@@ -91,7 +89,7 @@ def test_new_resource_directory_survives_cleanup(source, tmp_path, mode, resourc
         late.write_text("late resource")
         return result
 
-    with patch.object(ImagingSession, "save", save_then_add):
+    with patch.object(Accession, "save", save_then_add):
         assert run(collated, tmp_path / "labelled", mode) == []
     assert late.read_text() == "late resource"
     assert not payload.parent.exists()
@@ -117,14 +115,14 @@ def test_resource_symlink_cleanup_preserves_late_paths(
     empty = resource_dir / "empty" / "nested"
     empty.mkdir(parents=True)
     late = resource_dir / "late-link"
-    save = ImagingSession.save
+    save = Accession.save
 
     def save_then_add(self, *args, **kwargs):
         result = save(self, *args, **kwargs)
         late.symlink_to(outside)
         return result
 
-    with patch.object(ImagingSession, "save", save_then_add):
+    with patch.object(Accession, "save", save_then_add):
         assert run(collated, tmp_path / "labelled", "keep-metadata") == []
     assert not recorded.is_symlink()
     assert late.is_symlink()
@@ -183,8 +181,8 @@ def test_normal_cleanup_retains_requested_metadata(source, tmp_path, mode, extra
 @pytest.mark.parametrize("mode", ["all", "keep-metadata"])
 def test_failed_save_preserves_input(source, tmp_path, mode):
     collated, root, payload = source
-    with patch.object(ImagingSession, "save", side_effect=RuntimeError("save failed")):
+    with patch.object(Accession, "save", side_effect=RuntimeError("save failed")):
         with pytest.raises(RuntimeError, match="save failed"):
             run(collated, tmp_path / "labelled", mode)
     assert payload.read_text() == "original"
-    ImagingSession.load(root)
+    Accession.load(root)

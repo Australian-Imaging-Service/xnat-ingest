@@ -34,7 +34,7 @@ or remove resources. The stage does not compare input and output file counts or
 use a format list to decide whether a run is complete. The method must raise an
 exception if it cannot complete its work.
 
-``ImagingSession.load_for_processing`` records the input file paths before loading
+``Accession.load_for_processing`` records the input file paths before loading
 the session. After processing, saving the output and writing any requested
 re-identification mapping succeed, ``--unlink-source all`` removes only those
 recorded files, then empty directories. ``--unlink-source keep-metadata`` removes
@@ -45,7 +45,7 @@ the input. Without ``--unlink-source``, the input stays and is processed on each
 cycle. Metadata-only skeletons from ``keep-metadata`` are skipped.
 
 New sessions are built outside the visible session directory and published by
-rename. When ``ImagingSession.save`` adds or replaces a resource in an existing
+rename. When ``Accession.save`` adds or replaces a resource in an existing
 session, it also builds the resource, manifest and metadata under ``__build__``
 on the destination filesystem before publishing the complete resource by rename.
 This prevents a reader from seeing a partly copied file. A delay alone would not

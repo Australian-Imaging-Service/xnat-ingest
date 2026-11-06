@@ -8,8 +8,8 @@ from fileformats.generic import File
 
 from accessionflow.api.deidentify_api import deidentify
 from accessionflow.helpers.metadata import Metadata
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
 
 from .test_deidentify import SESSION_NAME, SHIPPED_SPECS_DIR, _stage
 
@@ -26,7 +26,7 @@ def test_retire_recorded_files_and_keep_late_file(tmp_path, unlink_source):
         late.write_text("next cycle")
         return session, {}
 
-    with patch.object(ImagingSession, "deidentify", process):
+    with patch.object(Accession, "deidentify", process):
         errors = deidentify(
             input_dir,
             tmp_path / "output",
@@ -43,7 +43,7 @@ def test_method_can_remove_all_resources(tmp_path):
     input_dir = tmp_path / "input"
     source = _stage(input_dir, SESSION_NAME)
     with patch.object(
-        ImagingSession,
+        Accession,
         "deidentify",
         lambda session, *a, **kw: (session.new_empty(), {}),
     ):
@@ -63,7 +63,7 @@ def test_present_input_is_processed_again(tmp_path):
         calls.append(session)
         return session, {}
 
-    with patch.object(ImagingSession, "deidentify", process):
+    with patch.object(Accession, "deidentify", process):
         for _ in range(2):
             assert deidentify(input_dir, tmp_path / "output", SHIPPED_SPECS_DIR) == []
     assert len(calls) == 2
@@ -71,7 +71,7 @@ def test_present_input_is_processed_again(tmp_path):
 
 def test_resource_copy_is_hidden_until_complete(tmp_path, monkeypatch):
     source = _stage(tmp_path / "input", SESSION_NAME)
-    session = ImagingSession.load(source)
+    session = Accession.load(source)
     resource = session.scans["1"].resources["RES"]
     previous = {p.name: p.read_bytes() for p in resource.fileset.fspaths}
     replacement = tmp_path / "replacement.dat"
@@ -86,7 +86,7 @@ def test_resource_copy_is_hidden_until_complete(tmp_path, monkeypatch):
         partial.write_bytes(b"partial")
         # A consumer can run while the copy is in progress. It must see the old
         # complete resource, without any of the replacement's partial bytes.
-        loaded = ImagingSession.load(source)
+        loaded = Accession.load(source)
         visible = loaded.scans["1"].resources["RES"].fileset
         assert {p.name: p.read_bytes() for p in visible.fspaths} == previous
         assert not destination.is_relative_to(source)
@@ -95,7 +95,7 @@ def test_resource_copy_is_hidden_until_complete(tmp_path, monkeypatch):
 
     monkeypatch.setattr(FileSet, "copy", copy_with_reader)
     session.save(source.parent, copy_mode=FileSet.CopyMode.copy)
-    loaded = ImagingSession.load(source)
+    loaded = Accession.load(source)
     assert (
         next(iter(loaded.scans["1"].resources["RES"].fileset.fspaths)).read_bytes()
         == b"complete replacement"
@@ -124,7 +124,7 @@ def test_failure_keeps_recorded_input(tmp_path, mode, failure):
             )
         return session, {}
 
-    with patch.object(ImagingSession, "deidentify", process):
+    with patch.object(Accession, "deidentify", process):
         errors = deidentify(
             input_dir,
             tmp_path / "output",
@@ -151,7 +151,7 @@ def test_arrival_during_cleanup_survives(tmp_path, monkeypatch, mode):
         return unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", unlink_with_arrival)
-    with ImagingSession.load_for_processing(source, unlink_source=mode):
+    with Accession.load_for_processing(source, unlink_source=mode):
         pass
     assert list(resource.iterdir()) == [late]
 
@@ -161,12 +161,10 @@ def test_snapshot_precedes_load_and_covers_session_resources(
     tmp_path, monkeypatch, mode
 ):
     source = _stage(tmp_path / "input", SESSION_NAME)
-    session = ImagingSession.load(source)
-    session.session_resources["SESSION"] = ImagingResource(
-        "SESSION", File.sample(seed=77)
-    )
+    session = Accession.load(source)
+    session.session_resources["SESSION"] = Resource("SESSION", File.sample(seed=77))
     session.save(source.parent)
-    original_load = ImagingSession.load
+    original_load = Accession.load
     late = source / "SESSION" / "late.dat"
 
     def load(*args, **kwargs):
@@ -177,8 +175,8 @@ def test_snapshot_precedes_load_and_covers_session_resources(
         (new_resource / "new.dat").write_bytes(b"new resource")
         return loaded
 
-    monkeypatch.setattr(ImagingSession, "load", load)
-    with ImagingSession.load_for_processing(source, unlink_source=mode):
+    monkeypatch.setattr(Accession, "load", load)
+    with Accession.load_for_processing(source, unlink_source=mode):
         pass
     assert list(late.parent.iterdir()) == [late]
     assert (source / "2.new" / "NEW" / "new.dat").read_bytes() == b"new resource"
@@ -190,7 +188,7 @@ def test_changed_non_dicom_bytes_are_saved(tmp_path):
     input_dir = tmp_path / "input"
     source = _stage(input_dir, SESSION_NAME)
     original = next(
-        iter(ImagingSession.load(source).resources[0].fileset.fspaths)
+        iter(Accession.load(source).resources[0].fileset.fspaths)
     ).read_bytes()
 
     def process(session, destination, **kwargs):
@@ -200,13 +198,13 @@ def test_changed_non_dicom_bytes_are_saved(tmp_path):
         result.add_resource("1", "T", "RES", File(changed))
         return result, {}
 
-    with patch.object(ImagingSession, "deidentify", process):
+    with patch.object(Accession, "deidentify", process):
         errors = deidentify(
             input_dir, tmp_path / "output", SHIPPED_SPECS_DIR, unlink_source="all"
         )
     assert errors == []
     assert not source.exists()
-    saved = ImagingSession.load(tmp_path / "output" / SESSION_NAME)
+    saved = Accession.load(tmp_path / "output" / SESSION_NAME)
     content = next(iter(saved.resources[0].fileset.fspaths)).read_bytes()
     assert content == b"deidentified non-DICOM content"
     assert content != original
@@ -214,7 +212,7 @@ def test_changed_non_dicom_bytes_are_saved(tmp_path):
 
 def test_failed_resource_copy_keeps_previous_resource(tmp_path, monkeypatch):
     source = _stage(tmp_path / "input", SESSION_NAME)
-    session = ImagingSession.load(source)
+    session = Accession.load(source)
     old = {
         p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()
     }
@@ -236,7 +234,7 @@ def test_failed_resource_copy_keeps_previous_resource(tmp_path, monkeypatch):
 
 def test_failed_resource_publish_restores_previous_resource(tmp_path, monkeypatch):
     source = _stage(tmp_path / "input", SESSION_NAME)
-    session = ImagingSession.load(source)
+    session = Accession.load(source)
     old = {
         p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()
     }
@@ -262,7 +260,7 @@ def test_failed_resource_publish_restores_previous_resource(tmp_path, monkeypatc
 def test_retirement_unlinks_symlinks_without_removing_targets(tmp_path, mode):
     source = _stage(tmp_path / "input", SESSION_NAME)
     resource = source / "1.T" / "RES"
-    loaded = ImagingSession.load(source)
+    loaded = Accession.load(source)
     target = tmp_path / "external"
     target.mkdir()
     (target / "keep.dat").write_bytes(b"keep")
@@ -271,8 +269,8 @@ def test_retirement_unlinks_symlinks_without_removing_targets(tmp_path, mode):
     (resource / "broken-link").symlink_to(target / "missing")
     # The loaded resource owns one file. The extra links exercise cleanup,
     # independently of the single-file format's extra-path validation.
-    with patch.object(ImagingSession, "load", return_value=loaded):
-        with ImagingSession.load_for_processing(source, unlink_source=mode):
+    with patch.object(Accession, "load", return_value=loaded):
+        with Accession.load_for_processing(source, unlink_source=mode):
             pass
     assert not resource.exists()
     assert (target / "keep.dat").read_bytes() == b"keep"

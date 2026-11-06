@@ -9,13 +9,13 @@ from typing_extensions import Self
 
 from ..helpers.arg_types import AttachedFiles
 from ..helpers.metadata import Metadata
-from .resource import ImagingResource
+from .resource import Resource
 
 logger = logging.getLogger("accessionflow")
 
 
 if ty.TYPE_CHECKING:
-    from accessionflow.model.session import ImagingSession
+    from accessionflow.model.accession import Accession
 
 
 def scan_type_converter(scan_type: str | None) -> str | None:
@@ -26,18 +26,16 @@ def scan_type_converter(scan_type: str | None) -> str | None:
 
 
 def scan_resources_converter(
-    resources: dict[str, ImagingResource | FileSet],
-) -> ty.Dict[str, ImagingResource]:
+    resources: dict[str, Resource | FileSet],
+) -> ty.Dict[str, Resource]:
     return {
-        scan_type_converter(k): (
-            v if isinstance(v, ImagingResource) else ImagingResource(k, v)
-        )
+        scan_type_converter(k): (v if isinstance(v, Resource) else Resource(k, v))
         for k, v in resources.items()
     }
 
 
 @attrs.define
-class ImagingScan:
+class Acquisition:
     """Representation of a scan to be uploaded to XNAT
 
     Parameters
@@ -46,7 +44,7 @@ class ImagingScan:
         the ID of the scan on XNAT
     type: str | None
         the scan type/description
-    resources : dict[str, ImagingResource]
+    resources : dict[str, Resource]
         the list of the resources associated with the scan
     attached: AttachedFiles, optional
         Secondary files that are associated with the given imaging scan
@@ -55,18 +53,18 @@ class ImagingScan:
 
     id: str
     type: str = attrs.field(converter=scan_type_converter, default=None)
-    resources: ty.Dict[str, ImagingResource] = attrs.field(
+    resources: ty.Dict[str, Resource] = attrs.field(
         factory=dict, converter=scan_resources_converter
     )
     metadata: Metadata = attrs.field(eq=False, repr=False, init=False)
     attached: AttachedFiles | None = None
     # Back-ref to parent session
-    session: "ImagingSession" = attrs.field(default=None, eq=False, repr=False)
+    session: "Accession" = attrs.field(default=None, eq=False, repr=False)
 
     def __contains__(self, resource_name: str) -> bool:
         return resource_name in self.resources
 
-    def __getitem__(self, resource_name: str) -> ImagingResource:
+    def __getitem__(self, resource_name: str) -> Resource:
         return self.resources[resource_name]
 
     def __attrs_post_init__(self) -> None:
@@ -139,7 +137,7 @@ class ImagingScan:
                 # resource. Reading it as one failed the whole session.
                 continue
             if resource_dir.is_dir():
-                resource = ImagingResource.load(
+                resource = Resource.load(
                     resource_dir,
                     require_manifest=require_manifest,
                     check_checksums=check_checksums,

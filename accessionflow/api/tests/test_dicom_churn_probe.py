@@ -1,6 +1,6 @@
 """Probe: is real DICOM de-identification reproducible across runs?
 
-The in-place re-save path relies on ImagingResource.save's checksum
+The in-place re-save path relies on Resource.save's checksum
 short-circuit, which compares the EXISTING output against FRESHLY
 de-identified content. If the deid engine emits different bytes each run
 (remapped UIDs, date handling), the checksums never match, every cycle
@@ -21,8 +21,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 
 import accessionflow.specs as _specs_pkg
 from accessionflow.api.deidentify_api import deidentify
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
 
 SHIPPED = Path(_specs_pkg.__path__[0])
 NAME = "PROJ.SUBJ.SESS"
@@ -52,12 +52,12 @@ def test_dicom_deid_is_reproducible_and_does_not_churn(dicom_dir: Path, tmp_path
         d.mkdir()
 
     series = DicomSeries(sorted(p for p in dicom_dir.iterdir() if p.is_file()))
-    ImagingSession(
+    Accession(
         uid=NAME,
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="PET", resources={"DICOM": series})],
+        scans=[Acquisition(id="1", type="PET", resources={"DICOM": series})],
     ).save(inp)
 
     assert (
@@ -93,12 +93,12 @@ def test_dicom_deid_hashes_the_study_uid_in_session_metadata(
     study_uid = str(series.metadata["StudyInstanceUID"])
     inp = tmp_path / "in"
     inp.mkdir()
-    ImagingSession(
+    Accession(
         uid=study_uid,
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="PET", resources={"DICOM": series})],
+        scans=[Acquisition(id="1", type="PET", resources={"DICOM": series})],
     ).save(inp)
 
     def saved_uid(output: Path, **kwargs) -> str:

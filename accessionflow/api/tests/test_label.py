@@ -17,9 +17,9 @@ from accessionflow.api.label_api import INVALID_DIRNAME, label
 from accessionflow.helpers.arg_types import IDSpec
 from accessionflow.helpers.metadata import Metadata
 from accessionflow.helpers.remotes import list_session_dirs
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
+from accessionflow.model.resource import Resource
 
 PROJECT_FIELD = "StudyID"
 SUBJECT_FIELD = "PatientID"
@@ -32,7 +32,7 @@ def collated_dir(tmp_path: Path) -> Path:
     """A directory containing a single collated-but-not-yet-labelled session"""
     d = tmp_path / "collated"
     d.mkdir()
-    (d / f"{ImagingSession.PRE_LABEL_PREFIX}some-uid").mkdir()
+    (d / f"{Accession.PRE_LABEL_PREFIX}some-uid").mkdir()
     return d
 
 
@@ -64,7 +64,7 @@ def test_label_calls_load_label_save_for_each_session(
 
     mock_session = _mock_session()
     mock_session.label.return_value = {}
-    with patch.object(ImagingSession, "load", return_value=mock_session) as mock_load:
+    with patch.object(Accession, "load", return_value=mock_session) as mock_load:
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -127,7 +127,7 @@ def test_label_leaves_no_partial_session_under_its_real_name_when_save_dies(
         raise RuntimeError("died part-way through save")
 
     mock_session.save.side_effect = dying_save
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -153,9 +153,9 @@ def test_label_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> Non
     src = tmp_path / "src" / "a-file.txt"
     src.parent.mkdir()
     src.write_text("content")
-    session = ImagingSession(
+    session = Accession(
         uid="some-uid",
-        scans=[ImagingScan(id="1", type="T", resources={"RES": File(src)})],
+        scans=[Acquisition(id="1", type="T", resources={"RES": File(src)})],
     )
     session.metadata.update(
         {PROJECT_FIELD: "PROJ", SUBJECT_FIELD: "SUBJ", SESSION_FIELD: "SESS"}
@@ -178,8 +178,8 @@ def test_label_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> Non
 
     assert label_pass() == []
     resource_dir = output_dir / "PROJ.SUBJ.SESS" / "1.T" / "RES"
-    manifest = resource_dir / ImagingResource.MANIFEST_FNAME
-    tmp_manifest = resource_dir / (ImagingResource.MANIFEST_FNAME + ".tmp")
+    manifest = resource_dir / Resource.MANIFEST_FNAME
+    tmp_manifest = resource_dir / (Resource.MANIFEST_FNAME + ".tmp")
     # What the dead pass leaves: data files and the temporary manifest only
     manifest.rename(tmp_manifest)
     (resource_dir / Metadata.FNAME).unlink()
@@ -188,8 +188,8 @@ def test_label_repairs_a_resource_left_without_a_manifest(tmp_path: Path) -> Non
 
     assert manifest.exists()
     assert not tmp_manifest.exists()
-    labelled = ImagingSession.load(output_dir / "PROJ.SUBJ.SESS")
-    expected = ImagingResource(name="RES", fileset=File(src)).checksums
+    labelled = Accession.load(output_dir / "PROJ.SUBJ.SESS")
+    expected = Resource(name="RES", fileset=File(src)).checksums
     assert labelled.scans["1"].resources["RES"].checksums == expected
     assert label_pass() == []
 
@@ -202,7 +202,7 @@ def test_label_routes_invalid_ids_to_invalid_subdir(
 
     mock_session = _mock_session()
     mock_session.label.return_value = {"PatientID": "INVALID_MISSING_PATIENTID_abc123"}
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -226,7 +226,7 @@ def test_label_passes_scan_field(collated_dir: Path, tmp_path: Path) -> None:
     output_dir.mkdir()
 
     mock_session = _mock_session()
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -244,7 +244,7 @@ def test_label_passes_constant_project_id(collated_dir: Path, tmp_path: Path) ->
     output_dir.mkdir()
 
     mock_session = _mock_session()
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -265,7 +265,7 @@ def test_label_collects_errors_without_raising(
 
     mock_session = _mock_session()
     mock_session.label.side_effect = RuntimeError("simulated label failure")
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -285,7 +285,7 @@ def test_label_raise_errors_propagates(collated_dir: Path, tmp_path: Path) -> No
 
     mock_session = _mock_session()
     mock_session.label.side_effect = RuntimeError("simulated label failure")
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         with pytest.raises(RuntimeError, match="simulated label failure"):
             label(
                 input_dir=collated_dir,
@@ -307,7 +307,7 @@ def test_label_deletes_source_dir_on_success_when_unlink_source_all(
 
     mock_session = _mock_session()
     mock_session.label.return_value = {}
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -329,7 +329,7 @@ def test_label_leaves_source_dir_when_unlink_source_none(
     session_dir = next(collated_dir.iterdir())
 
     mock_session = _mock_session()
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -354,7 +354,7 @@ def test_label_keep_metadata_preserves_session_without_resources(
     mock_session = _mock_session()
     mock_session.label.return_value = {}
     mock_session.resources = []
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         errors = label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -378,7 +378,7 @@ def test_label_does_not_delete_on_failure_even_if_unlink_source_all(
 
     mock_session = _mock_session()
     mock_session.label.side_effect = RuntimeError("simulated label failure")
-    with patch.object(ImagingSession, "load", return_value=mock_session):
+    with patch.object(Accession, "load", return_value=mock_session):
         label(
             input_dir=collated_dir,
             output_dir=output_dir,
@@ -474,7 +474,7 @@ def test_label_loads_dicomdir_resource(dicom_dir: Path, tmp_path: Path) -> None:
         == []
     )
 
-    labelled_session = ImagingSession.load(next(iter(list_session_dirs(output_dir))))
+    labelled_session = Accession.load(next(iter(list_session_dirs(output_dir))))
     resource = next(iter(labelled_session.resources))
     assert isinstance(resource.fileset, DicomDir)
     assert resource.fileset.fspath.name == source_dir.name
@@ -499,7 +499,7 @@ def test_label_end_to_end_routes_datatypes_to_separate_projects(
         == []
     )
 
-    collated_session = ImagingSession.load(next(iter(list_session_dirs(collated_dir))))
+    collated_session = Accession.load(next(iter(list_session_dirs(collated_dir))))
     collated_session.add_session_resource("report", File.sample(seed=42))
     collated_session.save(collated_dir)
 
@@ -530,8 +530,8 @@ def test_label_end_to_end_routes_datatypes_to_separate_projects(
         == []
     )
 
-    dicom_session = ImagingSession.load(next(iter(list_session_dirs(dicom_output))))
-    report_session = ImagingSession.load(next(iter(list_session_dirs(report_output))))
+    dicom_session = Accession.load(next(iter(list_session_dirs(dicom_output))))
+    report_session = Accession.load(next(iter(list_session_dirs(report_output))))
     assert dicom_session.project_id == "DICOM_PROJECT"
     assert report_session.project_id == "REPORT_PROJECT"
     assert dicom_session.resources
@@ -581,7 +581,7 @@ def test_label_end_to_end_unresolvable_project_field_goes_to_invalid_dir(
     project_id = session_dirs[0].name.split(".")[0]
     assert project_id.startswith("INVALID_MISSING_")
 
-    reloaded = ImagingSession.load(session_dirs[0])
+    reloaded = Accession.load(session_dirs[0])
     assert reloaded.invalid_ids
 
 

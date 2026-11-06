@@ -9,21 +9,21 @@ from frametree.core.row import DataRow  # type: ignore[import-untyped]
 from frametree.core.store import Store  # type: ignore[import-untyped]
 from frametree.core.tree import DataTree  # type: ignore[import-untyped]
 
-from .session import ImagingSession
+from .accession import Accession
 
 
 @attrs.define
-class ImagingSessionMockStore(Store):  # type: ignore[misc]
+class AccessionMockStore(Store):  # type: ignore[misc]
     """Mock data store so we can use the column.match_entry method on the "entries" in
     the data row of a FrameTree FrameSet (see https://arcanaframework.github.io/frametree/frame_sets.html)
 
     Parameters
     ----------
-    session : ImagingSession
+    session : Accession
         the session to pull data from
     """
 
-    session: ImagingSession
+    session: Accession
 
     @property
     def row(self) -> DataRow:

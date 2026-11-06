@@ -12,8 +12,8 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 import accessionflow.api.package_api as package_api
 from accessionflow.api.package_api import _package_session, package
 from accessionflow.cli.package_cli import package_cmd
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
 
 
 def _dicom(path: Path, sop_class_uid: str, study_uid: str) -> DicomImage:
@@ -45,13 +45,13 @@ def test_package_auto_labels_sample_from_sop_class(
     tmp_path: Path, sop_class_uid: str, expected_label: str
 ) -> None:
     image = _dicom(tmp_path / "image.dcm", sop_class_uid, "1.2.3")
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([image.fspath])}
             )
         ],
@@ -70,16 +70,16 @@ def test_package_auto_labels_sample_from_sop_class(
 def test_package_rejects_samples_from_different_studies(tmp_path: Path) -> None:
     first = _dicom(tmp_path / "first.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.3")
     second = _dicom(tmp_path / "second.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.4")
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([first.fspath])}
             ),
-            ImagingScan(
+            Acquisition(
                 id="2", type="MR", resources={"SOURCE": DicomSeries([second.fspath])}
             ),
         ],
@@ -97,13 +97,13 @@ def test_package_rejects_samples_from_different_studies(tmp_path: Path) -> None:
 def test_package_rejects_mixed_studies_inside_one_series(tmp_path: Path) -> None:
     first = _dicom(tmp_path / "first.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.3")
     second = _dicom(tmp_path / "second.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.4")
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1",
                 type="MR",
                 resources={"SOURCE": DicomSeries([first.fspath, second.fspath])},
@@ -124,13 +124,13 @@ def test_package_rejects_mixed_studies_inside_one_series(tmp_path: Path) -> None
 
 def test_package_rejects_primary_sample_as_secondary(tmp_path: Path) -> None:
     image = _dicom(tmp_path / "image.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.3")
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([image.fspath])}
             )
         ],
@@ -145,19 +145,19 @@ def test_package_rejects_primary_sample_as_secondary(tmp_path: Path) -> None:
             )
 
 
-def _staged_session(input_dir: Path) -> tuple[ImagingSession, Path]:
+def _staged_session(input_dir: Path) -> tuple[Accession, Path]:
     source_path = input_dir.parent / "source.my"
     source_path.write_text("deidentified source")
     report_path = input_dir.parent / "report.txt"
     report_path.write_text("session report")
 
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1",
                 type="CT",
                 resources={"SOURCE": MyFormat(source_path)},
@@ -192,7 +192,7 @@ def test_package_replaces_one_source_with_multiple_named_outputs(
 
     assert errors == []
     assert source_dir.exists(), "packaging removed its input without being asked"
-    packaged = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    packaged = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     scan = packaged.scans["1"]
     assert set(scan.resources) == {"DICOM", "secondary"}
     assert all(
@@ -274,7 +274,7 @@ def test_package_rejects_old_layout_in_existing_output(tmp_path: Path) -> None:
 
     assert len(errors) == 1
     assert "fresh output directory" in errors[0]
-    old_session = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    old_session = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(old_session.scans["1"].resources) == {"DICOM", "secondary"}
 
 
@@ -300,7 +300,7 @@ def test_package_cli_accepts_multiple_named_outputs(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    packaged = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    packaged = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(packaged.scans["1"].resources) == {"DICOM", "secondary"}
 
 
@@ -325,7 +325,7 @@ def test_package_passes_a_session_without_source_resources_through(
 
     assert errors == []
     assert not source_dir.exists()
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert set(out.scans["1"].resources) == {"SOURCE"}
     assert set(out.session_resources) == {"REPORT"}
 
@@ -353,13 +353,13 @@ def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
 
     late_path = tmp_path / "late.my"
     late_path.write_text("late series")
-    ImagingSession(
+    Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(id="2", type="CT", resources={"SOURCE": MyFormat(late_path)})
+            Acquisition(id="2", type="CT", resources={"SOURCE": MyFormat(late_path)})
         ],
     ).save(input_dir)
 
@@ -368,7 +368,7 @@ def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
     )
 
     assert errors == []
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert sorted(out.scans) == ["1", "2"]
     assert set(out.scans["1"].resources) == {"DICOM"}
     assert set(out.scans["2"].resources) == {"DICOM"}
@@ -447,7 +447,7 @@ def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
     output_dir = tmp_path / "output"
     input_dir.mkdir()
     _session, source_dir = _staged_session(input_dir)
-    original_load = ImagingSession.load
+    original_load = Accession.load
     late = source_dir / "2.CT" / "SOURCE" / "late.my"
 
     def load_then_a_file_lands(*args, **kwargs):
@@ -456,7 +456,7 @@ def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
         late.write_text("late series")
         return session
 
-    with patch.object(package_api.ImagingSession, "load", load_then_a_file_lands):
+    with patch.object(package_api.Accession, "load", load_then_a_file_lands):
         errors = package(
             input_dir,
             output_dir,
@@ -467,5 +467,5 @@ def test_package_keeps_an_input_with_a_file_its_manifest_does_not_list(
 
     assert errors == []
     assert late.exists(), "input kept"
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert sorted(out.scans) == ["1"]

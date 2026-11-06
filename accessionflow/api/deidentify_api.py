@@ -17,7 +17,7 @@ from accessionflow.helpers.remotes import LocalSessionListing, list_session_dirs
 
 from ..helpers.arg_types import OnResourceClash
 from ..helpers.logging import logger
-from ..model.session import ImagingSession, recipe_formats_for
+from ..model.accession import Accession, recipe_formats_for
 from .collate_api import BUILD_NAME_DEFAULT
 
 DEFAULT_SPEC_DIR = "__default__"
@@ -41,7 +41,7 @@ def deidentify(
     unlink_source: str | None = None,
     reid_encrypt_key: bytes | None = None,
     max_workers: int | None = None,
-    metadata_allowlist: ty.Collection[str] = {ImagingSession.UID_METADATA_KEY},
+    metadata_allowlist: ty.Collection[str] = {Accession.UID_METADATA_KEY},
     hash_uid_key: str | None = None,
 ) -> list[str]:
     """
@@ -98,7 +98,7 @@ def deidentify(
         desc=f"Processing staged sessions found in '{input_dir}'",
     ):
         try:
-            with ImagingSession.load_for_processing(
+            with Accession.load_for_processing(
                 session_listing.cache_path,
                 require_manifest=require_manifest,
                 check_checksums=False,

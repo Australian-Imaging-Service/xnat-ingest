@@ -13,10 +13,10 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 )
 
 from accessionflow.api.collate_api import collate
-from accessionflow.exceptions import ImagingSessionParseError
+from accessionflow.exceptions import AccessionParseError
 from accessionflow.helpers.arg_types import IDSpec
 from accessionflow.helpers.remotes import list_session_dirs
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 @pytest.fixture
@@ -42,13 +42,13 @@ def test_load_refuses_two_scan_directories_with_one_scan_id(session_dir: Path) -
     twin = session_dir / f"{scan_id}.Other"
     shutil.copytree(scan_dir, twin)
 
-    with pytest.raises(ImagingSessionParseError) as excinfo:
-        ImagingSession.load(session_dir, require_manifest=True)
+    with pytest.raises(AccessionParseError) as excinfo:
+        Accession.load(session_dir, require_manifest=True)
 
     assert f"have the scan ID '{scan_id}'" in excinfo.value.msg
     assert "'Other'" in excinfo.value.msg
 
     # Without the twin the session loads as before.
     shutil.rmtree(twin)
-    session = ImagingSession.load(session_dir, require_manifest=True)
+    session = Accession.load(session_dir, require_manifest=True)
     assert list(session.scans) == [scan_id]

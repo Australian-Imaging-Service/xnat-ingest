@@ -26,18 +26,18 @@ from fileformats.vendor.openxmlformats_officedocument.application import (
 )
 from pydra.utils import get_fields
 
-from ..exceptions import ImagingSessionParseError
+from ..exceptions import AccessionParseError
 
 if ty.TYPE_CHECKING:
-    from ..model.resource import ImagingResource
-    from ..model.scan import ImagingScan
-    from ..model.session import ImagingSession
+    from ..model.accession import Accession
+    from ..model.acquisition import Acquisition
+    from ..model.resource import Resource
     from .metadata import Metadata
 
     MetadataLike: ty.TypeAlias = ty.Union[
-        "ImagingSession",
-        "ImagingScan",
-        "ImagingResource",
+        "Accession",
+        "Acquisition",
+        "Resource",
         "FileSet",
         Metadata,
         ty.Mapping[str, ty.Any],
@@ -436,7 +436,7 @@ class IDSpec(MultiCliTyped):
 
         Raises
         ------
-        ImagingSessionParseError
+        AccessionParseError
             If the metadata field is not found and missing_ids is not provided
         """
         if not isinstance(metadata, ty.Mapping):
@@ -468,7 +468,7 @@ class IDSpec(MultiCliTyped):
                     + "".join(random.choices(string.ascii_letters + string.digits, k=8))
                 )
                 return placeholder
-        raise ImagingSessionParseError(
+        raise AccessionParseError(
             f"Did not find '{field_name}' field in {metadata!r}, "
             "cannot uniquely identify the resource, found:\n" + "\n".join(metadata)
         )
@@ -554,7 +554,7 @@ class IDSpec(MultiCliTyped):
                 else:
                     distinct = sorted({formatted for _, formatted in formatted_items})
                     if len(distinct) > 1:
-                        raise ImagingSessionParseError(
+                        raise AccessionParseError(
                             f"Field '{base_name}' in specifier '{self.specifier}' "
                             "resolves to multiple values after formatting: "
                             f"{distinct}"
@@ -578,7 +578,7 @@ class IDSpec(MultiCliTyped):
             # index rather than a keyword lookup, regardless of what's in `values` -
             # so it can't be supported directly. Fail clearly rather than let a raw,
             # confusing IndexError propagate.
-            raise ImagingSessionParseError(
+            raise AccessionParseError(
                 f"Specifier '{self.specifier}' references an all-digit field name, "
                 "which can't be resolved from metadata directly (only named fields "
                 "are supported in format-string specifiers) - use "
@@ -628,7 +628,7 @@ class IDSpec(MultiCliTyped):
         ------
         TypeError
             If no matching IDSpec is found for the resource's type and no ``default`` was supplied
-        ImagingSessionParseError
+        AccessionParseError
             If the metadata field is not found and missing_ids is not provided
         """
         for id_field in id_fields:
@@ -852,9 +852,7 @@ class MetadataTable(MultiCliTyped):
         if not value:
             raise ValueError("At least one join expression must be provided.")
 
-    def inject(
-        self, target: ImagingSession | ImagingScan | ImagingResource | FileSet
-    ) -> None:
+    def inject(self, target: Accession | Acquisition | Resource | FileSet) -> None:
         """Merge the row of this table that matches ``target`` into its metadata.
 
         Does nothing if ``target``'s type doesn't match ``row_frequency``, if no row
@@ -863,18 +861,18 @@ class MetadataTable(MultiCliTyped):
 
         Parameters
         ----------
-        target : ImagingSession | ImagingScan | ImagingResource | FileSet
+        target : Accession | Acquisition | Resource | FileSet
             The object whose metadata to inject into.
         """
-        from ..model.resource import ImagingResource
-        from ..model.scan import ImagingScan
-        from ..model.session import ImagingSession
+        from ..model.accession import Accession
+        from ..model.acquisition import Acquisition
+        from ..model.resource import Resource
 
         rf = self.row_frequency
         if (
-            (rf == "session" and isinstance(target, ImagingSession))
-            or (rf == "scan" and isinstance(target, ImagingScan))
-            or (rf == "resource" and isinstance(target, ImagingResource))
+            (rf == "session" and isinstance(target, Accession))
+            or (rf == "scan" and isinstance(target, Acquisition))
+            or (rf == "resource" and isinstance(target, Resource))
             # rf is a FileSet type (bare 'FileSet', a subclass, or a '|'-union of them)
             # -> match raw filesets of it
             or (not isinstance(rf, str) and isinstance(target, rf))
@@ -947,7 +945,7 @@ class MetadataTable(MultiCliTyped):
     def inject_list(
         cls,
         tables: list[MetadataTable] | None,
-        targets: list[ImagingSession | ImagingScan | ImagingResource | FileSet],
+        targets: list[Accession | Acquisition | Resource | FileSet],
     ) -> None:
         """
         Inject metadata from a list of metadata tables into the target objects.
@@ -956,7 +954,7 @@ class MetadataTable(MultiCliTyped):
         ----------
         tables : list[MetadataTable]
             The list of metadata tables to inject metadata from.
-        targets : list[ImagingSession | ImagingScan | ImagingResource | FileSet]
+        targets : list[Accession | Acquisition | Resource | FileSet]
             The list of target objects to inject metadata into.
         """
         if tables is None:

@@ -7,23 +7,23 @@ from fileformats.testing import MyFormat
 from accessionflow.api.fields_api import fields
 from accessionflow.helpers.arg_types import IDSpec
 from accessionflow.helpers.fields import Fields
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
 
 
-def _staged_session(input_dir: Path) -> tuple[ImagingSession, Path]:
+def _staged_session(input_dir: Path) -> tuple[Accession, Path]:
     source_path = input_dir.parent / "source.my"
     source_path.write_text("deidentified source")
     report_path = input_dir.parent / "report.txt"
     report_path.write_text("session report")
 
-    session = ImagingSession(
+    session = Accession(
         uid="uid",
         project_id="PROJECT",
         subject_id="SUBJECT",
         session_id="SESSION",
         scans=[
-            ImagingScan(
+            Acquisition(
                 id="1",
                 type="CT",
                 resources={"SOURCE": MyFormat(source_path)},
@@ -53,9 +53,7 @@ def test_fields_writes_fields_file(tmp_path: Path) -> None:
     assert errors == []
     session_dir = output_dir / "PROJECT.SUBJECT.SESSION"
     assert (session_dir / Fields.FNAME).exists()
-    assert dict(ImagingSession.load(session_dir).fields) == {
-        "preserved_field": "preserved"
-    }
+    assert dict(Accession.load(session_dir).fields) == {"preserved_field": "preserved"}
 
 
 def test_fields_preserves_resources_and_metadata(tmp_path: Path) -> None:
@@ -72,7 +70,7 @@ def test_fields_preserves_resources_and_metadata(tmp_path: Path) -> None:
 
     assert errors == []
     assert source_dir.exists(), "field extraction removed its input without being asked"
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     scan = out.scans["1"]
     assert scan.type == "CT"
     assert set(scan.resources) == {"SOURCE"}
@@ -85,7 +83,7 @@ def test_fields_preserves_resources_and_metadata(tmp_path: Path) -> None:
     assert out.session_resources["REPORT"].fileset.fspath.read_text() == (
         "session report"
     )
-    assert dict(ImagingSession.load(source_dir).fields) == {}
+    assert dict(Accession.load(source_dir).fields) == {}
 
 
 def test_fields_preserves_existing_fields(tmp_path: Path) -> None:
@@ -103,7 +101,7 @@ def test_fields_preserves_existing_fields(tmp_path: Path) -> None:
     )
 
     assert errors == []
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert dict(out.fields) == {
         "existing_field": "from-upstream",
         "preserved_field": "preserved",
@@ -126,7 +124,7 @@ def test_fields_skips_unresolvable_mapping(tmp_path: Path) -> None:
     )
 
     assert errors == []
-    out = ImagingSession.load(output_dir / "PROJECT.SUBJECT.SESSION")
+    out = Accession.load(output_dir / "PROJECT.SUBJECT.SESSION")
     assert dict(out.fields) == {"preserved_field": "preserved"}
 
 

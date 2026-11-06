@@ -5,7 +5,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, MRImageStorage
 from test_from_orthanc import FakeOrthanc, _patch_requests, _publication_kwargs
 
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
 
 
 def make_fake(tmp_path, number, description, series_uid="1.2.3.4"):
@@ -48,7 +48,7 @@ def make_fake(tmp_path, number, description, series_uid="1.2.3.4"):
 def test_optional_series_tags_do_not_block_study(tmp_path, number, description, caplog):
     fake, store = make_fake(tmp_path, number, description)
     with _patch_requests(fake):
-        sessions = ImagingSession.from_orthanc(
+        sessions = Accession.from_orthanc(
             **_publication_kwargs(tmp_path / "staged", store)
         )
     assert len(sessions) == 1
@@ -79,7 +79,7 @@ def test_fallback_id_is_stable_for_a_repeated_series(tmp_path):
         root.mkdir()
         fake, store = make_fake(root, "", None)
         with _patch_requests(fake):
-            sessions = ImagingSession.from_orthanc(
+            sessions = Accession.from_orthanc(
                 **_publication_kwargs(root / "staged", store)
             )
         ids.append(next(iter(sessions[0].scans)))
@@ -100,7 +100,7 @@ def test_two_unnumbered_series_remain_separate(tmp_path):
     )
     fake.studies["study"]["series"].extend(fake.studies.pop("second")["series"])
     with _patch_requests(fake):
-        sessions = ImagingSession.from_orthanc(
+        sessions = Accession.from_orthanc(
             **_publication_kwargs(tmp_path / "staged", store)
         )
     assert len(sessions) == 1
@@ -113,9 +113,9 @@ def test_two_unnumbered_series_remain_separate(tmp_path):
     assert fake.labelled.count(("study", "done")) == 1
     # FrameTree keys its resource entries by type/resource, not by scan ID.
     # Calling every unnamed type "unknown" would collide during column selection.
-    from accessionflow.model.store import ImagingSessionMockStore
+    from accessionflow.model.store import AccessionMockStore
 
-    store = ImagingSessionMockStore(sessions[0])
+    store = AccessionMockStore(sessions[0])
     store.populate_row(store.row)
     for scan in sessions[0].scans.values():
         scan.type = "unknown"
@@ -127,7 +127,7 @@ def test_missing_uid_uses_stable_orthanc_series_identity(tmp_path):
     fake, store = make_fake(tmp_path, "", None)
     del fake.series["study-series1"]["tags"]["SeriesInstanceUID"]
     with _patch_requests(fake):
-        sessions = ImagingSession.from_orthanc(
+        sessions = Accession.from_orthanc(
             **_publication_kwargs(tmp_path / "staged", store)
         )
     assert len(sessions[0].scans) == 1
@@ -137,7 +137,7 @@ def test_missing_uid_uses_stable_orthanc_series_identity(tmp_path):
 def test_normal_series_labels_stay_unchanged(tmp_path):
     fake, store = make_fake(tmp_path, "2", "T1")
     with _patch_requests(fake):
-        sessions = ImagingSession.from_orthanc(
+        sessions = Accession.from_orthanc(
             **_publication_kwargs(tmp_path / "staged", store)
         )
     assert sessions[0].scans["2"].type == "T1"
@@ -147,7 +147,7 @@ def test_normal_series_labels_stay_unchanged(tmp_path):
 def test_missing_description_survives_following_label_stage(tmp_path, description):
     fake, store = make_fake(tmp_path, "", description)
     with _patch_requests(fake):
-        session = ImagingSession.from_orthanc(
+        session = Accession.from_orthanc(
             **_publication_kwargs(tmp_path / "staged", store)
         )[0]
     missing = session.label(

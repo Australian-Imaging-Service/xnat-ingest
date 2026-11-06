@@ -10,8 +10,8 @@ from fileformats.generic import File
 
 import accessionflow.specs as _specs_pkg
 from accessionflow.api.deidentify_api import deidentify
-from accessionflow.model.scan import ImagingScan
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.acquisition import Acquisition
 
 SHIPPED = Path(_specs_pkg.__path__[0])
 NAME = "PROJ.SUBJ.SESS"
@@ -29,12 +29,12 @@ def test_second_cycle_does_not_touch_output_mtimes(tmp_path: Path):
     inp, out, reid = tmp_path / "in", tmp_path / "out", tmp_path / "reid"
     for d in (inp, out, reid):
         d.mkdir()
-    ImagingSession(
+    Accession(
         uid=NAME,
         project_id="PROJ",
         subject_id="SUBJ",
         session_id="SESS",
-        scans=[ImagingScan(id="1", type="T", resources={"RES": File.sample(seed=1)})],
+        scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=1)})],
     ).save(inp)
 
     assert (

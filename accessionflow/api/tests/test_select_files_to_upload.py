@@ -5,7 +5,7 @@ which is keyed to the resource directory. The filter matches them against
 `fspath.relative_to(fileset.parent)`, and FileSet.parent is commonpath() over
 the staged files, so the two shapes are not guaranteed to agree.
 
-ImagingResource.load() normally enforces that they do, but only under
+Resource.load() normally enforces that they do, but only under
 check_checksums, and the same flag gates the post-upload verification. If the
 filter then matches nothing, any positive batch size gives zero batches and
 the code falls through to logging the resource as uploaded. So it fails closed.

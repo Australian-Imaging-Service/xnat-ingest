@@ -11,8 +11,8 @@ from medimages4tests.dummy.dicom.pet.wholebody.siemens.biograph_vision.vr20b imp
 
 from accessionflow.api.collate_api import BUILD_NAME_DEFAULT, collate
 from accessionflow.helpers.arg_types import IDSpec, MetadataTable
-from accessionflow.model.resource import ImagingResource
-from accessionflow.model.session import ImagingSession
+from accessionflow.model.accession import Accession
+from accessionflow.model.resource import Resource
 
 SESSION_FIELD = [IDSpec("StudyInstanceUID", "medimage/dicom-collection")]
 SCAN_FIELD = [IDSpec("SeriesNumber", "medimage/dicom-collection")]
@@ -46,7 +46,7 @@ def test_collate_creates_pre_label_session_dir(dicom_dir: Path, tmp_path: Path) 
     assert len(session_dirs) == 1
     session_dir = session_dirs[0]
     # Not yet assigned project/subject/visit IDs, so flagged with the pre-label prefix
-    assert session_dir.name.startswith(ImagingSession.PRE_LABEL_PREFIX)
+    assert session_dir.name.startswith(Accession.PRE_LABEL_PREFIX)
     scan_dirs = [d for d in session_dir.iterdir() if d.is_dir()]
     assert len(scan_dirs) == 1
     # scan description is now resolved at 'label' time, not 'collate' time, so the
@@ -71,15 +71,15 @@ def test_collate_output_reloadable_with_no_labelled_ids(
     session_dir = next(
         d
         for d in output_dir.iterdir()
-        if d.is_dir() and d.name.startswith(ImagingSession.PRE_LABEL_PREFIX)
+        if d.is_dir() and d.name.startswith(Accession.PRE_LABEL_PREFIX)
     )
 
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
 
     assert reloaded.project_id is None
     assert reloaded.subject_id is None
     assert reloaded.session_id is None
-    assert reloaded.uid == session_dir.name[len(ImagingSession.PRE_LABEL_PREFIX) :]
+    assert reloaded.uid == session_dir.name[len(Accession.PRE_LABEL_PREFIX) :]
     # scan description hasn't been resolved yet either
     scan = next(iter(reloaded.scans.values()))
     assert scan.type is None
@@ -260,7 +260,7 @@ def test_collate_creates_build_dir(tmp_path: Path) -> None:
 def patient_id(dicom_dir: Path) -> str:
     """The PatientID of the dummy dataset, discovered by a throwaway load so the
     metadata-table tests don't have to hard-code it"""
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         dicom_dir, [DicomSeries], SESSION_FIELD, SCAN_FIELD, RESOURCE_FIELD
     )
     resource = next(iter(next(iter(sessions[0].scans.values())).resources.values()))
@@ -295,9 +295,9 @@ def test_collate_injects_session_metadata_from_table(
     session_dir = next(
         d
         for d in output_dir.iterdir()
-        if d.is_dir() and d.name.startswith(ImagingSession.PRE_LABEL_PREFIX)
+        if d.is_dir() and d.name.startswith(Accession.PRE_LABEL_PREFIX)
     )
-    reloaded = ImagingSession.load(session_dir)
+    reloaded = Accession.load(session_dir)
     assert reloaded.metadata["StudyComment"] == "injected-via-table"
     assert reloaded.metadata["Cohort"] == "control"
 
@@ -308,7 +308,7 @@ def test_from_paths_injects_resource_metadata_from_table(
     table = tmp_path / "clinical.csv"
     table.write_text(f"PatientID,Radiotracer\n{patient_id},FDG\nother,ignored\n")
 
-    sessions = ImagingSession.from_paths(
+    sessions = Accession.from_paths(
         dicom_dir,
         [DicomSeries],
         SESSION_FIELD,
@@ -345,10 +345,10 @@ def test_collate_converts_directory_to_zip(dicom_dir: Path, tmp_path: Path):
     session_dir = next(
         d
         for d in output_dir.iterdir()
-        if d.is_dir() and d.name.startswith(ImagingSession.PRE_LABEL_PREFIX)
+        if d.is_dir() and d.name.startswith(Accession.PRE_LABEL_PREFIX)
     )
     scan_dir = next(d for d in session_dir.iterdir() if d.is_dir())
     resource_dir = next(d for d in scan_dir.iterdir() if d.is_dir())
-    manifest = Json(resource_dir / ImagingResource.MANIFEST_FNAME).load()
+    manifest = Json(resource_dir / Resource.MANIFEST_FNAME).load()
     assert manifest["datatype"] == Zip.mime_like
     assert (resource_dir / f"{dicom0_dir.name}.zip").exists()
