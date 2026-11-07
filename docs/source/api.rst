@@ -22,6 +22,10 @@ evoke the same modular behaviour via a Python workflow.
 
 .. autofunction:: accessionflow.stores.xnat.api.check_store
 
+.. autofunction:: accessionflow.stores.tree.api.store
+
+.. autofunction:: accessionflow.stores.tree.api.check_store
+
 .. autofunction:: accessionflow.api.attach
 
 

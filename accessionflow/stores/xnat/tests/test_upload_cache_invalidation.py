@@ -53,7 +53,10 @@ def _upload_one_session(tmp_path: Path, uploaded: bool) -> ty.List[str]:
         mock.patch.object(
             XnatLocalSessionListing, "all_uploaded", return_value=uploaded
         ),
-        mock.patch("accessionflow.stores.xnat.api.store_api.Accession.load"),
+        mock.patch(
+            "accessionflow.stores.xnat.api.store_api.Accession.load",
+            return_value=mock.MagicMock(store_type=None),
+        ),
     ):
         store(input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0)
     return events
@@ -77,3 +80,20 @@ def test_a_pass_with_nothing_to_upload_builds_no_xnatpy_objects(
     `upload --loop` grow."""
     events = _upload_one_session(tmp_path, uploaded=True)
     assert events == [], events
+
+
+def test_accession_labelled_for_another_store_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "SYD.P01").mkdir()
+    events: ty.List[str] = []
+    with (
+        mock.patch.object(XnatLocalSessionListing, "all_uploaded", return_value=False),
+        mock.patch(
+            "accessionflow.stores.xnat.api.store_api.Accession.load",
+            return_value=mock.MagicMock(store_type="tree"),
+        ),
+    ):
+        errors = store(
+            input_dir=str(tmp_path), xnat_repo=FakeRepo(events), wait_period=0
+        )
+    assert len(errors) == 1
+    assert "'tree' data store, not XNAT" in errors[0]

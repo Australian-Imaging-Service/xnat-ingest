@@ -24,17 +24,18 @@ DEIDENTIFIED_NAME_DEFAULT = "DEIDENTIFIED"
     help="""Stages images found in the input directories into separate directories for each
 imaging acquisition session
 
-INPUT_DIR is the path to the directory containing the session directories to de-identify.
-Each session directory should be named in the format <project_id>.<subject_id>.<session_id>
-and contain subdirectories for each scan, which in turn contain the resource files for
-each scan.
+INPUT_DIR is the path to the directory containing the labelled session directories to
+de-identify (the output of the 'label' stage). Each is named after the session's labels,
+e.g. <project>.<subject>.<session> for XNAT, and contains subdirectories for each
+acquisition, which in turn contain its resource files.
 
-OUTPUT_DIR is the directory that the files for each session are collated to before they
-are uploaded to XNAT
+OUTPUT_DIR is the directory the de-identified sessions are written to, ready for the
+'store' stage
 
-RECIPE_DIR is the directory containing the deidentification recipes for each project.
-It should contain one subdirectory per project, named <project_id>, plus an optional
-"__default__" subdirectory used as a fallback for projects that don't have their own.
+RECIPE_DIR is the directory containing the deidentification recipes. Recipes are selected
+by the session's top-level label (e.g. the XNAT project), so it should contain one
+subdirectory per top-level label, plus an optional "__default__" subdirectory used as a
+fallback for those without their own.
 Within each of these subdirectories, the directory structure mirrors the MIME-like
 hierarchy: a subdirectory per category containing one recipe file per format
 (e.g. 'medimage/dicom-series'). Any file extension (or none) is accepted.
@@ -79,7 +80,8 @@ only written if --reid-dir is given; see that option.
     help=(
         "The directory to save the re-identification metadata to, which can be used to "
         "re-identify the de-identified data if needed. One JSON file is written per "
-        "session, named <session_id>.json (or <session_id>.json.enc if encrypted with "
+        "session, named after the session's directory, <labels>.json (or <labels>.json.enc "
+        "if encrypted with "
         "--reid-encrypt-key). If this option is not given, the re-identification "
         "metadata is discarded rather than written to disk, which is the safer default "
         "when retaining the original<->deidentified mapping would itself be a security "
@@ -185,8 +187,9 @@ only written if --reid-dir is given; see that option.
     ),
     help=(
         "Comma-separated metadata keys to retain in output sidecars "
-        "(ACFLOW_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__ and "
-        "__data_store__ are always retained, as they are needed to identify a session."
+        "(ACFLOW_METADATA_ALLOWLIST env. var). Defaults to __uid__. __uid__, "
+        "__labels__ and __store_type__ are always retained, as they are needed to "
+        "identify a session."
     ),
 )
 @click.option(

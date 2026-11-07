@@ -46,7 +46,7 @@ def _xproject(experiments=None):
 
 def _session(modality=None):
     session = Accession(
-        uid="uid", project_id="proj", subject_id="subj", session_id="sess"
+        uid="uid", labels={"project": "proj", "subject": "subj", "session": "sess"}
     )
     session.metadata = {} if modality is None else {"Modality": modality}
     return session

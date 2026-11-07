@@ -42,9 +42,7 @@ def run(collated, output, mode):
     return label(
         collated,
         output,
-        "StudyID",
-        "PatientID",
-        "AccessionNumber",
+        {"project": "StudyID", "subject": "PatientID", "session": "AccessionNumber"},
         unlink_source=mode,
         copy_mode=FileSet.CopyMode.copy,
         raise_errors=True,

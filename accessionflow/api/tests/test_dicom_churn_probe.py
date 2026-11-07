@@ -54,9 +54,7 @@ def test_dicom_deid_is_reproducible_and_does_not_churn(dicom_dir: Path, tmp_path
     series = DicomSeries(sorted(p for p in dicom_dir.iterdir() if p.is_file()))
     Accession(
         uid=NAME,
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="PET", resources={"DICOM": series})],
     ).save(inp)
 
@@ -97,9 +95,7 @@ def test_dicom_deid_hashes_the_study_uid_in_session_metadata(
     inp.mkdir()
     Accession(
         uid=study_uid,
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="PET", resources={"DICOM": series})],
     ).save(inp)
 

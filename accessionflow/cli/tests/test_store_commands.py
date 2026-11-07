@@ -31,9 +31,12 @@ def test_get_store_names_the_installed_plugins() -> None:
         get_store("not-a-store")
 
 
-def test_store_needs_three_label_levels() -> None:
-    with pytest.raises(ValueError, match="exactly 3"):
-        Store(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
+def test_store_needs_a_label_level() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        Store(name="flat", title="Flat", labels=())
+    # Any number of levels, or levels named when labelling, are fine
+    Store(name="flat", title="Flat", labels=(LabelLevel("dataset"),))
+    Store(name="free", title="Free", labels=None)
 
 
 def test_store_rejects_repeated_label_names() -> None:
@@ -88,11 +91,15 @@ def test_label_xnat_maps_scan_to_acquisition(
     )
     assert result.exit_code == 0, result.output
     kwargs = label.call_args.kwargs
-    assert kwargs["project_field"] == "StudyComments"
-    assert kwargs["subject_field"] == "{PatientID}_{StudyDate:%Y%m%d}"
-    assert kwargs["session_field"] == "AccessionNumber"
+    assert kwargs["label_fields"] == {
+        "project": "StudyComments",
+        "subject": "{PatientID}_{StudyDate:%Y%m%d}",
+        "session": "AccessionNumber",
+    }
+    assert list(kwargs["label_fields"]) == ["project", "subject", "session"]
     assert kwargs["acquisition_field"] == "ProtocolName"
-    assert kwargs["project_id"] == "PROJ"
+    assert kwargs["constant_labels"] == {"project": "PROJ"}
+    assert kwargs["store_type"] == "xnat"
     assert kwargs["single_resource"] is False  # XNAT scans hold several resources
 
 
@@ -143,10 +150,10 @@ def test_label_xnat_options_keep_their_env_vars(
     )
     assert result.exit_code == 0, result.output
     kwargs = label.call_args.kwargs
-    assert kwargs["project_field"] == "StudyID"
-    assert kwargs["session_field"] == "StudyInstanceUID"
+    assert kwargs["label_fields"]["project"] == "StudyID"
+    assert kwargs["label_fields"]["session"] == "StudyInstanceUID"
     assert kwargs["acquisition_field"] == "SeriesNumber"
-    assert kwargs["project_id"] == "PROJ"
+    assert kwargs["constant_labels"] == {"project": "PROJ"}
 
 
 def test_label_command_follows_store_config(
@@ -185,12 +192,13 @@ def test_label_command_follows_store_config(
         )
         assert result.exit_code == 0, result.output
         kwargs = label.call_args.kwargs
-        assert (
-            kwargs["project_field"],
-            kwargs["subject_field"],
-            kwargs["session_field"],
-            kwargs["acquisition_field"],
-        ) == ("StudyID", "PatientID", "AccessionNumber", None)
+        assert kwargs["label_fields"] == {
+            "study": "StudyID",
+            "participant": "PatientID",
+            "visit": "AccessionNumber",
+        }
+        assert kwargs["acquisition_field"] is None
+        assert kwargs["store_type"] == "testrepo"
         assert kwargs["single_resource"] is False
     finally:
         del label_group.commands["testrepo"]
@@ -265,3 +273,93 @@ def test_former_fields_name_still_works(
     assert "'accessionflow fields' is deprecated" in result.output
     assert "'accessionflow select-fields' instead" in result.output
     select_fields.assert_called_once()
+
+
+@pytest.fixture
+def free_store_label(monkeypatch: pytest.MonkeyPatch):
+    """A 'label' subcommand for a store whose levels are named when labelling"""
+    import accessionflow.cli.label_cli as label_cli
+
+    label = MagicMock(return_value=[])
+    monkeypatch.setattr(label_cli, "label", label)
+    data_store = Store(
+        name="freestore",
+        title="Free",
+        labels=None,
+        acquisition=LabelLevel("acquisition", default="SeriesDescription"),
+    )
+    make_label_command(data_store)
+    yield label
+    del label_group.commands["freestore"]
+
+
+def test_label_levels_named_by_user(tmp_path: Path, free_store_label) -> None:
+    (tmp_path / "in").mkdir()
+    args = ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")]
+    result = CliRunner().invoke(
+        cli,
+        args
+        + [
+            "--level",
+            "site",
+            "SiteID",
+            "--level",
+            "subject",
+            "PatientID",
+            "--level",
+            "visit",
+            "{StudyDate:%Y%m%d}",
+            "--constant-label",
+            "site",
+            "SYD",
+        ],
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code == 0, result.output
+    kwargs = free_store_label.call_args.kwargs
+    assert list(kwargs["label_fields"].items()) == [
+        ("site", "SiteID"),
+        ("subject", "PatientID"),
+        ("visit", "{StudyDate:%Y%m%d}"),
+    ]
+    assert kwargs["constant_labels"] == {"site": "SYD"}
+    assert kwargs["acquisition_field"] == "SeriesDescription"
+    assert kwargs["store_type"] == "freestore"
+
+
+def test_label_levels_from_env(tmp_path: Path, free_store_label) -> None:
+    (tmp_path / "in").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")],
+        env=dict(CLEAN_ENV, ACFLOW_LEVELS="site SiteID subject PatientID"),
+    )
+    assert result.exit_code == 0, result.output
+    assert free_store_label.call_args.kwargs["label_fields"] == {
+        "site": "SiteID",
+        "subject": "PatientID",
+    }
+
+
+@pytest.mark.parametrize(
+    "extra,message",
+    [
+        ([], "--level"),
+        (["--level", "site", "A", "--level", "site", "B"], "repeated"),
+        (["--level", "acquisition", "A"], "repeated"),
+        (["--level", "site", "A", "--constant-label", "visit", "X"], "visit"),
+        (["--level", "not a name", "A"], "valid identifiers"),
+    ],
+)
+def test_label_levels_named_by_user_are_checked(
+    tmp_path: Path, free_store_label, extra: list[str], message: str
+) -> None:
+    (tmp_path / "in").mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["label", "freestore", str(tmp_path / "in"), str(tmp_path / "out")] + extra,
+        env=CLEAN_ENV,
+    )
+    assert result.exit_code != 0
+    assert message in result.output or message in str(result.exception)
+    free_store_label.assert_not_called()

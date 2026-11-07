@@ -47,9 +47,7 @@ def _clear_calls() -> None:
 def _session(date_value: ty.Any = "20260805") -> Accession:
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
     )
     session.metadata["Modality"] = "MR"
     session.metadata["CaptureDate"] = date_value

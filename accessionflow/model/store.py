@@ -17,10 +17,6 @@ import attrs
 
 PLUGINS_PACKAGE = "accessionflow.stores"
 
-# The Accession model holds exactly these three IDs, in this order, until it holds a
-# general mapping of labels
-MODEL_LABEL_LEVELS = 3
-
 
 @attrs.frozen
 class LabelLevel:
@@ -53,19 +49,39 @@ class LabelLevel:
         return prefix + self.name.upper().replace("-", "_")
 
 
-def _check_labels(
-    data_store: "Store", attribute: ty.Any, labels: tuple[LabelLevel, ...]
+def check_level_names(
+    store_name: str, level_names: ty.Sequence[str], acquisition_name: str | None = None
 ) -> None:
-    if len(labels) != MODEL_LABEL_LEVELS:
-        raise ValueError(
-            f"Store '{data_store.name}' has {len(labels)} label levels, but "
-            f"sessions can only be labelled with exactly {MODEL_LABEL_LEVELS} for now"
-        )
-    names = [level.name for level in labels]
-    if data_store.acquisition is not None:
-        names.append(data_store.acquisition.name)
+    """Check a store's label level names, and its name for an acquisition, are usable
+
+    Raises
+    ------
+    ValueError
+        if there are no levels, or a name is repeated or isn't a valid identifier
+    """
+    if not level_names:
+        raise ValueError(f"Store '{store_name}' needs at least one label level")
+    names = list(level_names)
+    if acquisition_name is not None:
+        names.append(acquisition_name)
     if len(set(names)) != len(names):
-        raise ValueError(f"Store '{data_store.name}' has repeated label names: {names}")
+        raise ValueError(f"Store '{store_name}' has repeated label names: {names}")
+    if invalid := [n for n in names if not n.replace("-", "_").isidentifier()]:
+        raise ValueError(
+            f"Store '{store_name}' has label names that aren't valid identifiers: "
+            f"{invalid}"
+        )
+
+
+def _check_labels(
+    data_store: "Store", attribute: ty.Any, labels: tuple[LabelLevel, ...] | None
+) -> None:
+    if labels is not None:
+        check_level_names(
+            data_store.name,
+            [level.name for level in labels],
+            data_store.acquisition.name if data_store.acquisition else None,
+        )
 
 
 @attrs.frozen
@@ -78,10 +94,12 @@ class Store:
         the plugin name, used as the subcommand name, e.g. 'xnat' for 'label xnat'
     title : str
         the name of the store for help text, e.g. 'XNAT'
-    labels : tuple[LabelLevel, ...]
-        the levels of the store's hierarchy, from the top. A labelled session is
-        saved in a folder named by its labels joined by '.', in this order, and
-        'deidentify' selects recipes by the first label
+    labels : tuple[LabelLevel, ...] or None
+        the levels of the store's hierarchy, from the top, e.g. XNAT's project,
+        subject and session. A labelled session is saved in a folder named by its
+        labels joined by '.', in this order, and 'deidentify' selects recipes by the
+        first label. None if the store has no fixed hierarchy, in which case the levels
+        are named when labelling (with 'label <store> --level NAME FIELD ...')
     acquisition : LabelLevel, optional
         the store's name for an acquisition, and the metadata field to describe
         each one by, e.g. XNAT's 'scan' described by 'SeriesDescription'. None if the
@@ -96,7 +114,7 @@ class Store:
 
     name: str
     title: str
-    labels: tuple[LabelLevel, ...] = attrs.field(validator=_check_labels)
+    labels: tuple[LabelLevel, ...] | None = attrs.field(validator=_check_labels)
     acquisition: LabelLevel | None = None
     multiple_resources: bool = True
     envvar_prefix: str = "ACFLOW_"

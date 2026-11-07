@@ -19,9 +19,7 @@ def _staged_session(input_dir: Path) -> tuple[Accession, Path]:
 
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1",

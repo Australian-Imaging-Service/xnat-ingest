@@ -31,9 +31,7 @@ def test_second_cycle_does_not_touch_output_mtimes(tmp_path: Path):
         d.mkdir()
     Accession(
         uid=NAME,
-        project_id="PROJ",
-        subject_id="SUBJ",
-        session_id="SESS",
+        labels={"project": "PROJ", "subject": "SUBJ", "session": "SESS"},
         scans=[Acquisition(id="1", type="T", resources={"RES": File.sample(seed=1)})],
     ).save(inp)
 

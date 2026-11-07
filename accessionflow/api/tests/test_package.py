@@ -47,9 +47,7 @@ def test_package_auto_labels_sample_from_sop_class(
     image = _dicom(tmp_path / "image.dcm", sop_class_uid, "1.2.3")
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([image.fspath])}
@@ -72,9 +70,7 @@ def test_package_rejects_samples_from_different_studies(tmp_path: Path) -> None:
     second = _dicom(tmp_path / "second.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.4")
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([first.fspath])}
@@ -99,9 +95,7 @@ def test_package_rejects_mixed_studies_inside_one_series(tmp_path: Path) -> None
     second = _dicom(tmp_path / "second.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.4")
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1",
@@ -126,9 +120,7 @@ def test_package_rejects_primary_sample_as_secondary(tmp_path: Path) -> None:
     image = _dicom(tmp_path / "image.dcm", "1.2.840.10008.5.1.4.1.1.4", "1.2.3")
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1", type="MR", resources={"SOURCE": DicomSeries([image.fspath])}
@@ -153,9 +145,7 @@ def _staged_session(input_dir: Path) -> tuple[Accession, Path]:
 
     session = Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(
                 id="1",
@@ -355,9 +345,7 @@ def test_package_keeps_earlier_scans_when_a_late_scan_arrives(
     late_path.write_text("late series")
     Accession(
         uid="uid",
-        project_id="PROJECT",
-        subject_id="SUBJECT",
-        session_id="SESSION",
+        labels={"project": "PROJECT", "subject": "SUBJECT", "session": "SESSION"},
         scans=[
             Acquisition(id="2", type="CT", resources={"SOURCE": MyFormat(late_path)})
         ],

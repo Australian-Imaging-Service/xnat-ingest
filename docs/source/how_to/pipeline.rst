@@ -540,3 +540,44 @@ confirm nothing was dropped.
     $ accessionflow check-store xnat /data/staging/labelled xnat.example.org
 
 It takes the same ``STAGED``/``SERVER``/credential options as ``store``.
+
+
+Depositing in a tree instead of XNAT
+------------------------------------
+
+The ``tree`` data store deposits accessions in a tree of nested label folders, on a
+local path, a mount, or a remote file system such as S3 or SFTP. Unlike XNAT, a tree
+has no fixed hierarchy: you name its levels, in order from the top, when labelling:
+
+.. code-block:: console
+
+    $ accessionflow label tree /data/staging/collated /data/staging/labelled \
+        --level site SiteID \
+        --level subject PatientID \
+        --level visit '{StudyDate:%Y%m%d}'
+
+    $ accessionflow store tree /data/staging/labelled s3://my-bucket/archive
+
+    $ accessionflow check-store tree /data/staging/labelled s3://my-bucket/archive
+
+Each accession is deposited as::
+
+    <root>/<site>/<subject>/<visit>/<acq-id>.<acq-description>/<resource>/<files...>
+                                                                         /__MANIFEST__.json
+    <root>/<site>/<subject>/<visit>/__FIELDS__.json
+
+The resources' manifests (the checksums of their files) and the accessions' fields are
+deposited with them, but not their metadata. Each manifest is written after the files
+it lists, so a resource with a manifest is complete: depositing again skips resources
+that are already there and finishes any that an interrupted run left without one. A
+resource that is already in the store with different files is reported as an error,
+unless ``--overwrite`` is given.
+
+``DEST`` is a path or an `fsspec <https://filesystem-spec.readthedocs.io>`_ URL. Remote
+file systems need their fsspec package, installed with the ``s3`` or ``ssh`` extras
+(``pip install accessionflow[s3]``), and options for them, such as credentials, can be
+given with ``--storage-option KEY VALUE``. ``check-store tree`` reads every file back to
+compare checksums, or with ``--sizes-only`` just compares sizes, which is much cheaper.
+
+An accession is labelled for one kind of data store, so ``store tree`` refuses one
+labelled with ``label xnat``, and ``store xnat`` one labelled with ``label tree``.

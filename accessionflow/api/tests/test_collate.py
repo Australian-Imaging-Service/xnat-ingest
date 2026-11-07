@@ -76,9 +76,7 @@ def test_collate_output_reloadable_with_no_labelled_ids(
 
     reloaded = Accession.load(session_dir)
 
-    assert reloaded.project_id is None
-    assert reloaded.subject_id is None
-    assert reloaded.session_id is None
+    assert reloaded.labels == {}
     assert reloaded.uid == session_dir.name[len(Accession.PRE_LABEL_PREFIX) :]
     # scan description hasn't been resolved yet either
     scan = next(iter(reloaded.scans.values()))

@@ -680,10 +680,12 @@ def test_from_orthanc_preserves_grouping_uid_through_label(tmp_path):
         label(
             collated,
             labelled,
-            project_field="StudyID",
-            project_id="PROJ",
-            subject_field="PatientID",
-            session_field="AccessionNumber",
+            label_fields={
+                "project": "StudyID",
+                "subject": "PatientID",
+                "session": "AccessionNumber",
+            },
+            constant_labels={"project": "PROJ"},
         )
         == []
     )
@@ -706,10 +708,12 @@ def test_from_orthanc_invalid_sessions_have_distinct_grouping_uids(tmp_path):
     errors = label(
         collated,
         labelled,
-        project_field="StudyID",
-        project_id="PROJ",
-        subject_field="MissingPatientID",
-        session_field="AccessionNumber",
+        label_fields={
+            "project": "StudyID",
+            "subject": "MissingPatientID",
+            "session": "AccessionNumber",
+        },
+        constant_labels={"project": "PROJ"},
     )
     # Both distinct studies must be saved; uid=None used to skip the second.
     assert len(errors) == 2

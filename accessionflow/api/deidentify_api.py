@@ -118,15 +118,23 @@ def deidentify(
                         )
                         continue
                     raise ValueError(
-                        f"Session '{session_listing.session_id}' contains no data "
+                        f"Session '{session_listing.name}' contains no data "
                         "files and no session metadata, so there is nothing to deidentify"
                     )
-                loaded = load_recipe_files(recipe_dir / session.project_id)
+                # Recipes are selected by the accession's top-level label, e.g. the
+                # XNAT project
+                if not session.labels:
+                    raise ValueError(
+                        f"Session '{session_listing.name}' hasn't been labelled, so its "
+                        "deidentification recipes can't be selected"
+                    )
+                top_label = next(iter(session.labels.values()))
+                loaded = load_recipe_files(recipe_dir / top_label)
                 if loaded is None or not any(loaded):
                     if default_loaded is None or not any(default_loaded):
                         raise ValueError(
-                            f"No deidentification recipe files found for project "
-                            f"'{session.project_id}' and no default recipe files provided."
+                            "No deidentification recipe files found for "
+                            f"'{top_label}' and no default recipe files provided."
                         )
                     loaded = default_loaded
 
@@ -151,21 +159,16 @@ def deidentify(
                     )
                     if hash_uid_key is not None:
                         deidentified_session.uid = _hash_uid(original_uid, hash_uid_key)
-                    available_projects = None
-                    final_dir = output_dir / deidentified_session.staging_dirname(
-                        available_projects
-                    )
+                    final_dir = output_dir / deidentified_session.staging_dirname()
                     if final_dir.exists():
                         deidentified_session.save(
                             output_dir,
-                            available_projects,
                             metadata_allowlist=metadata_allowlist,
                         )
                     else:
                         work_dir.mkdir(parents=True)
                         _, built_dir = deidentified_session.save(
                             work_dir,
-                            available_projects,
                             metadata_allowlist=metadata_allowlist,
                         )
                         os.replace(built_dir, final_dir)
@@ -199,7 +202,7 @@ def deidentify(
                 raise
             logger.error(
                 "Error deidentifying session '%s': %s",
-                session_listing.session_id,
+                session_listing.name,
                 str(e),
                 extra={"event": "deid_failed", "session": session_listing.name},
             )
@@ -241,7 +244,7 @@ def load_recipe_files(
     a `DeidRecipeX`) are picked up by the recipe format when the recipe is loaded,
     and are skipped here.
 
-    If the spec directory does not exist, returns None.
+    If the recipe directory does not exist, returns None.
 
     Parameters
     ----------
@@ -252,7 +255,7 @@ def load_recipe_files(
     -------
     Mapping[type[MedicalImagingData], Path] or None
         maps file-format types to their corresponding recipe file paths, or None if
-        the spec directory does not exist.
+        the recipe directory does not exist.
     """
     if not recipe_dir.exists():
         return None

@@ -76,9 +76,7 @@ def staged(tmp_path, uid="group-001"):
 def session(uid="group-001"):
     result = Accession(
         uid="original-grouping-uid",
-        project_id="proj",
-        subject_id="subj",
-        session_id="sess",
+        labels={"project": "proj", "subject": "subj", "session": "sess"},
     )
     result.metadata = {
         "__uid__": uid,
